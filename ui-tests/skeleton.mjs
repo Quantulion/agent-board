@@ -1,5 +1,5 @@
 // Каркас интерфейса в headless Chrome: настоящий сервер на временном каталоге с fake-агентом,
-// скриншоты светлой и тёмной темы, живое обновление шапки и проверка безопасного markdown.
+// скриншоты светлой и тёмной темы, живое обновление доски и проверка безопасного markdown.
 // Запуск из корня репозитория: node ui-tests/skeleton.mjs
 import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -76,7 +76,7 @@ try {
 
   // вход по ссылке с токеном: токен уходит из адреса, hash сохраняется
   await page.goto(url + '#/p/pay', { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.querySelectorAll('.tasklist .row[data-key]').length === 3, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.card[data-key]').length === 3, { timeout: 10000 });
   await page.waitForFunction(() => document.querySelector('.banner-slot').hidden && !document.querySelector('.sync.err'), { timeout: 10000 });
   results.recoveredAfter500 = { failedServed, sawError: await page.evaluate(() => window.__sawError === true) };
   results.syncCursor = await page.$eval('.sync', el => getComputedStyle(el).cursor);
@@ -85,18 +85,19 @@ try {
 
   for (const theme of ['light', 'dark']) {
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
+    await new Promise(r => setTimeout(r, 500));
     const file = path.join(out, `skeleton-board-${theme}.png`);
     await page.screenshot({ path: file });
     results[`board_${theme}`] = file;
   }
 
   // живое обновление: задача, добавленная извне, появляется без перезагрузки
-  const firstRow = await page.$('.tasklist .row[data-key="PAY-101"]');
+  const firstRow = await page.$('.card[data-key="PAY-101"]');
   cli('add-task', '--json', JSON.stringify({ key: 'PAY-104', title: 'Переключение чтения на PG' }));
   cli('status', 'PAY-101', 'in_progress');
-  await page.waitForFunction(() => document.querySelector('.proj .sub').textContent.includes('4 задачи'), { timeout: 10000 });
-  await page.waitForFunction(() => document.querySelector('.tasklist .row[data-key="PAY-101"] .spill').textContent === 'В работе', { timeout: 10000 });
-  results.liveSub = await page.$eval('.proj .sub', el => el.textContent);
+  await page.waitForFunction(() => document.querySelectorAll('.card[data-key]').length === 4, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.col[data-st="in_progress"] .card[data-key="PAY-101"]'), { timeout: 10000 });
+  results.liveCards = await page.$$eval('.card[data-key]', els => els.length);
   results.rowNodeKept = await page.evaluate(el => el.isConnected, firstRow);
 
   // сбой чтения посреди работы: ошибка видна, данные остаются; следующий снимок её снимает
@@ -105,10 +106,11 @@ try {
   await page.waitForFunction(() => document.querySelector('.sync.err'), { timeout: 10000 });
   results.laterFailure = await page.evaluate(() => ({
     banner: !document.querySelector('.banner-slot').hidden,
-    rows: document.querySelectorAll('.tasklist .row[data-key]').length,
+    rows: document.querySelectorAll('.card[data-key]').length,
   }));
   const errFile = path.join(out, 'skeleton-board-error-light.png');
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await new Promise(r => setTimeout(r, 500));
   await page.screenshot({ path: errFile });
   results.board_error_light = errFile;
   cli('status', 'PAY-104', 'not_started');

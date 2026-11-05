@@ -101,4 +101,5 @@ node --test 'board/tests/js/*.test.mjs'
 
 ```bash
 (cd ui-tests && npm install) && node ui-tests/skeleton.mjs
+node ui-tests/board.mjs   # доска: 14 задач во всех статусах, меню статуса, тосты; рядом снимки макета для сравнения
 ```

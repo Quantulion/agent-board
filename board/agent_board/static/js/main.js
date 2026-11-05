@@ -1,6 +1,7 @@
 import { api } from './api.js';
+import { mountBoard, paintStepper, toast } from './board.js';
 import { h, icon, patchList } from './dom.js';
-import { STAGES, T, statusInfo, tasksCount } from './i18n.js';
+import { STAGES, T, tasksCount } from './i18n.js';
 import { boardHref, parseRoute } from './router.js';
 import { createStore } from './store.js';
 
@@ -9,7 +10,6 @@ const root = document.getElementById('app');
 let view = null;
 
 dropTokenFromAddress();
-applyStoredTheme();
 window.addEventListener('hashchange', route);
 route();
 
@@ -29,11 +29,6 @@ function storage(key, value) {
     return null;
   }
   return null;
-}
-
-function applyStoredTheme() {
-  const t = storage(THEME_KEY);
-  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
 }
 
 // Переключатель темы: авто → светлая → тёмная.
@@ -124,89 +119,59 @@ function projectCard({ slug, state }) {
     h('code', null, slug));
 }
 
-// --- Проект: шапка и заготовка доски ---
+// --- Проект: доска и (пока) заготовка разбивки на одном живом состоянии ---
 
 function projectView(slug, mode) {
-  const store = createStore(slug, api(slug));
+  const client = api(slug);
+  const store = createStore(slug, client);
+  const ctx = {
+    slug,
+    client,
+    brand,
+    themeButton,
+    errorNotice,
+    // заполняются задачами карточки, графа и панели «Проект»
+    openCard: () => toast(T.soon),
+    openGraph: () => toast(T.soon),
+    openNewTask: () => toast(T.soon),
+    openProject: () => toast(T.soon),
+  };
+  let destroyMode = null;
+  let current = null;
+  const mount = next => {
+    if (next === current) return;
+    current = next;
+    if (destroyMode) destroyMode();
+    destroyMode = next === 'board' ? mountBoard(root, store, ctx) : decompositionPlaceholder(slug, store);
+  };
+  mount(mode);
+  store.start();
+  return {
+    slug,
+    setMode: mount,
+    destroy() { destroyMode(); store.stop(); },
+  };
+}
+
+function decompositionPlaceholder(slug, store) {
   const title = h('h1', null, h('span', { class: 'skel title' }));
-  const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
   const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
-  const syncText = h('span');
-  const sync = h('div', { class: 'sync static busy', role: 'status' }, h('span', { class: 'sdot' }), syncText);
-  const note = h('p', { class: 'muted' });
-  const list = h('div', { class: 'tasklist' },
-    [1, 2, 3].map(() => h('div', { class: 'row skeleton' }, h('span', { class: 'skel w40' }))));
-  // ошибки показываются поверх содержимого и исчезают со следующим удачным снимком
   const banner = h('div', { class: 'banner-slot', hidden: true });
-  const body = h('div', { class: 'placeholder' }, banner, note, list);
   const app = h('div', { class: 'app' },
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
         brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, title, sub),
-        stepper, h('span', { class: 'spacer' }), sync, themeButton())),
-    body);
+        h('div', { class: 'proj' }, title, h('span', { class: 'sub' }, h('a', { href: boardHref(slug) }, T.board))),
+        stepper, h('span', { class: 'spacer' }), themeButton())),
+    h('div', { class: 'placeholder' }, banner, h('p', { class: 'muted' }, T.decompositionSoon)));
   root.replaceChildren(app);
-
-  let currentMode = mode;
-  const paintMode = () => { note.textContent = currentMode === 'decomposition' ? T.decompositionSoon : T.boardSoon; };
-  paintMode();
-
-  const paintConnection = state => {
-    const failed = Boolean(state.error);
-    syncText.textContent = failed ? T.syncError : T.connection[state.connection] || state.connection;
-    sync.classList.toggle('err', failed);
-    sync.classList.toggle('busy', !failed && state.connection !== 'live');
-  };
-
-  const paint = (state, changes) => {
-    paintConnection(state);
+  const paint = state => {
     banner.hidden = !state.error;
-    if (state.error) banner.replaceChildren(errorNotice(state.error));
-    else banner.replaceChildren();
-    list.hidden = !state.snapshot && Boolean(state.error);
-    if (!state.snapshot || !changes.snapshot) return;
-    const snap = state.snapshot;
-    document.title = snap.config.title + ' — ' + T.appName;
-    title.textContent = snap.config.title;
-    sub.textContent = slug + ' · ' + tasksCount(snap.tasks.length);
-    paintStepper(stepper, snap.config.stage);
-    if (!snap.tasks.length) {
-      list.replaceChildren(h('span', { class: 'muted' }, T.noTasks));
-      return;
-    }
-    patchList(list, snap.tasks, 'key', task => h('div', { class: 'row' }, taskRowParts(task)), (node, task) => {
-      if (changes.tasks.has(task.key)) node.replaceChildren(...taskRowParts(task));
-    });
+    banner.replaceChildren(...(state.error ? [errorNotice(state.error)] : []));
+    if (!state.snapshot) return;
+    title.textContent = state.snapshot.config.title;
+    paintStepper(stepper, state.snapshot.config.stage);
   };
-  paintConnection(store.get());
-  const unsubscribe = store.subscribe(paint);
-  store.start();
-
-  return {
-    slug,
-    setMode(next) { currentMode = next; paintMode(); },
-    destroy() { unsubscribe(); store.stop(); },
-  };
-}
-
-function taskRowParts(task) {
-  const st = statusInfo(task.display_status || task.status);
-  return [
-    h('span', { class: 'key' }, task.key),
-    h('span', { class: 'ttl' }, task.title),
-    h('span', { class: 'spill', style: { '--c': 'var(' + st.color + ')' } }, h('span', { class: 'sdot' }), st.label),
-  ];
-}
-
-function paintStepper(stepper, stage) {
-  const cur = STAGES.findIndex(s => s.id === stage);
-  const items = [];
-  STAGES.forEach((s, i) => {
-    if (i) items.push(h('span', { class: 'sep' }));
-    const done = i < cur || (stage === 'done' && i === cur);
-    items.push(h('span', { class: done ? 'st done' : i === cur ? 'st cur' : 'st' },
-      h('i', null, done ? '✓' : String(i + 1)), s.label));
-  });
-  stepper.replaceChildren(...items);
+  paint(store.get());
+  return store.subscribe(paint);
 }

@@ -4,7 +4,8 @@
   "type": "module",
   "description": "Проверки интерфейса доски в headless Chrome",
   "scripts": {
-    "skeleton": "node skeleton.mjs"
+    "skeleton": "node skeleton.mjs",
+    "board": "node board.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"

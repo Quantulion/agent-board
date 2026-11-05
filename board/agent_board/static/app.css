@@ -505,16 +505,10 @@ a.brand:hover { text-decoration: none; }
 .notice.err { border-color: var(--err-line); background: var(--err-bg); color: var(--err-fg); }
 .notice.err p { color: var(--err-fg); }
 .placeholder { padding: 14px 20px 20px; overflow: auto; min-height: 0; display: grid; gap: 10px; align-content: start; }
-.tasklist { display: grid; gap: 6px; max-width: 900px; }
-.tasklist .row { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-1); min-width: 0; }
-.tasklist .row .key { font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--muted); flex: none; }
-.tasklist .row .ttl { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tasklist .row .spill { flex: none; }
 
 /* Скелет до первой загрузки: серые плашки без мигания контента */
 .skel { display: inline-block; height: 12px; border-radius: 6px; background: var(--surface-3); animation: skel 1.4s ease-in-out infinite; }
 .skel.w40 { width: 40%; } .skel.w60 { width: 60%; } .skel.title { width: 180px; height: 18px; }
-.tasklist .row.skeleton { height: 40px; }
 @keyframes skel { 50% { opacity: .55 } }
 @media (prefers-reduced-motion: reduce) { .skel, .sync.busy .sdot { animation: none; } }
 
@@ -524,3 +518,14 @@ a.brand:hover { text-decoration: none; }
 .md pre { margin: 0 0 6px; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; overflow: auto; }
 .md pre code { background: none; padding: 0; white-space: pre; }
 .md a { overflow-wrap: anywhere; }
+
+/* ===== Доска на живых данных ===== */
+.top .banner-slot .notice { margin: 0; max-width: none; }
+.row1 .btn .chip.pa { height: 18px; }
+.toast.err { background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-line); }
+.stmenu.floating { position: fixed; z-index: 50; }
+.stmenu.floating .menu { position: static; }
+.card .ttl { overflow-wrap: anywhere; }
+.card .ag > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.card .why .w.m span { overflow-wrap: anywhere; }
+@media (prefers-reduced-motion: reduce) { .card.flash, .card .ag .live { animation: none; } }
