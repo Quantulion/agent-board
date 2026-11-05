@@ -68,6 +68,16 @@ class ResourceQueue:
             self._refresh(resource)
             self._save()
 
+    def locks_of(self, task: str) -> List[dict]:
+        """Ресурсы задачи и её место в очереди каждого (0 — держит ресурс)."""
+        with self._lock:
+            return [
+                {"resource": resource, "position": index}
+                for resource, queue in sorted(self._queues.items())
+                for index, entry in enumerate(queue)
+                if entry.task == task
+            ]
+
     def reap(self) -> None:
         """Снимает держателей и ожидающих, чьи процессы умерли."""
         with self._lock:

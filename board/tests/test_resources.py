@@ -225,3 +225,31 @@ def test_api_undeclared_resource_is_400_with_declared_list(srv):
 
 def test_api_unknown_task_is_404(srv):
     assert post("acquire", "tests", {"task": "NOPE", "pid": PID})[0] == 404
+
+
+def test_snapshot_shows_task_locks_with_positions(srv):
+    # arrange
+    board = srv.board_for("pay")
+    board.add_task(Task(key="T2", title="y"), "user")
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        post("acquire", "tests", {"task": "T1", "pid": PID})
+        post("acquire", "tests", {"task": "T2", "pid": other.pid})
+        # act
+        tasks = {t["key"]: t for t in board.snapshot()["tasks"]}
+        # assert
+        assert tasks["T1"]["locks"] == [{"resource": "tests", "position": 0}]
+        assert tasks["T2"]["locks"] == [{"resource": "tests", "position": 1}]
+    finally:
+        other.kill()
+        other.wait()
+
+
+def test_snapshot_locks_empty_without_queue(tmp_home):
+    # arrange
+    store = ProjectStore("pay")
+    store.create(ProjectConfig(slug="pay", title="Платежи"))
+    board = Board(store)
+    board.add_task(Task(key="T1", title="x"), "user")
+    # act / assert
+    assert board.snapshot()["tasks"][0]["locks"] == []

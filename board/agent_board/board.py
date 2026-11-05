@@ -65,6 +65,7 @@ WAKE_REASONS: Dict[str, str] = {
     "manual": "пользователь сам запустил задачу без сессии агента",
     "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
     "interrupted": "ход агента был прерван, нужно продолжить",
+    "queued_restart": "следующий ход ждал очереди, когда сервер перезапустился, нужно продолжить",
 }
 
 
@@ -110,6 +111,8 @@ class Board:
         self._on_event = on_event
         self._lock = threading.RLock()
         self.terminal_command_for: Optional[Callable[[Task], Optional[str]]] = None
+        # ресурсы, которые задача держит (position 0) или ждёт; ставит сервер, у которого очередь ресурсов
+        self.locks_for: Optional[Callable[[str], List[dict]]] = None
 
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
@@ -138,6 +141,7 @@ class Board:
         with self._lock:
             config = self.store.load_config()
             tasks = self.store.load_tasks()
+            meta = self.store.load_meta()
             items = []
             for key in sorted(tasks):
                 t = tasks[key]
@@ -146,13 +150,32 @@ class Board:
                 d["open_deps"] = open_deps(t, tasks, config.chains)
                 d["terminal_command"] = self._terminal_command(t)
                 items.append(d)
-            return {
+            snap = {
                 "config": config.to_dict(),
                 "tasks": items,
                 "proposals": [p.to_dict() for p in self.store.load_proposals()],
-                "project_unread": self.store.load_meta()["project_unread"],
+                "project_unread": meta["project_unread"],
+                "project_agent": {
+                    "state": meta.get("project_agent_state") or "idle",
+                    "turn_error": meta.get("project_turn_error") or "",
+                    "session_id": config.project_session_id,
+                },
                 "last_seq": self.store.last_seq(),
             }
+        # очередь ресурсов сама пишет в доску под своей блокировкой: читаем её вне блокировки доски
+        for d in snap["tasks"]:
+            d["locks"] = self._locks(d["key"])
+        return snap
+
+    def _locks(self, key: str) -> List[dict]:
+        hook = self.locks_for
+        if hook is None:
+            return []
+        try:
+            return hook(key)
+        except Exception as exc:
+            print("locks_for(%s) failed: %r" % (key, exc), file=sys.stderr)
+            return []
 
     def add_task(self, task: Task, actor: str) -> List[Event]:
         with self._lock:

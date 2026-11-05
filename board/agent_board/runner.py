@@ -60,7 +60,10 @@ MAX_AGENT_WAKES = 5
 AGENT_AUTHORS = ("agent", "project_agent")
 AGENTS_LOOP_TEXT = "Агенты переписываются без участия пользователя — остановлено; ответьте в треде, чтобы продолжить"
 # причины, которые не добавляют ничего к стартовому промпту задачи
-_START_ONLY = {"ready", "unblocked", "manual", "interrupted", "rebase"}
+_START_ONLY = {"ready", "unblocked", "manual", "interrupted", "queued_restart", "rebase"}
+# так Claude отвечает на продолжение сессии, которой у него нет (например, первый ход упал до её сохранения)
+LOST_SESSION_MARK = "No conversation found"
+LOST_SESSION_TEXT = "Сессия агента %s не найдена у харнесса, агент начнёт задачу заново в новой сессии."
 
 Key = Tuple[str, str]
 
@@ -288,7 +291,7 @@ class Runner:
                     woken.add(key)
                 elif task.agent_state == "waiting_turn":
                     board.update_task(key, "system", {"agent_state": "idle"})
-                    reason = "interrupted" if task.session_id else "ready"
+                    reason = "queued_restart" if task.session_id else "ready"
                     board.record("agent_wake", {"key": key, "reason": reason})
                     woken.add(key)
             if meta.get("project_agent_state") == "running":
@@ -710,6 +713,12 @@ class Runner:
         if turn.stopped:
             state, error, event = "idle", "", ("turn_finished", {"key": k[1], "stopped": True})
             session_id = result.session_id or turn.session_id
+        elif not result.ok and not turn.fresh and LOST_SESSION_MARK in (result.error or ""):
+            # продолжить нечего: следующий ход начнётся новой сессией, это не считается сбоем агента
+            state, error, event = "idle", "", ("turn_finished", {"key": k[1], "session_lost": True})
+            session_id = None
+            self._pending[k] = turn.reasons + self._pending.get(k, [])
+            board.post_message(k[1], "system", LOST_SESSION_TEXT % turn.session_id)
         elif result.ok:
             self._failures.pop(k, None)
             state, error, event = "idle", "", ("turn_finished", {"key": k[1]})

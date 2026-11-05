@@ -125,8 +125,16 @@ class _Hub:
             raise KeyError("Неизвестный проект: %s" % slug)
         with self._lock:
             if slug not in self._boards:
-                self._boards[slug] = Board(store, on_event=lambda e, s=slug: self._notify(s, e))
+                board = Board(store, on_event=lambda e, s=slug: self._notify(s, e))
+                board.locks_for = lambda key, s=slug: self._locks_of(s, key)
+                self._boards[slug] = board
             return self._boards[slug]
+
+    def _locks_of(self, slug: str, key: str) -> List[dict]:
+        # очередь создаётся первым обращением lock-run; до него показывать нечего
+        with self._lock:
+            queue = self._queues.get(slug)
+        return queue.locks_of(key) if queue is not None else []
 
     def queue(self, slug: str) -> ResourceQueue:
         board = self.board(slug)

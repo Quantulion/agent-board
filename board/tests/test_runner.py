@@ -852,3 +852,48 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     # assert
     assert project_turns() == parked_turns + 1
     assert "продолжайте" in [c for c in calls if c["env"]["AGENT_BOARD_ACTOR"] == "project_agent"][-1]["text"]
+
+
+# --- восстановление очереди и потерянные сессии ---
+
+def test_waiting_task_with_session_resumes_with_queued_restart_text(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project()
+    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
+    t.agent_state, t.harness = "waiting_turn", "fake"
+    store.save_task(t)
+    # act
+    start_server()
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    wake = [e.data["reason"] for e in events(store, "agent_wake", "T-1")]
+    assert wake == ["queued_restart"]
+    assert [(c["kind"], c["session"]) for c in calls] == [("resume", "s-1")]
+    assert "interrupted" not in calls[0]["text"] and "waiting in the queue" in calls[0]["text"]
+
+
+def test_lost_session_is_dropped_and_task_starts_fresh(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project()
+    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-gone", str(wt), "T-1", "main"
+    t.harness = "fake"
+    store.save_task(t)
+    srv = start_server()
+    runner_sync(srv)
+    # act
+    srv.board_for("pay").post_message("T-1", "user", script({"fail-if-resumed": "No conversation found with session ID: s-gone"}))
+    wait_events(store, "turn_finished", "T-1", count=2)
+    runner_sync(srv)
+    # assert
+    assert [(c["kind"], c["session"]) for c in calls][0] == ("resume", "s-gone")
+    assert calls[1]["kind"] == "start" and calls[1]["session"] != "s-gone"
+    assert "fail-if-resumed" in calls[1]["text"]
+    t = task(store, "T-1")
+    assert (t.session_id, t.agent_state, t.turn_error) == (calls[1]["session"], "idle", "")
+    assert not events(store, "turn_failed", "T-1")
+    assert srv.runner._failures.get(("pay", "T-1")) is None
+    assert any("сесси" in text for text in thread_texts(store, "T-1"))

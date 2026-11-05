@@ -37,6 +37,20 @@ def test_add_task_with_cycle_leaves_state_unchanged(board):
     assert snap["last_seq"] == last
 
 
+def test_snapshot_contains_project_agent_state(board):
+    # arrange
+    board.update_config({"project_session_id": "p-1"})
+    board.update_meta({"project_agent_state": "error", "project_turn_error": "упал"})
+    # act
+    snap = board.snapshot()
+    # assert
+    assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1"}
+
+
+def test_snapshot_project_agent_defaults(board):
+    assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None}
+
+
 def test_snapshot_contains_display_status_and_open_deps(board):
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
@@ -511,7 +525,7 @@ def test_event_vocabulary_covers_every_emitted_event():
     assert reasons <= set(board_mod.WAKE_REASONS)
     assert set(board_mod.WAKE_REASONS) == {
         "ready", "unblocked", "returned", "answer", "message", "proposal_rejected", "escalation", "manual",
-        "rebase", "interrupted"}
+        "rebase", "interrupted", "queued_restart"}
 
 
 def test_new_task_from_dict_builds_task_from_creatable_fields():

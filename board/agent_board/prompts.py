@@ -153,6 +153,9 @@ def _wake_line(r: dict, cli: str) -> str:
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
+    if reason == "queued_restart":
+        return ("Your next turn was waiting in the queue while the board server restarted. "
+                "Continue working on the task.")
     if reason == "escalation":
         if r.get("from"):
             ref, who = r["from"], "task agent %s" % r["from"]
@@ -180,7 +183,8 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text; answer -> question_id, question, choice, comment;
       returned -> from; rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
-      escalation -> from, text; proposal_rejected -> id; interrupted, unblocked, ready, manual -> без полей.
+      escalation -> from, text; proposal_rejected -> id;
+      interrupted, queued_restart, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».
     """
     out = "\n\n".join(_wake_line(r, board_cli) for r in reasons)

@@ -348,18 +348,20 @@ class FakeHarness(ClaudeHarness):
     def __init__(self):
         super().__init__("auto")
 
-    def _spawn_fake(self, session_id: str, text: str, cwd: Path, env: dict):
+    def _spawn_fake(self, session_id: str, text: str, cwd: Path, env: dict, resume: bool = False):
         env = dict(env)
         pkg_root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_root, env.get("PYTHONPATH") or os.environ.get("PYTHONPATH")]))
         args = [sys.executable, "-m", "agent_board.fake_agent", "--session-id", session_id]
+        if resume:
+            args.append("--resume")
         return self._spawn(args, cwd, env, session_id, text)
 
     def start_turn(self, cwd, prompt, session_id, log, env):
         return self._spawn_fake(session_id or self.new_session_id(), prompt, cwd, env)
 
     def resume_turn(self, cwd, session_id, message, log, env):
-        return self._spawn_fake(session_id, message, cwd, env)
+        return self._spawn_fake(session_id, message, cwd, env, resume=True)
 
 
 def make_harness(config: dict) -> Harness:

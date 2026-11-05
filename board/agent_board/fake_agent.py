@@ -30,7 +30,7 @@ def _run_cli(argv: List[str]) -> str:
     return "" if code == 0 else (err.getvalue().strip() or "команда %s завершилась с кодом %d" % (argv[0], code))
 
 
-def run(session_id: str, text: str) -> int:
+def run(session_id: str, text: str, resumed: bool = False) -> int:
     _emit({"type": "system", "subtype": "init", "session_id": session_id})
     steps = []
     if MARKER in text:
@@ -54,6 +54,9 @@ def run(session_id: str, text: str) -> int:
             target.write_text(step["write"]["text"], encoding="utf-8")
         elif "sleep" in step:
             time.sleep(float(step["sleep"]))
+        elif "fail-if-resumed" in step:
+            if resumed:
+                return _fail(session_id, str(step["fail-if-resumed"]))
         elif "fail" in step:
             return _fail(session_id, str(step["fail"]))
         else:
@@ -66,7 +69,7 @@ def main(argv: List[str] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     session_id = argv[argv.index("--session-id") + 1]
     text = sys.stdin.read()
-    return run(session_id, text)
+    return run(session_id, text, "--resume" in argv)
 
 
 if __name__ == "__main__":
