@@ -247,15 +247,21 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     if (document.querySelector('.drawer, .modal-host')) return;
     collapse();
   };
+  // щелчок, которым панель только что открыли (пункт «Ждут вас» и т. п.), всплывает до документа — его пропускаем
+  let currentClick = null;
+  let openingClick = null;
+  const onClickStart = e => { currentClick = e; };
   const onDocClick = e => {
-    if (!open || !narrow() || el.contains(e.target) || toggleButton.contains(e.target)) return;
+    if (e === openingClick || !open || !narrow() || el.contains(e.target) || toggleButton.contains(e.target)) return;
     if (e.target.closest && e.target.closest('.drawer, .modal-host, .toasts')) return;
     setOpen(false);
   };
   document.addEventListener('keydown', onKey);
+  window.addEventListener('click', onClickStart, true);
   document.addEventListener('click', onDocClick);
 
   function setOpen(on) {
+    if (on && !open) openingClick = currentClick;
     open = on;
     el.hidden = !on;
     try {
@@ -316,6 +322,7 @@ export function mountProjectPanel(ctx, store, toggleButton) {
       unsubscribe();
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('click', onDocClick);
+      window.removeEventListener('click', onClickStart, true);
     },
   };
 }

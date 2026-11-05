@@ -343,6 +343,11 @@ try {
   results.dockReopened = await page.$eval('.dock', el => !el.hidden);
 
   // узкий экран: панель поверх доски закрывается по Esc и клику мимо
+  // щелчок мимо панели — по легенде графа: узел открыл бы карточку, а щелчки по карточке панель не закрывают
+  const clickOutside = async () => {
+    const box = await (await page.$('.graphview .legend')).boundingBox();
+    await page.mouse.click(box.x + 4, box.y + box.height / 2);
+  };
   await page.setViewport({ width: 800, height: 900 });
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.graph-wrap g.node', { timeout: 10000 });
@@ -353,8 +358,15 @@ try {
   results.narrowEscCloses = await page.$eval('.dock', el => el.hidden);
   results.narrowEscFocus = await page.evaluate(() => document.activeElement === document.querySelector('.row1 .btn[aria-pressed]'));
   await page.click('.row1 .btn[aria-pressed]');
-  await page.mouse.click(40, 600);
+  await clickOutside();
   results.narrowClickOutside = await page.$eval('.dock', el => el.hidden);
+  results.noCardFromOutside = await page.$('.drawer') === null;
+  // пункт «Ждут вас» открывает панель, и тот же щелчок её не закрывает; щелчок мимо — закрывает
+  await page.evaluate(() => [...document.querySelectorAll('.attn .it.pa')][0].click());
+  await sleep(100);
+  results.narrowAttnOpens = await page.$eval('.dock', el => !el.hidden);
+  await clickOutside();
+  results.narrowAttnThenOutside = await page.$eval('.dock', el => el.hidden);
   await page.setViewport(VIEW);
   results.pageErrors = errors;
 
@@ -402,7 +414,7 @@ const ok = results.proposalTitles.length === 3 && results.projectBtnPressed === 
   && results.historyRows.some(r => r.startsWith('PAY-108: зависимости') && r.includes('больше не ждёт PAY-104'))
   && results.historyRows.some(r => r.startsWith('PAY-107: зависимости') && r.includes('будет ждать PAY-105'))
   && results.toastAboveFooter && results.focusAfterCollapse
-  && results.narrowDefaultHidden && results.narrowOverlay && results.narrowEscCloses && results.narrowEscFocus && results.narrowClickOutside
+  && results.narrowDefaultHidden && results.narrowOverlay && results.narrowEscCloses && results.narrowEscFocus && results.narrowClickOutside && results.noCardFromOutside && results.narrowAttnOpens && results.narrowAttnThenOutside
   && results.colsHidden && !results.cancelledOnGraph && results.overflow.length === 0 && results.longTitleLines === 2
   && results.critical.length > 0 && results.okEdges > 0 && results.diamond
   && results.hoverEdges.join() === 'PAY-103>PAY-106,PAY-104>PAY-106,PAY-106>PAY-107,PAY-106>PAY-111'
