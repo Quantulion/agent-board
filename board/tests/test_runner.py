@@ -92,20 +92,20 @@ def calls(monkeypatch):
     recorded = []
     orig_start, orig_resume = FakeHarness.start_turn, FakeHarness.resume_turn
 
-    def record(kind, cwd, text, session_id, env, proc):
+    def record(kind, cwd, text, session_id, env, proc, system):
         # какие из ранее запущенных групп процессов ещё живы в момент нового запуска
         alive = [c["proc"].pid for c in recorded if harness_mod.group_alive(c["proc"].pid)]
         recorded.append({"kind": kind, "cwd": Path(cwd), "text": text, "session": session_id, "env": env,
-                         "proc": proc, "alive_before": alive})
+                         "proc": proc, "alive_before": alive, "system": system})
 
     def start_turn(self, cwd, prompt, session_id, log, env):
         proc = orig_start(self, cwd, prompt, session_id, log, env)
-        record("start", cwd, prompt, session_id, env, proc)
+        record("start", cwd, prompt, session_id, env, proc, self.system_prompt)
         return proc
 
     def resume_turn(self, cwd, session_id, message, log, env):
         proc = orig_resume(self, cwd, session_id, message, log, env)
-        record("resume", cwd, message, session_id, env, proc)
+        record("resume", cwd, message, session_id, env, proc, self.system_prompt)
         return proc
 
     monkeypatch.setattr(FakeHarness, "start_turn", start_turn)
@@ -187,6 +187,22 @@ def test_messages_during_turn_go_in_one_next_turn(make_project, start_server, ca
     assert resume["session"] == task(store, "T-1").session_id
     assert "первое" in resume["text"] and "второе" in resume["text"]
     assert resume["text"].index("первое") < resume["text"].index("второе")
+
+
+def test_resume_turn_gets_task_system_prompt_from_current_config(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+    board.update_config({"language": "эсперанто"})
+    # act
+    board.post_message("T-1", "user", "продолжай")
+    wait_events(store, "turn_finished", "T-1", count=2)
+    # assert
+    assert calls[1]["kind"] == "resume"
+    assert "You are a task agent" in calls[1]["system"] and "эсперанто" in calls[1]["system"]
 
 
 def runner_sync(srv):

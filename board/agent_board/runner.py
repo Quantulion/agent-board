@@ -525,6 +525,8 @@ class Runner:
             # несколько ребейзов подряд сводятся к одному — на актуальную базу
             reasons = [r for r in deliver if r.get("reason") != "rebase"] + [self._rebase(board, task, tasks, config, rebases[-1])]
         harness = self._harness(board, task)
+        if hasattr(harness, "system_prompt"):
+            harness.system_prompt = prompts.task_system(config, BOARD_CLI)
         message = prompts.wake_message(reasons, "", BOARD_CLI)
         proc = harness.resume_turn(path, task.session_id, message, self._log(board, task.key), self._env(board, task.key))
         self._begin(k, board, harness, proc, _Turn(proc, reasons, False, task.session_id), deliver)

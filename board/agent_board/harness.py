@@ -226,7 +226,10 @@ def _parse(line: str) -> Optional[dict]:
     return event if isinstance(event, dict) else None
 
 
-BOARD_CLI_PERMISSION = "Bash(agent-board:*)"
+# Подкоманды доски, разрешённые агенту в любом режиме; lock-run запускает произвольную команду
+# и потому подчиняется permission_mode, как любая другая.
+BOARD_CLI_SUBCOMMANDS = ("status", "update", "ask", "say", "show", "thread", "state", "events", "propose")
+BOARD_CLI_PERMISSIONS = ["Bash(agent-board %s:*)" % name for name in BOARD_CLI_SUBCOMMANDS]
 
 
 class ClaudeHarness(Harness):
@@ -241,9 +244,8 @@ class ClaudeHarness(Harness):
         return str(uuid.uuid4())
 
     def _common(self) -> List[str]:
-        # CLI доски разрешён агенту в любом режиме, остальные команды подчиняются permission_mode
         return ["--output-format", "stream-json", "--verbose", "--permission-mode", self.permission_mode,
-                "--allowedTools", BOARD_CLI_PERMISSION]
+                "--allowedTools"] + BOARD_CLI_PERMISSIONS
 
     def build_start_args(self, session_id: str, system_file: Path) -> List[str]:
         args = [self.binary, "-p", "--session-id", session_id] + self._common()
@@ -251,21 +253,31 @@ class ClaudeHarness(Harness):
             args += ["--model", self.model]
         return args + ["--append-system-prompt-file", str(system_file)]
 
-    def build_resume_args(self, session_id: str) -> List[str]:
-        return [self.binary, "-p", "--resume", session_id] + self._common()
+    def build_resume_args(self, session_id: str, system_file: Path) -> List[str]:
+        # системный промпт не хранится в сессии: его передают на каждый ход
+        return [self.binary, "-p", "--resume", session_id] + self._common() + [
+            "--append-system-prompt-file", str(system_file)]
+
+    def _write_system_file(self, log: Path) -> Path:
+        system_file = Path(str(log) + ".system.md")
+        system_file.parent.mkdir(parents=True, exist_ok=True)
+        system_file.write_text(self.system_prompt, encoding="utf-8")
+        return system_file
 
     def start_turn(self, cwd, prompt, session_id, log, env):
         session_id = session_id or self.new_session_id()
-        system_file = Path(str(log) + ".system.md")
         try:
-            system_file.parent.mkdir(parents=True, exist_ok=True)
-            system_file.write_text(self.system_prompt, encoding="utf-8")
+            system_file = self._write_system_file(log)
         except OSError as e:
             return FailedProc("не удалось записать системный промпт: %s" % e, session_id)
         return self._spawn(self.build_start_args(session_id, system_file), cwd, env, session_id, prompt)
 
     def resume_turn(self, cwd, session_id, message, log, env):
-        return self._spawn(self.build_resume_args(session_id), cwd, env, session_id, message)
+        try:
+            system_file = self._write_system_file(log)
+        except OSError as e:
+            return FailedProc("не удалось записать системный промпт: %s" % e, session_id)
+        return self._spawn(self.build_resume_args(session_id, system_file), cwd, env, session_id, message)
 
     def terminal_command(self, cwd, session_id):
         return "cd %s && claude --resume %s" % (shlex.quote(str(cwd)), shlex.quote(session_id))
@@ -292,7 +304,9 @@ class CodexHarness(Harness):
         self.model = model
 
     def _exec_args(self) -> List[str]:
-        args = [self.binary, "exec", "--json", "--sandbox", self.sandbox]
+        # сеть нужна, чтобы агент достучался до локальной доски
+        args = [self.binary, "exec", "--json", "--sandbox", self.sandbox,
+                "-c", "sandbox_workspace_write.network_access=true"]
         if self.model:
             args += ["--model", self.model]
         return args

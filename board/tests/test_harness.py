@@ -36,6 +36,13 @@ def cat_proc(name, hint=None, exit_code=0):
 
 # --- сборка командных строк ---
 
+BOARD_RULES = [
+    "Bash(agent-board status:*)", "Bash(agent-board update:*)", "Bash(agent-board ask:*)",
+    "Bash(agent-board say:*)", "Bash(agent-board show:*)", "Bash(agent-board thread:*)",
+    "Bash(agent-board state:*)", "Bash(agent-board events:*)", "Bash(agent-board propose:*)",
+]
+
+
 def test_claude_start_args(tmp_path):
     # arrange
     h = ClaudeHarness("plan", model="opus", system_prompt="SYS")
@@ -44,30 +51,58 @@ def test_claude_start_args(tmp_path):
     # assert
     assert args == [
         "claude", "-p", "--session-id", "sid-1", "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "plan", "--allowedTools", "Bash(agent-board:*)", "--model", "opus", "--append-system-prompt-file", str(tmp_path / "s.md"),
+        "--permission-mode", "plan", "--allowedTools", *BOARD_RULES,
+        "--model", "opus", "--append-system-prompt-file", str(tmp_path / "s.md"),
     ]
+
+
+def test_claude_allowed_tools_do_not_include_lock_run(tmp_path):
+    # arrange / act
+    args = ClaudeHarness("auto").build_start_args("sid", tmp_path / "s.md")
+    # assert
+    assert not any("lock-run" in a or a == "Bash(agent-board:*)" for a in args)
 
 
 def test_claude_start_args_without_model(tmp_path):
     assert "--model" not in ClaudeHarness("auto").build_start_args("sid", tmp_path / "s.md")
 
 
-def test_claude_resume_args():
-    args = ClaudeHarness("auto").build_resume_args("sid-1")
+def test_claude_resume_args(tmp_path):
+    # arrange / act
+    args = ClaudeHarness("auto").build_resume_args("sid-1", tmp_path / "s.md")
+    # assert
     assert args == [
         "claude", "-p", "--resume", "sid-1", "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "auto", "--allowedTools", "Bash(agent-board:*)",
+        "--permission-mode", "auto", "--allowedTools", *BOARD_RULES,
+        "--append-system-prompt-file", str(tmp_path / "s.md"),
     ]
+
+
+def test_claude_resume_rewrites_system_prompt_file(tmp_path, monkeypatch):
+    # arrange
+    h = ClaudeHarness("auto", system_prompt="старый")
+    spawned = []
+    monkeypatch.setattr(ClaudeHarness, "_spawn", lambda self, args, cwd, env, hint, stdin_text="": spawned.append(args))
+    log = tmp_path / "logs" / "T-1.jsonl"
+    h.start_turn(tmp_path, "p", "sid-1", log, {})
+    # act
+    h.system_prompt = "новый"
+    h.resume_turn(tmp_path, "sid-1", "m", log, {})
+    # assert
+    system_file = spawned[1][spawned[1].index("--append-system-prompt-file") + 1]
+    assert Path(system_file).read_text(encoding="utf-8") == "новый"
 
 
 def test_codex_start_args():
     args = CodexHarness(model="m1").build_start_args()
-    assert args == ["codex", "exec", "--json", "--sandbox", "workspace-write", "--model", "m1", "-"]
+    assert args == ["codex", "exec", "--json", "--sandbox", "workspace-write",
+                    "-c", "sandbox_workspace_write.network_access=true", "--model", "m1", "-"]
 
 
 def test_codex_resume_args_keep_sandbox_before_subcommand():
     args = CodexHarness(sandbox="read-only").build_resume_args("tid")
-    assert args == ["codex", "exec", "--json", "--sandbox", "read-only", "resume", "tid", "-"]
+    assert args == ["codex", "exec", "--json", "--sandbox", "read-only",
+                    "-c", "sandbox_workspace_write.network_access=true", "resume", "tid", "-"]
 
 
 def test_terminal_commands(tmp_path):
