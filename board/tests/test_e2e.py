@@ -77,7 +77,7 @@ def test_full_flow_with_server_crash_during_dependent_turn(tmp_home, git_repo):
     old_group = None
     try:
         server.start()
-        server.call("POST", "stage", {"stage": "work"})
+        server.call("POST", "stage", {"stage": "work", "actor": "user"})
         a_script = script({"cli": ["status", "A", "in_progress"]}, {"write": {"path": "a-file.txt", "text": "from A"}},
                           {"cli": ["ask", "A", "--text", "Продолжать?", "--option", "да"]})
         b_script = script({"cli": ["status", "B", "in_progress"]}, {"write": {"path": "b-started.txt", "text": "b"}},

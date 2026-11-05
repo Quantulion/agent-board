@@ -445,7 +445,7 @@ class _Handler(BaseHTTPRequestHandler):
                 raise ValueError("from_task должен быть строкой")
             events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None)
         elif rest == ["stage"]:
-            events = board.set_stage(_need(body, "stage"), body.get("actor", "user"))
+            events = board.set_stage(_need(body, "stage"), _need(body, "actor"))
         elif rest == ["tasks"]:
             task = self._task(_need(body, "task"))
             events = board.add_task(task, _need(body, "actor"))

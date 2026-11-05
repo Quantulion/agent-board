@@ -674,16 +674,24 @@ def test_sse_reconnect_after_restart_replays_missed_events(tmp_home):
 
 def test_stage_change_by_user_and_errors(server):
     # act
-    ok = post(server, "/api/p/pay/stage", {"stage": "work"})
-    bad = post(server, "/api/p/pay/stage", {"stage": "decomposition"})
+    ok = post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
+    bad = post(server, "/api/p/pay/stage", {"stage": "decomposition", "actor": "user"})
     agent = post(server, "/api/p/pay/stage", {"stage": "done", "actor": "agent"})
-    missing = post(server, "/api/p/pay/stage", {})
+    missing = post(server, "/api/p/pay/stage", {"actor": "user"})
     # assert
     assert ok.status == 200
     assert [(e["type"], e["data"]) for e in ok.json()["events"]] == [
         ("stage_changed", {"from": "decomposition", "to": "work"})]
     assert bad.status == 400 and agent.status == 403 and missing.status == 400
     assert get(server, "/api/p/pay/state").json()["config"]["stage"] == "work"
+
+
+def test_stage_without_actor_is_rejected(server):
+    # act
+    r = post(server, "/api/p/pay/stage", {"stage": "work"})
+    # assert
+    assert r.status == 400 and "actor" in r.json()["error"]
+    assert get(server, "/api/p/pay/state").json()["config"]["stage"] == "decomposition"
 
 
 # --- API для интерфейса ---
