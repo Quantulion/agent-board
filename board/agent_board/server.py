@@ -14,7 +14,7 @@ import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from .board import Board, new_task_from_dict
@@ -84,7 +84,7 @@ def read_discovery() -> Optional[dict]:
 
 
 class _Hub:
-    """Борды проектов (по одному на проект) и подписки SSE на новые события."""
+    """Борды проектов (по одному на проект), подписки SSE и подписчики на события всех проектов."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -92,7 +92,18 @@ class _Hub:
         self._conds: Dict[str, threading.Condition] = {}
         self._queues: Dict[str, ResourceQueue] = {}
         self._versions: Dict[str, int] = {}
+        self._subscribers: List[Callable[[str, Event], None]] = []
         self.stopping = False
+
+    def subscribe(self, callback: Callable[[str, Event], None]) -> None:
+        """callback(slug, event) вызывается под блокировкой борда, по порядку seq; он не должен блокироваться."""
+        with self._lock:
+            self._subscribers.append(callback)
+
+    def unsubscribe(self, callback: Callable[[str, Event], None]) -> None:
+        with self._lock:
+            if callback in self._subscribers:
+                self._subscribers.remove(callback)
 
     def cond(self, slug: str) -> threading.Condition:
         with self._lock:
@@ -114,7 +125,7 @@ class _Hub:
             raise KeyError("Неизвестный проект: %s" % slug)
         with self._lock:
             if slug not in self._boards:
-                self._boards[slug] = Board(store, on_event=lambda e, s=slug: self._notify(s))
+                self._boards[slug] = Board(store, on_event=lambda e, s=slug: self._notify(s, e))
             return self._boards[slug]
 
     def queue(self, slug: str) -> ResourceQueue:
@@ -124,11 +135,18 @@ class _Hub:
                 self._queues[slug] = ResourceQueue(board)
             return self._queues[slug]
 
-    def _notify(self, slug: str) -> None:
+    def _notify(self, slug: str, event: Event) -> None:
         cond = self.cond(slug)
         with cond:
             self._versions[slug] = self._versions.get(slug, 0) + 1
             cond.notify_all()
+        with self._lock:
+            subscribers = list(self._subscribers)
+        for callback in subscribers:
+            try:
+                callback(slug, event)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
 
     def wake_all(self) -> None:
         self.stopping = True
@@ -426,7 +444,7 @@ class _HttpServer(ThreadingHTTPServer):
 class BoardServer:
     """Сервер доски. port=None — постоянный порт из DEFAULT_PORTS (или случайный, если все заняты)."""
 
-    def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None):
+    def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None, runner: bool = False):
         self.port = port
         self._requested_port = port
         self.static_dir = static_dir
@@ -435,6 +453,11 @@ class BoardServer:
         self._httpd: Optional[_HttpServer] = None
         self._thread: Optional[threading.Thread] = None
         self._lock_fd: Optional[int] = None
+        self._with_runner = runner
+        self.runner = None
+
+    def board_for(self, slug: str) -> Board:
+        return self.hub.board(slug)
 
     @property
     def url(self) -> str:
@@ -464,6 +487,12 @@ class BoardServer:
             path = discovery_path()
             atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
             os.chmod(str(path), 0o600)
+            if self._with_runner:
+                from .runner import Runner
+
+                runner = Runner(self)
+                runner.start()
+                self.runner = runner
         except BaseException:
             self._rollback_start(httpd)
             raise
@@ -475,6 +504,7 @@ class BoardServer:
             self._thread = None
         httpd.server_close()
         self._httpd = None
+        self._remove_own_discovery()
         self.port = self._requested_port
         self._release_lock()
 
@@ -507,6 +537,9 @@ class BoardServer:
             self._lock_fd = None
 
     def stop(self) -> None:
+        if self.runner is not None:
+            self.runner.stop_leaving_agents_running()
+            self.runner = None
         self.hub.wake_all()
         if self._httpd is not None:
             self._httpd.shutdown()

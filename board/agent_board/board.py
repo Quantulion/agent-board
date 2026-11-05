@@ -113,6 +113,22 @@ class Board:
         with self._lock:
             return self._emit(type, dict(data))
 
+    def update_meta(self, fields: dict) -> None:
+        """Служебные поля meta.json (состояние агента проекта и т.п.), без событий."""
+        with self._lock:
+            meta = self.store.load_meta()
+            meta.update(fields)
+            self.store.save_meta(meta)
+
+    def update_config(self, fields: dict) -> None:
+        with self._lock:
+            config = self.store.load_config()
+            for name, value in fields.items():
+                if not hasattr(config, name):
+                    raise ValueError("Неизвестное поле конфига: %s" % name)
+                setattr(config, name, value)
+            self.store.save_config(config)
+
     def snapshot(self) -> dict:
         with self._lock:
             config = self.store.load_config()

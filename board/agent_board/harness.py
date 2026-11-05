@@ -130,6 +130,25 @@ def _kill_group(proc) -> None:
         pass
 
 
+def terminate(proc, grace: float) -> None:
+    """Останавливает группу процессов хода: SIGTERM, через grace секунд SIGKILL."""
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except OSError:
+        return
+    try:
+        proc.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
 def _parse(line: str) -> Optional[dict]:
     line = line.strip()
     if not line.startswith("{"):

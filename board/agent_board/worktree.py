@@ -3,10 +3,11 @@ from __future__ import annotations
 import os
 import subprocess
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 WORKTREES_DIR = ".agent-board-worktrees"
 TIMEOUT = 120
+CONFLICT_MARKERS = ("<<<<<<< ", ">>>>>>> ")
 
 
 class GitError(RuntimeError):
@@ -79,10 +80,46 @@ def ensure_worktree(repo: Path, key: str, branch: str, base: str, merge: List[st
     return path
 
 
+def _merge_in_progress(path: Path) -> bool:
+    return _git(path, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
+
+
+def unmerged_files(path: Path) -> List[str]:
+    out = run_git(path, "diff", "--name-only", "--diff-filter=U", "-z")
+    return sorted({p for p in out.split("\0") if p})
+
+
+def _files_with_markers(path: Path, names: List[str]) -> List[str]:
+    found = []
+    for name in names:
+        try:
+            lines = (Path(path) / name).read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            continue
+        if any(line.startswith(CONFLICT_MARKERS) for line in lines):
+            found.append(name)
+    return found
+
+
+def _conclude_merge_check(path: Path) -> None:
+    # вливание с конфликтом агент разрешает правкой файлов: завершаем его, если следов конфликта не осталось
+    unmerged = unmerged_files(path)
+    if unmerged:
+        raise GitError("unmerged paths in {}: {}".format(path, ", ".join(unmerged)))
+    staged = [p for p in run_git(path, "diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD").split("\0") if p]
+    marked = _files_with_markers(path, staged)
+    if marked:
+        raise GitError("conflict markers left in {}: {}".format(path, ", ".join(marked)))
+
+
 def commit_all(path: Path, message: str) -> Optional[str]:
-    _check_no_merge_state(path)
+    merging = _merge_in_progress(path)
+    if not merging:
+        _check_no_merge_state(path)
     run_git(path, "add", "-A")
-    if not run_git(path, "status", "--porcelain").strip():
+    if merging:
+        _conclude_merge_check(path)
+    elif not run_git(path, "status", "--porcelain").strip():
         return None
     res = _git(path, "commit", "-m", message)
     if res.returncode != 0:
@@ -111,6 +148,36 @@ def rebase_onto(path: Path, new_base: str) -> bool:
         run_git(path, "rebase", "--abort")
         return False
     raise GitError("git rebase failed: " + (res.stdout + res.stderr).strip())
+
+
+def rebase_carrying_changes(path: Path, new_base: str) -> Tuple[bool, List[str]]:
+    """Ребейз ветки с переносом незакоммиченной работы.
+
+    (False, []) — ребейз не удался, ветка и изменения остались как были;
+    (True, files) — изменения перенесены, в files остались маркеры конфликта.
+    """
+    dirty = bool(run_git(path, "status", "--porcelain").strip())
+    if dirty:
+        run_git(path, "stash", "push", "-u", "-m", "agent-board: rebase onto " + new_base)
+    try:
+        ok = rebase_onto(path, new_base)
+    except GitError:
+        if dirty:
+            run_git(path, "stash", "pop")
+        raise
+    if not dirty:
+        return ok, []
+    res = _git(path, "stash", "pop")
+    if res.returncode == 0:
+        return ok, []
+    conflicts = unmerged_files(path)
+    if not conflicts:
+        raise GitError("git stash pop failed: " + (res.stdout + res.stderr).strip())
+    # индекс без конфликтных записей: агент разрешает конфликт правкой файлов, коммитит раннер
+    run_git(path, "reset", "-q")
+    # при конфликте git оставляет запись в stash; изменения уже в файлах, запись лишняя
+    run_git(path, "stash", "drop", "-q")
+    return ok, conflicts
 
 
 def _untracked(path: Path) -> List[str]:

@@ -10,6 +10,7 @@ from agent_board.worktree import (
     commit_all,
     diff,
     ensure_worktree,
+    rebase_carrying_changes,
     rebase_onto,
     run_git,
     worktree_path,
@@ -274,3 +275,111 @@ def test_run_git_timeout_raises_git_error(git_repo, monkeypatch):
     # act / assert
     with pytest.raises(GitError, match="timed out"):
         run_git(git_repo, "status")
+
+
+# --- завершение вливания при коммите (P6) ---
+
+def conflicted_worktree(git_repo):
+    make_branch(git_repo, "dep-1", "a.txt", "one\n")
+    make_branch(git_repo, "dep-2", "a.txt", "two\n")
+    with pytest.raises(GitError):
+        ensure_worktree(git_repo, "T-3", "T-3", "main", ["dep-1", "dep-2"])
+    return worktree_path(git_repo, "T-3")
+
+
+def test_commit_all_concludes_merge_resolved_by_editing(git_repo):
+    # arrange
+    p = conflicted_worktree(git_repo)
+    (p / "a.txt").write_text("one and two\n")
+    # act
+    sha = commit_all(p, "T-3 title")
+    # assert
+    assert sha
+    assert len(run_git(p, "log", "-1", "--format=%P").split()) == 2
+    assert run_git(p, "log", "-1", "--format=%s").strip() == "T-3 title"
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=p).returncode != 0
+    assert run_git(p, "status", "--porcelain").strip() == ""
+
+
+def test_commit_all_refuses_merge_with_marker_lines_left(git_repo):
+    # arrange
+    p = conflicted_worktree(git_repo)
+    (p / "a.txt").write_text("<<<<<<< HEAD\none\n=======\ntwo\n>>>>>>> dep-2\n")
+    # act / assert
+    with pytest.raises(GitError, match="a.txt"):
+        commit_all(p, "T-3 title")
+    assert subprocess.run(["git", "rev-parse", "-q", "--verify", "MERGE_HEAD"], cwd=p).returncode == 0
+
+
+def test_commit_all_merge_ignores_marker_like_lines_in_unchanged_files(git_repo):
+    # arrange
+    commit_file(git_repo, "doc.txt", ">>>>>>> example from docs\n")
+    p = conflicted_worktree(git_repo)
+    (p / "a.txt").write_text("resolved\n")
+    # act
+    sha = commit_all(p, "T-3 title")
+    # assert
+    assert sha
+
+
+# --- ребейз с незакоммиченными изменениями (P8) ---
+
+def test_rebase_carrying_changes_moves_dirty_work_onto_new_base(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    (p / "new.txt").write_text("n\n")
+    commit_file(git_repo, "main.txt", "x")
+    # act
+    ok, conflicts = rebase_carrying_changes(p, "main")
+    # assert
+    assert (ok, conflicts) == (True, [])
+    assert (p / "main.txt").exists()
+    assert (p / "a.txt").read_text() == "mine\n" and (p / "new.txt").read_text() == "n\n"
+    assert run_git(p, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    assert run_git(p, "stash", "list").strip() == ""
+
+
+def test_rebase_carrying_changes_clean_tree(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    commit_file(git_repo, "main.txt", "x")
+    # act
+    ok, conflicts = rebase_carrying_changes(p, "main")
+    # assert
+    assert (ok, conflicts) == (True, [])
+    assert (p / "main.txt").exists()
+
+
+def test_rebase_carrying_changes_pop_conflict_leaves_markers_and_clean_index(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    (p / "new.txt").write_text("n\n")
+    commit_file(git_repo, "a.txt", "theirs\n")
+    # act
+    ok, conflicts = rebase_carrying_changes(p, "main")
+    # assert
+    assert (ok, conflicts) == (True, ["a.txt"])
+    text = (p / "a.txt").read_text()
+    assert "<<<<<<< " in text and "mine" in text and "theirs" in text
+    assert (p / "new.txt").read_text() == "n\n"
+    assert run_git(p, "diff", "--name-only", "--diff-filter=U").strip() == ""
+
+
+def test_rebase_carrying_changes_rebase_conflict_aborts_and_restores_changes(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    commit_all(p, "mine")
+    head = run_git(p, "rev-parse", "HEAD").strip()
+    (p / "wip.txt").write_text("w\n")
+    (p / "a.txt").write_text("mine more\n")
+    commit_file(git_repo, "a.txt", "theirs\n")
+    # act
+    ok, conflicts = rebase_carrying_changes(p, "main")
+    # assert
+    assert (ok, conflicts) == (False, [])
+    assert run_git(p, "rev-parse", "HEAD").strip() == head
+    assert (p / "wip.txt").read_text() == "w\n" and (p / "a.txt").read_text() == "mine more\n"
+    assert run_git(p, "stash", "list").strip() == ""
