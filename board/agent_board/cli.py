@@ -1,0 +1,217 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import sys
+import threading
+import urllib.error
+import urllib.request
+from typing import List, Optional
+
+from .config import ProjectConfig
+from .server import BoardServer, read_discovery
+from .store import ProjectStore
+
+NOT_RUNNING = "доска не запущена: python3 -m agent_board serve"
+
+
+class CliError(Exception):
+    def __init__(self, message: str, code: int = 1):
+        super().__init__(message)
+        self.code = code
+
+
+def _actor() -> str:
+    return os.environ.get("AGENT_BOARD_ACTOR") or "agent"
+
+
+def _project(args) -> str:
+    slug = args.project or os.environ.get("AGENT_BOARD_PROJECT")
+    if not slug:
+        raise CliError("Не указан проект: --project или $AGENT_BOARD_PROJECT")
+    return slug
+
+
+def _json_arg(raw: str, name: str):
+    try:
+        return json.loads(raw)
+    except ValueError as e:
+        raise CliError("Некорректный JSON в %s: %s" % (name, e))
+
+
+def _request(method: str, path: str, body: Optional[dict] = None):
+    info = read_discovery()
+    if info is None:
+        raise CliError(NOT_RUNNING, 2)
+    headers = {"X-Board-Token": info["token"]}
+    data = None
+    if body is not None:
+        data = json.dumps(body).encode("utf-8")
+        headers["Content-Type"] = "application/json"
+    req = urllib.request.Request(
+        "http://127.0.0.1:%d%s" % (info["port"], path), data=data, method=method, headers=headers
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        try:
+            message = json.loads(e.read().decode("utf-8")).get("error") or "HTTP %d" % e.code
+        except (ValueError, AttributeError):
+            message = "HTTP %d" % e.code
+        raise CliError(str(message))
+    except urllib.error.URLError:
+        raise CliError(NOT_RUNNING, 2)
+
+
+def _p(args, suffix: str) -> str:
+    return "/api/p/%s/%s" % (_project(args), suffix)
+
+
+def cmd_serve(args):
+    server = BoardServer(port=args.port)
+    server.start()
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    print(server.url, flush=True)
+    try:
+        while not stop.wait(0.5):
+            pass
+    finally:
+        server.stop()
+    return None
+
+
+def cmd_init(args):
+    ProjectStore(args.slug).create(ProjectConfig(slug=args.slug, title=args.title))
+    return {"slug": args.slug, "title": args.title}
+
+
+def cmd_show(args):
+    for task in _request("GET", _p(args, "state"))["tasks"]:
+        if task["key"] == args.key:
+            return task
+    raise CliError("Неизвестная задача: %s" % args.key)
+
+
+def cmd_state(args):
+    return _request("GET", _p(args, "state"))
+
+
+def cmd_status(args):
+    return _request("POST", _p(args, "tasks/%s/transition" % args.key), {"to": args.status, "actor": _actor()})
+
+
+UPDATE_OPTIONS = [
+    ("summary", "summary", False),
+    ("todo", "todo_json", True),
+    ("changed_files", "changed_files_json", True),
+    ("review", "review_json", True),
+    ("report", "report", False),
+    ("branch", "branch", False),
+    ("worktree", "worktree", False),
+    ("session_id", "session_id", False),
+]
+
+
+def cmd_update(args):
+    fields = {}
+    for field, attr, is_json in UPDATE_OPTIONS:
+        value = getattr(args, attr)
+        if value is None:
+            continue
+        fields[field] = _json_arg(value, "--" + attr.replace("_", "-")) if is_json else value
+    return _request("POST", _p(args, "tasks/%s/update" % args.key), {"actor": _actor(), "fields": fields})
+
+
+def cmd_ask(args):
+    question = {"text": args.text, "options": args.option or [], "context": args.context or ""}
+    if args.recommended is not None:
+        question["recommended"] = args.recommended
+    return _request("POST", _p(args, "tasks/%s/questions" % args.key), {"question": question})
+
+
+def cmd_say(args):
+    return _request("POST", _p(args, "threads/%s/messages" % args.thread), {"author": _actor(), "text": args.text})
+
+
+def cmd_thread(args):
+    return _request("GET", _p(args, "threads/%s" % args.thread))
+
+
+def cmd_add_task(args):
+    task = _json_arg(args.json, "--json")
+    return _request("POST", _p(args, "tasks"), {"task": task, "actor": "user"})
+
+
+def cmd_propose(args):
+    payload = _json_arg(args.json, "--json")
+    return _request("POST", _p(args, "proposals"), {"kind": args.kind, "payload": payload, "reason": args.reason or ""})
+
+
+def cmd_events(args):
+    return _request("GET", _p(args, "events?since=%d" % args.since))
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="agent_board")
+    parser.add_argument("--project", help="slug проекта (по умолчанию $AGENT_BOARD_PROJECT)")
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    def add(name, func, **kw):
+        sp = sub.add_parser(name, **kw)
+        sp.set_defaults(func=func)
+        return sp
+
+    sp = add("serve", cmd_serve, help="запустить доску")
+    sp.add_argument("--port", type=int, default=0)
+    sp = add("init", cmd_init, help="создать проект")
+    sp.add_argument("slug")
+    sp.add_argument("--title", required=True)
+    add("state", cmd_state, help="весь snapshot проекта")
+    add("show", cmd_show).add_argument("key")
+    sp = add("status", cmd_status)
+    sp.add_argument("key")
+    sp.add_argument("status")
+    sp = add("update", cmd_update)
+    sp.add_argument("key")
+    for _, attr, _ in UPDATE_OPTIONS:
+        sp.add_argument("--" + attr.replace("_", "-"), dest=attr)
+    sp = add("ask", cmd_ask)
+    sp.add_argument("key")
+    sp.add_argument("--text", required=True)
+    sp.add_argument("--option", action="append")
+    sp.add_argument("--context")
+    sp.add_argument("--recommended")
+    sp = add("say", cmd_say)
+    sp.add_argument("thread")
+    sp.add_argument("--text", required=True)
+    add("thread", cmd_thread).add_argument("thread")
+    add("add-task", cmd_add_task).add_argument("--json", required=True)
+    sp = add("propose", cmd_propose)
+    sp.add_argument("kind")
+    sp.add_argument("--json", required=True)
+    sp.add_argument("--reason")
+    add("events", cmd_events).add_argument("--since", type=int, default=0)
+    return parser
+
+
+def main(argv: Optional[List[str]] = None) -> int:
+    args = build_parser().parse_args(argv)
+    try:
+        result = args.func(args)
+    except CliError as e:
+        print(str(e), file=sys.stderr)
+        return e.code
+    except FileExistsError:
+        print("Проект уже существует: %s" % getattr(args, "slug", ""), file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        return 1
+    if result is not None:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    return 0
