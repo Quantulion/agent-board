@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
 
 import pytest
 
@@ -144,3 +146,94 @@ def test_say_without_task_env_does_not_escalate(srv, capsys, monkeypatch):
     # assert
     assert [e["type"] for e in out["events"]] == ["message_posted"]
 
+
+
+# --- lock-run ---
+
+def _declare_resource(srv):
+    from agent_board.store import ProjectStore
+
+    store = ProjectStore("pay")
+    config = store.load_config()
+    config.resources = [{"name": "tests", "description": "функциональные тесты"}]
+    store.save_config(config)
+
+
+def _lock_events(type):
+    from agent_board.store import ProjectStore
+
+    return [e.data for e in ProjectStore("pay").read_events() if e.type == type]
+
+
+def test_lock_run_runs_command_and_releases(srv, capsys, monkeypatch, tmp_path):
+    # arrange
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    marker = tmp_path / "ran"
+    # act
+    code, _, _ = run(capsys, "lock-run", "tests", "--", sys.executable, "-c", "open(%r, 'w').write('x')" % str(marker))
+    # assert
+    assert code == 0 and marker.read_text() == "x"
+    assert _lock_events("lock_acquired") == [{"key": "T-1", "resource": "tests"}]
+    assert _lock_events("lock_released") == [{"key": "T-1", "resource": "tests"}]
+
+
+def test_lock_run_returns_command_exit_code_and_still_releases(srv, capsys, monkeypatch):
+    # arrange
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    # act
+    code, _, _ = run(capsys, "lock-run", "tests", "--", sys.executable, "-c", "raise SystemExit(7)")
+    # assert
+    assert code == 7
+    assert len(_lock_events("lock_released")) == 1
+
+
+def test_lock_run_waits_for_holder_and_task_is_queued(srv, capsys, monkeypatch):
+    # arrange
+    import threading
+    import time
+
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "y"}')
+    queue = srv.hub.queue("pay")
+    assert queue.acquire("tests", "T-1", os.getpid()) == 0
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-2")
+    monkeypatch.setenv("AGENT_BOARD_LOCK_POLL", "0.05")
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(code=main(["lock-run", "tests", "--", sys.executable, "-c", "pass"])))
+    # act
+    worker.start()
+    deadline = time.time() + 10
+    while time.time() < deadline and not _lock_events("lock_waiting"):
+        time.sleep(0.02)
+    waiting_status = srv.hub.board("pay").store.load_tasks()["T-2"].status.value
+    queue.release("tests", "T-1", os.getpid())
+    worker.join(10)
+    # assert
+    assert not worker.is_alive() and result["code"] == 0
+    assert waiting_status == "queued"
+    assert srv.hub.board("pay").store.load_tasks()["T-2"].status.value == "not_started"
+    assert "позиция 1" in capsys.readouterr().err
+
+
+def test_lock_run_without_task_env_fails(srv, capsys):
+    # arrange
+    _declare_resource(srv)
+    # act
+    code, _, err = run(capsys, "lock-run", "tests", "--", "true")
+    # assert
+    assert code == 1 and "AGENT_BOARD_TASK" in err
+
+
+def test_lock_run_undeclared_resource_fails(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    # act
+    code, _, err = run(capsys, "lock-run", "stand", "--", "true")
+    # assert
+    assert code == 1 and "stand" in err

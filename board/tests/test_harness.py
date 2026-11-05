@@ -251,6 +251,28 @@ def test_fake_script_changes_status_and_writes_file(srv, tmp_home, tmp_path, mon
     assert srv.hub.board("pay").snapshot()["tasks"][0]["status"] == "in_progress"
 
 
+def test_fake_lock_run_step_runs_command_under_resource(srv, tmp_home, tmp_path):
+    # arrange
+    from agent_board.store import ProjectStore
+
+    store = ProjectStore("pay")
+    config = store.load_config()
+    config.resources = [{"name": "tests", "description": ""}]
+    store.save_config(config)
+    main(["--project", "pay", "add-task", "--json", '{"key": "T1", "title": "x"}'])
+    h = FakeHarness()
+    log = tmp_path / "logs" / "T1.jsonl"
+    command = [sys.executable, "-c", "open('ran.txt', 'w').write('ok')"]
+    prompt = script({"lock-run": ["tests", "--"] + command})
+    # act
+    res = h.finish(h.start_turn(tmp_path, prompt, None, log, fake_env(tmp_home)), log)
+    # assert
+    assert res.ok is True
+    assert (tmp_path / "ran.txt").read_text() == "ok"
+    types = [e.type for e in store.read_events()]
+    assert types.count("lock_acquired") == 1 and types.count("lock_released") == 1
+
+
 def test_fake_resume_keeps_session_id(tmp_home, tmp_path):
     h = FakeHarness()
     log = tmp_path / "l"

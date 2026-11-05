@@ -19,6 +19,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .board import Board, new_task_from_dict
 from .model import Event, Question, Status, Task
+from .resources import ResourceQueue
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
 
 COOKIE_NAME = "board_token"
@@ -89,6 +90,7 @@ class _Hub:
         self._lock = threading.Lock()
         self._boards: Dict[str, Board] = {}
         self._conds: Dict[str, threading.Condition] = {}
+        self._queues: Dict[str, ResourceQueue] = {}
         self._versions: Dict[str, int] = {}
         self.stopping = False
 
@@ -114,6 +116,13 @@ class _Hub:
             if slug not in self._boards:
                 self._boards[slug] = Board(store, on_event=lambda e, s=slug: self._notify(s))
             return self._boards[slug]
+
+    def queue(self, slug: str) -> ResourceQueue:
+        board = self.board(slug)
+        with self._lock:
+            if slug not in self._queues:
+                self._queues[slug] = ResourceQueue(board)
+            return self._queues[slug]
 
     def _notify(self, slug: str) -> None:
         cond = self.cond(slug)
@@ -275,6 +284,8 @@ class _Handler(BaseHTTPRequestHandler):
             raise KeyError("Неизвестный маршрут")
         board = self.app.hub.board(parts[1])
         rest = parts[2:]
+        if method == "POST" and len(rest) == 3 and rest[0] == "locks":
+            return self._api_lock(parts[1], rest[1], rest[2])
         if method == "GET":
             return self._api_get(board, parts[1], rest, query)
         return self._api_post(board, rest)
@@ -301,6 +312,20 @@ class _Handler(BaseHTTPRequestHandler):
             except ValueError:
                 raise ValueError("Некорректный since: %r" % raw)
         return result
+
+    def _api_lock(self, slug: str, resource: str, action: str) -> None:
+        body = self._read_body()
+        task, pid = _need(body, "task"), _need(body, "pid")
+        if not isinstance(task, str) or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+            raise ValueError("task должен быть строкой, pid — положительным числом")
+        queue = self.app.hub.queue(slug)
+        if action == "release":
+            queue.release(resource, task, pid)
+            return self._send_json(200, {"position": None})
+        if action not in ("acquire", "poll"):
+            raise KeyError("Неизвестный маршрут")
+        position = getattr(queue, action)(resource, task, pid)
+        self._send_json(200, {"position": position})
 
     def _api_post(self, board: Board, rest: List[str]) -> None:
         body = self._read_body()

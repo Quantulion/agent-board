@@ -5,7 +5,9 @@ import json
 import os
 import signal
 import sys
+import subprocess
 import threading
+import time
 import urllib.error
 import urllib.request
 from typing import List, Optional
@@ -14,12 +16,19 @@ from .config import ProjectConfig
 from .server import BoardServer, ServerAlreadyRunning, read_discovery
 from .store import ProjectStore
 
+LOCK_POLL_SECONDS = 2.0
 NOT_RUNNING = "доска не запущена: python3 -m agent_board serve"
 
 
 class CliError(Exception):
     def __init__(self, message: str, code: int = 1):
         super().__init__(message)
+        self.code = code
+
+
+class ExitWith(Exception):
+    def __init__(self, code: int):
+        super().__init__(code)
         self.code = code
 
 
@@ -163,6 +172,52 @@ def cmd_events(args):
     return _request("GET", _p(args, "events?since=%d" % args.since))
 
 
+def cmd_lock_run(args):
+    cmd = list(args.cmd)
+    if cmd and cmd[0] == "--":
+        cmd = cmd[1:]
+    if not cmd:
+        raise CliError("Не указана команда: agent-board lock-run <ресурс> -- <команда...>")
+    task = os.environ.get("AGENT_BOARD_TASK")
+    if not task:
+        raise CliError("Не задана переменная $AGENT_BOARD_TASK")
+    interval = float(os.environ.get("AGENT_BOARD_LOCK_POLL") or LOCK_POLL_SECONDS)
+    pid = os.getpid()
+    base = _p(args, "locks/%s/" % args.resource)
+    body = {"task": task, "pid": pid}
+    try:
+        position = _lock_call(base + "acquire", body)
+        shown = None
+        while position > 0:
+            if position != shown:
+                print("ждёт ресурс %s: позиция %d" % (args.resource, position), file=sys.stderr, flush=True)
+                shown = position
+            time.sleep(interval)
+            position = _lock_call(base + "poll", body)
+        try:
+            code = subprocess.call(cmd)
+        except OSError as e:
+            print("Не удалось запустить %s: %s" % (cmd[0], e), file=sys.stderr)
+            code = 127
+        raise ExitWith(code)
+    finally:
+        try:
+            _request("POST", base + "release", body)
+        except CliError as e:
+            print("Не удалось освободить ресурс %s: %s" % (args.resource, e), file=sys.stderr)
+
+
+def _lock_call(path: str, body: dict) -> int:
+    # при недоступном сервере (рестарт) ждём и повторяем; очередь сама восстановит запись
+    while True:
+        try:
+            return _request("POST", path, body)["position"]
+        except CliError as e:
+            if e.code != 2:
+                raise
+            time.sleep(float(os.environ.get("AGENT_BOARD_LOCK_POLL") or LOCK_POLL_SECONDS))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_board")
     parser.add_argument("--project", help="slug проекта (по умолчанию $AGENT_BOARD_PROJECT)")
@@ -202,6 +257,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)
     sp.add_argument("--reason")
+    sp = add("lock-run", cmd_lock_run, help="выполнить команду под эксклюзивным ресурсом")
+    sp.add_argument("resource")
+    sp.add_argument("cmd", nargs=argparse.REMAINDER)
     add("events", cmd_events).add_argument("--since", type=int, default=0)
     return parser
 
@@ -210,6 +268,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         result = args.func(args)
+    except ExitWith as e:
+        return e.code
     except CliError as e:
         print(str(e), file=sys.stderr)
         return e.code
