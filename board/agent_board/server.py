@@ -56,6 +56,7 @@ def _load_or_create_token(path: Path) -> str:
     except FileNotFoundError:
         token = ""
     if token:
+        os.chmod(str(path), 0o600)
         return token
     token = secrets.token_urlsafe(24)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
@@ -427,19 +428,35 @@ class BoardServer:
         except BaseException:
             self._release_lock()
             raise
-        httpd.app = self  # type: ignore[attr-defined]
-        self._httpd = httpd
-        self.port = httpd.server_address[1]
-        self._thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
-        self._thread.start()
-        path = discovery_path()
-        atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
-        os.chmod(str(path), 0o600)
+        try:
+            httpd.app = self  # type: ignore[attr-defined]
+            self._httpd = httpd
+            self.port = httpd.server_address[1]
+            self._thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
+            self._thread.start()
+            path = discovery_path()
+            atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
+            os.chmod(str(path), 0o600)
+        except BaseException:
+            self._rollback_start(httpd)
+            raise
+
+    def _rollback_start(self, httpd: _HttpServer) -> None:
+        if self._thread is not None:
+            httpd.shutdown()
+            self._thread.join(timeout=5)
+            self._thread = None
+        httpd.server_close()
+        self._httpd = None
+        self._release_lock()
 
     def _bind(self) -> _HttpServer:
         if self.port is not None:
             return _HttpServer(("127.0.0.1", self.port), _Handler)
         for port in DEFAULT_PORTS:
+            # на macOS bind на 127.0.0.1 проходит даже при чужом слушателе на 0.0.0.0
+            if _port_open(port):
+                continue
             try:
                 return _HttpServer(("127.0.0.1", port), _Handler)
             except OSError as e:

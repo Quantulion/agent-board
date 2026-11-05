@@ -529,6 +529,70 @@ def test_all_default_ports_busy_falls_back_to_random(tmp_home, monkeypatch):
     assert port > 0 and port != busy_port
 
 
+def test_default_port_with_foreign_listener_on_all_interfaces_is_skipped(tmp_home):
+    # arrange
+    foreign = socket.socket()
+    foreign.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        foreign.bind(("0.0.0.0", DEFAULT_PORTS[0]))
+    except OSError:
+        foreign.close()
+        pytest.skip("первый порт по умолчанию недоступен")
+    foreign.listen(1)
+    srv = BoardServer()
+
+    # act
+    try:
+        srv.start()
+        port = srv.port
+    finally:
+        srv.stop()
+        foreign.close()
+
+    # assert
+    assert port != DEFAULT_PORTS[0]
+
+
+def test_start_failure_after_bind_releases_lock_and_socket(tmp_home, monkeypatch):
+    # arrange
+    srv = BoardServer(port=0)
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(server_mod, "atomic_write_json", boom)
+
+    # act
+    with pytest.raises(RuntimeError):
+        srv.start()
+    monkeypatch.undo()
+    again = BoardServer(port=0)
+    again.start()
+    again.stop()
+
+    # assert
+    assert srv._httpd is None
+    assert srv._lock_fd is None
+    assert again.port > 0
+
+
+def test_existing_token_with_loose_mode_is_tightened(tmp_home):
+    # arrange
+    tmp_home.mkdir(parents=True, exist_ok=True)
+    path = tmp_home / "token"
+    path.write_text("sometoken\n")
+    os.chmod(str(path), 0o644)
+    srv = BoardServer(port=0)
+
+    # act
+    srv.start()
+    srv.stop()
+
+    # assert
+    assert srv.token == "sometoken"
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+
 def test_sse_reconnect_after_restart_replays_missed_events(tmp_home):
     # arrange
     ProjectStore("pay").create(ProjectConfig(slug="pay", title="P", chains=True))
