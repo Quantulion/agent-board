@@ -14,7 +14,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 from . import prompts
 from .board import Board
 from .graph import base_for, open_deps
-from .harness import Harness, TurnResult, make_harness, terminate, terminate_group
+from .harness import Harness, TurnResult, is_same_process, make_harness, terminate, terminate_group, turn_process_record
 from .model import Event, Status, Task
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
@@ -33,6 +33,7 @@ MAX_FAILURES = 3
 STOP_GRACE_SECONDS = 10.0
 # паузы перед повтором после 1-й и 2-й подряд неудачи
 RETRY_DELAYS = (5.0, 30.0)
+LEFTOVER_MISSING_TEXT = "Старый процесс хода не найден (завершился или pid занят другим процессом), его не трогаем."
 INTERRUPTED_TEXT = "Ход прерван перезапуском сервера, агент продолжит с сообщением о прерывании."
 FAILURES_TEXT = ("Агент упал %d раза подряд, автоматический перезапуск остановлен: %s. "
                  "Напишите сообщение или смените статус, чтобы запустить его снова.")
@@ -219,10 +220,15 @@ class Runner:
         }
 
     @staticmethod
-    def _kill_leftover(pgid) -> None:
+    def _kill_leftover(board: Board, thread: str, record) -> None:
         # процесс прерванного хода мог пережить сервер: две копии на одной сессии недопустимы
-        if isinstance(pgid, int) and pgid > 0:
-            terminate_group(pgid, STOP_GRACE_SECONDS)
+        if not isinstance(record, dict):
+            return
+        if is_same_process(record):
+            terminate_group(record["pgid"], STOP_GRACE_SECONDS)
+            return
+        print("runner: старый процесс хода %s не найден: %r" % (thread, record), file=sys.stderr)
+        board.post_message(thread, "system", LEFTOVER_MISSING_TEXT)
 
     def _recover(self) -> None:
         for slug in list_projects():
@@ -242,8 +248,8 @@ class Runner:
             woken = set()
             for key, task in sorted(tasks.items()):
                 if task.agent_state == "running":
-                    self._kill_leftover(task.turn_pgid)
-                    board.update_task(key, "system", {"agent_state": "idle", "turn_pgid": None})
+                    self._kill_leftover(board, key, task.turn_process)
+                    board.update_task(key, "system", {"agent_state": "idle", "turn_process": None})
                     board.post_message(key, "system", INTERRUPTED_TEXT)
                     board.record("agent_wake", {"key": key, "reason": "interrupted"})
                     woken.add(key)
@@ -253,8 +259,8 @@ class Runner:
                     board.record("agent_wake", {"key": key, "reason": reason})
                     woken.add(key)
             if meta.get("project_agent_state") == "running":
-                self._kill_leftover(meta.get("project_turn_pgid"))
-                board.update_meta({"project_agent_state": "idle", "project_turn_pgid": None})
+                self._kill_leftover(board, PROJECT_THREAD, meta.get("project_turn_process"))
+                board.update_meta({"project_agent_state": "idle", "project_turn_process": None})
                 board.post_message(PROJECT_THREAD, "system", INTERRUPTED_TEXT)
                 board.record("agent_wake", {"key": PROJECT_THREAD, "reason": "interrupted"})
                 woken.add(PROJECT_THREAD)
@@ -490,8 +496,8 @@ class Runner:
         if extra:
             text += "\n" + prompts.wake_message(extra, "", BOARD_CLI)
         proc = harness.start_turn(path, text, session_id, self._log(board, key), self._env(board, key))
-        board.update_task(key, "system", {"session_id": session_id})
-        self._begin(k, board, harness, proc, _Turn(proc, deliver, True, session_id), deliver)
+        self._begin(k, board, harness, proc, _Turn(proc, deliver, True, session_id), deliver,
+                    lambda: board.update_task(key, "system", {"session_id": session_id}))
 
     def _resume_task(self, k: Key, board: Board, task: Task, tasks, config, deliver: List[dict]) -> None:
         path = Path(task.worktree)
@@ -547,16 +553,21 @@ class Runner:
             if extra:
                 text += "\n" + prompts.wake_message(extra, "", BOARD_CLI)
             proc = harness.start_turn(cwd, text, session_id, log, env)
-            board.update_config({"project_session_id": session_id})
             turn = _Turn(proc, reasons, True, session_id)
+        self._begin(k, board, harness, proc, turn, reasons, lambda: self._project_started(board, turn, last_seq))
+
+    @staticmethod
+    def _project_started(board: Board, turn: _Turn, last_seq: int) -> None:
+        if turn.fresh:
+            board.update_config({"project_session_id": turn.session_id})
         board.update_meta({"project_last_seen": last_seq})
-        self._begin(k, board, harness, proc, turn, reasons)
 
     @staticmethod
     def _log(board: Board, key: str) -> Path:
         return board.store.root / "logs" / (key + ".jsonl")
 
-    def _begin(self, k: Key, board: Board, harness: Harness, proc, turn: _Turn, delivered: List[dict]) -> None:
+    def _begin(self, k: Key, board: Board, harness: Harness, proc, turn: _Turn, delivered: List[dict],
+               on_started: Optional[Callable[[], None]] = None) -> None:
         log = self._log(board, k[1])
 
         def wait() -> None:
@@ -566,19 +577,22 @@ class Runner:
                 result = TurnResult(session_id=turn.session_id, ok=False, error="ошибка раннера: %r" % e, exit_code=-1)
             self._inbox.put(("done", k, turn, result))
 
-        # ожидание хода запускается первым: после этого ход обязательно вернётся в рабочий поток
+        # процесс уже запущен: при любом сбое до передачи хода ожидающему потоку его нужно остановить,
+        # иначе он останется без присмотра, а повтор запустит второй на той же сессии
         try:
+            if on_started is not None:
+                on_started()
             threading.Thread(target=wait, name="board-turn-%s" % k[1], daemon=True).start()
         except BaseException:
             terminate(proc, 0)
             raise
         self._turns[k] = turn
         self._pending[k] = [r for r in self._pending.get(k, []) if not any(r is x for x in delivered)]
-        pgid = getattr(proc, "pid", None)
+        record = turn_process_record(proc, turn.session_id)
         if k[1] == PROJECT_THREAD:
-            board.update_meta({"project_agent_state": "running", "project_turn_error": "", "project_turn_pgid": pgid})
+            board.update_meta({"project_agent_state": "running", "project_turn_error": "", "project_turn_process": record})
         else:
-            board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "turn_pgid": pgid})
+            board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "turn_process": record})
         board.record("turn_started", {"key": k[1]})
 
     def _on_turn_done(self, k: Key, turn: _Turn, result: TurnResult) -> None:
@@ -615,7 +629,7 @@ class Runner:
             self._pending[k] = turn.reasons + self._pending.get(k, [])
         if project:
             board.update_config({"project_session_id": session_id})
-            board.update_meta({"project_agent_state": state, "project_turn_error": error, "project_turn_pgid": None})
+            board.update_meta({"project_agent_state": state, "project_turn_error": error, "project_turn_process": None})
         elif k[1] in board.store.load_tasks():
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])
@@ -625,7 +639,7 @@ class Runner:
     def _update_task_after_turn(self, board: Board, key: str, state: str, error: str, session_id: Optional[str]) -> None:
         task = board.store.load_tasks()[key]
         fields = {"agent_state": state, "turn_error": error, "last_turn_at": self._clock(),
-                  "session_id": session_id, "turn_pgid": None}
+                  "session_id": session_id, "turn_process": None}
         if task.worktree and task.base_branch:
             try:
                 fields["changed_files"] = changed_files(Path(task.worktree), task.base_branch)

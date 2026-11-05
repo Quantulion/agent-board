@@ -160,6 +160,44 @@ def group_alive(pgid: int) -> bool:
     return True
 
 
+def process_identity(pid: int) -> Optional[dict]:
+    """Время запуска и командная строка процесса или None, если процесса нет."""
+    try:
+        res = subprocess.run(["ps", "-o", "lstart=", "-o", "command=", "-p", str(int(pid))],
+                             capture_output=True, text=True, timeout=10)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return None
+    line = res.stdout.strip()
+    if res.returncode != 0 or not line:
+        return None
+    # lstart — пять полей: «Thu Nov  5 19:09:21 2026»
+    parts = line.split(None, 5)
+    if len(parts) < 6:
+        return None
+    return {"started": " ".join(parts[:5]), "command": parts[5]}
+
+
+def turn_process_record(proc, session_id: Optional[str]) -> Optional[dict]:
+    """Опознавательные данные процесса хода, чтобы после перезапуска не задеть чужой процесс с тем же pid."""
+    pid = getattr(proc, "pid", None)
+    if not pid:
+        return None
+    args = [str(a) for a in (getattr(proc, "args", None) or [])]
+    joined = " ".join(args)
+    mark = session_id if session_id and session_id in joined else (Path(args[0]).name if args else "")
+    identity = process_identity(pid)
+    return {"pgid": pid, "started": identity["started"] if identity else None, "mark": mark}
+
+
+def is_same_process(record: dict) -> bool:
+    pgid = record.get("pgid")
+    if not isinstance(pgid, int) or pgid <= 0 or not record.get("started") or not record.get("mark"):
+        return False
+    identity = process_identity(pgid)
+    return (identity is not None and identity["started"] == record["started"]
+            and record["mark"] in identity["command"])
+
+
 def terminate_group(pgid: int, grace: float, poll: float = 0.05) -> bool:
     """Останавливает чужую (не нашу дочернюю) группу процессов; True, если группы больше нет."""
     for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 5.0)):

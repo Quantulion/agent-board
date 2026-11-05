@@ -109,7 +109,7 @@ class Task(_Serializable):
     turn_error: str = ""
     last_turn_at: str = ""
     harness: str = ""
-    turn_pgid: Optional[int] = None
+    turn_process: Optional[dict] = None
     updated_at: str = ""
 
     @classmethod

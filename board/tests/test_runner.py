@@ -614,3 +614,62 @@ def test_failed_turn_is_retried_after_delay(make_project, start_server, calls, m
     # assert
     assert early == 1
     assert time.monotonic() - failed_at >= 0.8
+
+
+def test_recovery_does_not_signal_process_with_other_identity(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project()
+    stranger = subprocess.Popen(["sleep", "30"], start_new_session=True)
+    try:
+        wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+        t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+        t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
+        t.agent_state, t.harness = "running", "fake"
+        t.turn_process = {"pgid": stranger.pid, "started": "Mon Jan  1 00:00:00 2001", "mark": "s-1"}
+        store.save_task(t)
+        # act
+        srv = start_server()
+        wait_events(store, "turn_finished", "T-1")
+        # assert
+        assert stranger.poll() is None
+        assert any("процесс хода не найден" in text for text in thread_texts(store, "T-1"))
+    finally:
+        stranger.kill()
+        stranger.wait()
+
+
+def test_recorded_identity_matches_running_turn_process(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    # act
+    add(srv, "T-1", script({"sleep": 20}))
+    wait_events(store, "turn_started", "T-1")
+    runner_sync(srv)
+    # assert
+    proc = task(store, "T-1").turn_process
+    assert proc["pgid"] == calls[0]["proc"].pid and proc["mark"] == calls[0]["session"]
+    assert harness_mod.process_identity(proc["pgid"])["started"] == proc["started"]
+
+
+def test_failure_after_start_turn_terminates_started_process(make_project, start_server, calls, monkeypatch):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    orig = type(board).update_task
+
+    def update_task(self, key, actor, fields):
+        if set(fields) == {"session_id"}:
+            raise RuntimeError("сбой записи сессии")
+        return orig(self, key, actor, fields)
+
+    monkeypatch.setattr(type(board), "update_task", update_task)
+    # act
+    add(srv, "T-1", script({"sleep": 20}))
+    wait_for(lambda: any("сбой записи сессии" in t for t in thread_texts(store, "T-1")), what="ошибка запуска")
+    runner_sync(srv)
+    # assert
+    assert len(calls) == 1
+    assert calls[0]["proc"].wait(timeout=TIMEOUT) != 0
+    assert not events(store, "turn_started", "T-1")
