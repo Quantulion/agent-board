@@ -69,8 +69,11 @@ export function createEnv({ prefix, slug, title, config = {} }) {
     const proc = self.proc;
     if (!proc) return;
     self.proc = null;
+    // уже завершившийся процесс второго события exit не пришлёт — ждать нечего
+    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    const exited = new Promise(r => proc.once('exit', r));
     proc.kill('SIGTERM');
-    await withTimeout(new Promise(r => proc.once('exit', r)), 15000, 'остановка сервера').catch(() => proc.kill('SIGKILL'));
+    await withTimeout(exited, 15000, 'остановка сервера').catch(() => proc.kill('SIGKILL'));
   };
 
   self.api = async (method, p, body) => {
