@@ -292,6 +292,8 @@ class Runner:
             if d.get("actor") == "user":
                 self._reset_failures(k)
                 if d.get("to") == Status.APPROVED.value:
+                    # коммитится только законченная работа: идущий ход останавливаем до коммита
+                    self._interrupt_turn(k)
                     self._commit(slug, k[1])
                 if self._pending.get(k) and k not in self._turns and k not in self._waiting:
                     self._schedule(k)
@@ -330,6 +332,13 @@ class Runner:
             return
         if sha:
             board.record("task_committed", {"key": key, "sha": sha})
+
+    def _interrupt_turn(self, k: Key) -> None:
+        """Останавливает идущий ход и ждёт конца процесса; накопленные причины остаются."""
+        turn = self._turns.get(k)
+        if turn is not None and not turn.stopped:
+            turn.stopped = True
+            terminate(turn.proc, STOP_GRACE_SECONDS)
 
     def _stop(self, slug: str, key: str) -> None:
         k = (slug, key)

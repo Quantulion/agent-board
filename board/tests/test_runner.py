@@ -293,6 +293,35 @@ def test_approval_by_user_commits_and_dependent_starts_from_it(make_project, sta
     assert committed[0].seq < events(store, "turn_started", "B")[0].seq
 
 
+def test_approval_during_turn_stops_turn_then_commits(make_project, start_server, calls, git_repo, monkeypatch):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    seen = []
+    orig_commit = runner_mod.commit_all
+
+    def commit_all(path, message):
+        seen.append(calls[0]["proc"].poll())
+        return orig_commit(path, message)
+
+    monkeypatch.setattr(runner_mod, "commit_all", commit_all)
+    add(srv, "A", script({"write": {"path": "a-file.txt", "text": "from A"}}, {"sleep": 30}))
+    add(srv, "B", deps=["A"])
+    wait_for(lambda: task(store, "A").worktree and (Path(task(store, "A").worktree) / "a-file.txt").exists(),
+             what="A записала файл")
+    # act
+    srv.board_for("pay").transition("A", Status.APPROVED, "user")
+    committed = wait_events(store, "task_committed", "A")
+    wait_events(store, "turn_finished", "B")
+    # assert
+    assert seen and seen[0] is not None
+    finished = events(store, "turn_finished", "A")
+    assert finished[0].data.get("stopped") is True and not events(store, "turn_failed", "A")
+    assert task(store, "A").agent_state == "idle"
+    assert run_git(git_repo, "log", "-1", "--format=%h", "A").strip() == committed[0].data["sha"]
+    assert (Path(task(store, "B").worktree) / "a-file.txt").read_text() == "from A"
+
+
 def test_agent_stop_kills_turn_process(make_project, start_server, calls, monkeypatch):
     # arrange
     store = make_project()
