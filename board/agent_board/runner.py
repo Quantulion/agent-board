@@ -20,6 +20,8 @@ from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
 from .worktree import (
     GitError,
+    RebaseOutcome,
+    carry_ref,
     changed_files,
     commit_all,
     ensure_worktree,
@@ -37,6 +39,9 @@ LEFTOVER_MISSING_TEXT = "Старый процесс хода не найден 
 INTERRUPTED_TEXT = "Ход прерван перезапуском сервера, агент продолжит с сообщением о прерывании."
 FAILURES_TEXT = ("Агент упал %d раза подряд, автоматический перезапуск остановлен: %s. "
                  "Напишите сообщение или смените статус, чтобы запустить его снова.")
+CARRIED_TEXT = ("Ветка задачи перенесена на %s, но незакоммиченную работу не удалось вернуть в файлы без конфликта. "
+                "Она сохранена в git по ссылке %s: верните её вручную (например, git stash apply %s), "
+                "затем удалите ссылку командой git update-ref -d %s.")
 PROJECT_SYSTEM_PROMPT = (
     "Ты агент проекта доски agent-board. Не пиши код и не меняй репозитории. "
     "Читай доску и общайся командой agent-board."
@@ -551,10 +556,16 @@ class Runner:
             reason.update(base=base, rebase_ok=False, merge_branches=list(merges))
             return reason
         try:
-            ok, files = rebase_carrying_changes(self._own_worktree(config, task), base)
-        except GitError:
-            ok, files = False, []
-        reason.update(base=base, rebase_ok=ok, conflict_files=files)
+            outcome = rebase_carrying_changes(self._own_worktree(config, task), base, carry_ref(task.key))
+        except GitError as e:
+            board.post_message(task.key, "system", "Не удалось перенести работу на %s: %s" % (base, e))
+            outcome = RebaseOutcome(False)
+        ok = outcome.ok
+        reason.update(base=base, rebase_ok=ok, conflict_files=outcome.conflict_files)
+        if outcome.carried_ref:
+            reason["carried_ref"] = outcome.carried_ref
+            ref = outcome.carried_ref
+            board.post_message(task.key, "system", CARRIED_TEXT % (base, ref, ref, ref))
         if ok and task.base_branch != base:
             board.update_task(task.key, "system", {"base_branch": base})
         return reason

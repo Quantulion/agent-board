@@ -135,6 +135,13 @@ def _wake_line(r: dict, cli: str) -> str:
             return ("The branches of your dependencies changed: %s. The board does not merge several dependency "
                     "branches into your worktree by itself. Do not run any git commands; ask the user on the card "
                     "to merge them." % ", ".join(r["merge_branches"]))
+        if r.get("carried_ref"):
+            moved = "moved your branch onto %s" % base if r.get("rebase_ok") is not False else \
+                "could not move your branch onto %s" % base
+            return ("The branch of %s changed; the board %s, but could not put your uncommitted work back into "
+                    "the files. Your work is not lost: it is saved in git at `%s`. Do not run any git commands and "
+                    "do not redo the work; ask the user on the card with `%s ask %s` to restore it from that ref, "
+                    "then continue." % (dep, moved, r["carried_ref"], cli, key))
         if r.get("rebase_ok") is False:
             return ("The branch of %s changed; the board could not move your work onto %s. "
                     "Do not run any git commands; ask a question on the card." % (dep, base))
@@ -172,7 +179,7 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
 
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text; answer -> question_id, question, choice, comment;
-      returned -> from; rebase -> from, base, rebase_ok, conflict_files, merge_branches;
+      returned -> from; rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
       escalation -> from, text; proposal_rejected -> id; interrupted, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».
     """

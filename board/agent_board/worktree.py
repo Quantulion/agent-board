@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 import subprocess
+import tempfile
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -140,7 +142,14 @@ def _rebase_in_progress(path: Path) -> bool:
     return False
 
 
+def _check_no_rebase(path: Path) -> None:
+    # чужой (начатый агентом или человеком) ребейз не трогаем и не прерываем
+    if _rebase_in_progress(path):
+        raise GitError("rebase already in progress in {}: finish or abort it first".format(path))
+
+
 def rebase_onto(path: Path, new_base: str) -> bool:
+    _check_no_rebase(path)
     res = _git(path, "rebase", new_base)
     if res.returncode == 0:
         return True
@@ -150,34 +159,95 @@ def rebase_onto(path: Path, new_base: str) -> bool:
     raise GitError("git rebase failed: " + (res.stdout + res.stderr).strip())
 
 
-def rebase_carrying_changes(path: Path, new_base: str) -> Tuple[bool, List[str]]:
-    """Ребейз ветки с переносом незакоммиченной работы.
+def carry_ref(key: str) -> str:
+    return "refs/agent-board/%s/carry" % key
 
-    (False, []) — ребейз не удался, ветка и изменения остались как были;
-    (True, files) — изменения перенесены, в files остались маркеры конфликта.
-    """
-    dirty = bool(run_git(path, "status", "--porcelain").strip())
-    if dirty:
-        run_git(path, "stash", "push", "-u", "-m", "agent-board: rebase onto " + new_base)
+
+@dataclass
+class RebaseOutcome:
+    """ok — ветка на новой базе; conflict_files — файлы с маркерами после возврата работы;
+    carried_ref — работу не удалось вернуть в файлы, она сохранена в этом ref."""
+
+    ok: bool
+    conflict_files: List[str] = field(default_factory=list)
+    carried_ref: Optional[str] = None
+
+
+def _git_with_index(path: Path, index: str, *args: str, stdin: str = "") -> str:
+    env = dict(os.environ, GIT_TERMINAL_PROMPT="0", GIT_INDEX_FILE=index)
     try:
-        ok = rebase_onto(path, new_base)
-    except GitError:
-        if dirty:
-            run_git(path, "stash", "pop")
-        raise
-    if not dirty:
-        return ok, []
-    res = _git(path, "stash", "pop")
+        res = subprocess.run(["git", "-c", "core.quotepath=false", *args], cwd=str(path), input=stdin,
+                             capture_output=True, text=True, env=env, timeout=TIMEOUT)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        raise GitError("git {} could not run in {}: {}".format(" ".join(args), path, e))
+    if res.returncode != 0:
+        raise GitError("git {} failed: {}".format(" ".join(args), (res.stdout + res.stderr).strip()))
+    return res.stdout
+
+
+def _snapshot(path: Path, message: str) -> str:
+    """Коммит в формате git stash (рабочие файлы, индекс, неотслеживаемые) без записи в общий список stash."""
+    head = run_git(path, "rev-parse", "HEAD").strip()
+    index_tree = run_git(path, "write-tree").strip()
+    index_commit = run_git(path, "commit-tree", index_tree, "-p", head, "-m", "index on " + message).strip()
+    parents = ["-p", head, "-p", index_commit]
+    with tempfile.TemporaryDirectory(prefix="agent-board-carry-") as tmp:
+        work_index = os.path.join(tmp, "work")
+        _git_with_index(path, work_index, "read-tree", index_tree)
+        _git_with_index(path, work_index, "add", "-u")
+        work_tree = _git_with_index(path, work_index, "write-tree").strip()
+        untracked = _untracked(path)
+        if untracked:
+            new_index = os.path.join(tmp, "untracked")
+            _git_with_index(path, new_index, "add", "--pathspec-from-file=-", "--pathspec-file-nul",
+                            stdin="\0".join(untracked))
+            untracked_tree = _git_with_index(path, new_index, "write-tree").strip()
+            untracked_commit = run_git(path, "commit-tree", untracked_tree, "-m", "untracked files on " + message).strip()
+            parents += ["-p", untracked_commit]
+    return run_git(path, "commit-tree", work_tree, *parents, "-m", message).strip()
+
+
+def _restore(path: Path, snapshot: str) -> Tuple[bool, List[str]]:
+    """Возвращает сохранённую работу в файлы: (вернулась ли, файлы с маркерами конфликта)."""
+    res = _git(path, "stash", "apply", snapshot)
     if res.returncode == 0:
-        return ok, []
+        return True, []
     conflicts = unmerged_files(path)
     if not conflicts:
-        raise GitError("git stash pop failed: " + (res.stdout + res.stderr).strip())
+        return False, []
     # индекс без конфликтных записей: агент разрешает конфликт правкой файлов, коммитит раннер
     run_git(path, "reset", "-q")
-    # при конфликте git оставляет запись в stash; изменения уже в файлах, запись лишняя
-    run_git(path, "stash", "drop", "-q")
-    return ok, conflicts
+    return True, conflicts
+
+
+def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcome:
+    """Ребейз ветки с переносом незакоммиченной работы.
+
+    Работа на время ребейза сохраняется в ref (общий список git stash не трогается) и после возврата в файлы
+    удаляется. Если вернуть её не удалось, ref остаётся, и он указан в carried_ref.
+    """
+    _check_no_rebase(path)
+    if _git(path, "rev-parse", "-q", "--verify", ref).returncode == 0:
+        raise GitError("previous work carried at {} is not restored yet: restore and delete it first".format(ref))
+    if not run_git(path, "status", "--porcelain").strip():
+        return RebaseOutcome(rebase_onto(path, new_base))
+    snapshot = _snapshot(path, "agent-board: rebase onto " + new_base)
+    run_git(path, "update-ref", ref, snapshot)
+    run_git(path, "reset", "-q", "--hard")
+    run_git(path, "clean", "-fdq")
+    try:
+        ok = rebase_onto(path, new_base)
+    except GitError as e:
+        restored, _ = _restore(path, snapshot)
+        if not restored:
+            raise GitError("{}; uncommitted work is saved at {}".format(e, ref))
+        run_git(path, "update-ref", "-d", ref)
+        raise
+    restored, conflicts = _restore(path, snapshot)
+    if not restored:
+        return RebaseOutcome(ok, [], carried_ref=ref)
+    run_git(path, "update-ref", "-d", ref)
+    return RebaseOutcome(ok, conflicts)
 
 
 def _untracked(path: Path) -> List[str]:

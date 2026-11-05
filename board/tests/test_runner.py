@@ -437,6 +437,30 @@ def test_reapproved_dependency_rebases_dependent_carrying_its_changes(make_proje
     assert "the board moved your work onto A" in resume[-1]["text"]
 
 
+def test_dependent_work_that_cannot_be_restored_stays_in_carry_ref(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "A", script({"write": {"path": "a.txt", "text": "A v1\n"}}))
+    add(srv, "B", script({"write": {"path": "shared.txt", "text": "работа B\n"}}), deps=["A"])
+    wait_events(store, "turn_finished", "A")
+    board.transition("A", Status.APPROVED, "user")
+    wait_events(store, "turn_finished", "B")
+    (Path(task(store, "A").worktree) / "shared.txt").write_text("версия A\n")
+    stashes_before = run_git(git_repo, "stash", "list")
+    # act
+    board.transition("A", Status.APPROVED, "user")
+    wait_events(store, "turn_finished", "B", count=2)
+    # assert
+    ref = "refs/agent-board/B/carry"
+    assert run_git(git_repo, "show", ref + "^3:shared.txt") == "работа B\n"
+    assert run_git(git_repo, "stash", "list") == stashes_before == ""
+    resume = [c for c in calls if c["kind"] == "resume" and c["session"] == task(store, "B").session_id]
+    assert ref in resume[-1]["text"] and "Do not run any git commands" in resume[-1]["text"]
+    assert any(ref in text for text in thread_texts(store, "B"))
+
+
 def test_task_without_resolvable_repo_gets_error(make_project, start_server, calls, git_repo):
     # arrange
     store = make_project(repos=[{"name": "one", "path": str(git_repo)}, {"name": "two", "path": str(git_repo)}])
