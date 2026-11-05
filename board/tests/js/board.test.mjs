@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, columnsOf, connectionIndicator, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { cardModel, cardSignature, columnsOf, connectionIndicator, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -195,6 +195,17 @@ test('stepperModel: пройденные стадии, текущая и про�
   assert.equal(states('done', 'none'), 'decomposition:done tracker:skipped work:done done:done');
   assert.equal(states('work', undefined), 'decomposition:done tracker:skipped work:cur done:todo', 'без трекера в конфиге — тоже пропуск');
   assert.equal(states('tracker', 'none'), 'decomposition:done tracker:cur work:todo done:todo', 'текущая стадия не пропущена');
+});
+
+test('cardSignature не меняется от невидимых на карточке полей задачи', () => {
+  // arrange
+  const ctx = { byKey: new Map(), proposalKeys: new Set(), repoBase: new Map([['api', 'main']]) };
+  const before = task('A', { status: 'in_progress', summary: 'пишет код' });
+  const invisible = { ...before, updated_at: '2', report: 'r.md', last_turn_at: 'x', session_id: 's-2', thread_size: 9, todo: [{ text: 'a' }] };
+  const visible = { ...before, title: 'Новое название' };
+  // assert
+  assert.equal(cardSignature(invisible, ctx), cardSignature(before, ctx));
+  assert.notEqual(cardSignature(visible, ctx), cardSignature(before, ctx));
 });
 
 test('connectionIndicator: при отключённом потоке «Переподключение…» важнее ошибки снимка', () => {

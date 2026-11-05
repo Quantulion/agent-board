@@ -190,6 +190,18 @@ try {
   await new Promise(r => setTimeout(r, 800));
   results.attnFocusKept = await page.evaluate(t => document.activeElement.classList.contains('it') && document.activeElement.textContent === t, focusedAttn);
 
+  // подсветка карточки — только когда меняется то, что на ней видно
+  await page.$eval('.card[data-key="PAY-109"]', el => {
+    window.__flashes = 0;
+    new MutationObserver(() => { if (el.classList.contains('flash')) window.__flashes++; }).observe(el, { attributeFilter: ['class'] });
+  });
+  await update('PAY-109', 'user', { report: 'notes/report.md' });
+  await new Promise(r => setTimeout(r, 1000));
+  results.invisibleChangeFlashes = await page.evaluate(() => window.__flashes);
+  await update('PAY-109', 'user', { title: 'Выгрузка для бухгалтерии из PG (CSV)' });
+  await page.waitForFunction(() => window.__flashes > 0, { timeout: 5000 }).catch(() => {});
+  results.visibleChangeFlashes = await page.evaluate(() => window.__flashes);
+
   // видимая кнопка «⋯»: меню с клавиатуры, не выходит за экран, Esc возвращает фокус на кнопку
   await page.focus('.card[data-key="PAY-113"] .more');
   // фокус прокручивает колонки, а прокрутка закрывает меню — ждём, пока она закончится
@@ -304,6 +316,7 @@ try {
 }
 console.log(JSON.stringify(results, null, 2));
 const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
+  && results.invisibleChangeFlashes === 0 && results.visibleChangeFlashes > 0
   && results.reactionToast === 'PAY-106 → Одобрена. Разблокирована PAY-108. Разбужен агент PAY-108.'
   && results.movedNodeKept && results.untouchedKept
   && results.dropOpensBlockerDialog === 'Внешний блокер для PAY-110' && results.cardStayed === 'not_started'

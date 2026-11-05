@@ -165,6 +165,11 @@ export function cardModel(task, ctx) {
   };
 }
 
+const signatureOf = model => JSON.stringify(model);
+
+// Подпись видимого содержимого карточки: карточка перерисовывается и подсвечивается, только когда она меняется.
+export const cardSignature = (task, ctx) => signatureOf(cardModel(task, ctx));
+
 // --- Общие элементы: тосты, меню статуса, перенос ---
 
 const color = id => 'var(' + statusInfo(id).color + ')';
@@ -537,10 +542,13 @@ export function mountBoard(root, store, ctx) {
     return parts;
   }
 
+  // карточки, содержимое которых перерисовано в текущем проходе: подсвечиваются только они
+  const repainted = new Set();
+
   // Узел карточки переиспользуется и перерисовывается, только если изменилось то, что она показывает.
   function ensureCard(task, modelCtx) {
     const model = cardModel(task, modelCtx);
-    const sig = JSON.stringify(model);
+    const sig = signatureOf(model);
     let entry = cards.get(task.key);
     if (!entry) {
       entry = { node: cardNode(task.key), sig: null, model };
@@ -551,6 +559,7 @@ export function mountBoard(root, store, ctx) {
       entry.model = model;
       entry.node.className = 'card st-' + model.status;
       entry.node.replaceChildren(...cardParts(model, entry.node));
+      repainted.add(task.key);
     }
     return entry.node;
   }
@@ -562,6 +571,7 @@ export function mountBoard(root, store, ctx) {
   }
 
   function paintColumns(snap, changed) {
+    repainted.clear();
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const modelCtx = {
       byKey,
@@ -578,7 +588,7 @@ export function mountBoard(root, store, ctx) {
     for (const key of [...cards.keys()]) if (!byKey.has(key)) cards.delete(key);
     for (const key of changed) {
       const entry = cards.get(key);
-      if (entry && entry.node.isConnected) flash(entry.node);
+      if (entry && repainted.has(key) && entry.node.isConnected) flash(entry.node);
     }
   }
 
