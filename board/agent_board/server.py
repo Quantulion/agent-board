@@ -4,7 +4,6 @@ import errno
 import fcntl
 import hmac
 import json
-import mimetypes
 import os
 import secrets
 import socket
@@ -32,10 +31,18 @@ MESSAGE_AUTHORS = {"user", "agent", "project_agent"}
 # постоянный порт, чтобы ссылка на доску переживала рестарт
 DEFAULT_PORTS = list(range(8737, 8747))
 
-STUB_PAGE = (
-    "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><title>Доска</title></head>"
-    "<body><p>Доска запускается</p></body></html>"
-)
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+APP_CSP = ("default-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+           "frame-ancestors 'none'")
+STATIC_TYPES = {
+    ".html": "text/html; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".css": "text/css; charset=utf-8",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".ico": "image/x-icon",
+    ".json": "application/json; charset=utf-8",
+}
 
 
 def discovery_path() -> Path:
@@ -204,11 +211,11 @@ class _Handler(BaseHTTPRequestHandler):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self._send_bytes(status, body, "application/json; charset=utf-8", extra_headers)
 
-    def _send_bytes(self, status, body: bytes, ctype: str, extra_headers=None) -> None:
+    def _send_bytes(self, status, body: bytes, ctype: str, extra_headers=None, cache: str = "no-store") -> None:
         self.send_response(status)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
-        self.send_header("Cache-Control", "no-store")
+        self.send_header("Cache-Control", cache)
         for k, v in extra_headers or []:
             self.send_header(k, v)
         self.end_headers()
@@ -267,23 +274,23 @@ class _Handler(BaseHTTPRequestHandler):
     # --- статика ---
 
     def _static(self, path: str, query: dict) -> None:
+        """`/` — страница приложения, `/static/...` — его файлы; всё прочее — 404."""
         headers: List[Tuple[str, str]] = []
-        if path == "/" and self._token_ok((query.get("token") or [None])[0]):
-            headers.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict" % (COOKIE_NAME, self.app.token)))
-        static_dir = self.app.static_dir
-        if static_dir is None:
-            if path != "/":
-                return self._send_json(404, {"error": "not found"})
-            return self._send_bytes(200, STUB_PAGE.encode("utf-8"), "text/html; charset=utf-8", headers)
-        root = Path(static_dir).resolve()
-        rel = unquote(path).lstrip("/") or "index.html"
+        if path == "/":
+            if self._token_ok((query.get("token") or [None])[0]):
+                headers.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict" % (COOKIE_NAME, self.app.token)))
+            rel = "index.html"
+        elif path.startswith("/static/"):
+            rel = unquote(path[len("/static/"):])
+        else:
+            raise KeyError("not found")
+        root = Path(self.app.static_dir or STATIC_DIR).resolve()
         target = (root / rel).resolve()
-        if root != target and root not in target.parents:
-            return self._send_json(403, {"error": "forbidden"})
-        if not target.is_file():
-            return self._send_json(404, {"error": "not found"})
-        ctype = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        self._send_bytes(200, target.read_bytes(), ctype, headers)
+        if root not in target.parents or not target.is_file():
+            raise KeyError("not found")
+        ctype = STATIC_TYPES.get(target.suffix.lower(), "application/octet-stream")
+        headers += [("Content-Security-Policy", APP_CSP), ("X-Content-Type-Options", "nosniff")]
+        self._send_bytes(200, target.read_bytes(), ctype, headers, cache="no-cache")
 
     # --- API ---
 
@@ -386,9 +393,9 @@ class _Handler(BaseHTTPRequestHandler):
         base = next((b for b in allowed if target == b or b in target.parents), None)
         if base is None:
             raise PermissionError("Путь вне каталогов проекта")
-        rel = target.relative_to(base).parts
-        # внутренности git и логи агентов не отдаются
-        if ".git" in rel or (base == root and rel[:1] == ("logs",)):
+        rel = [part.lower() for part in target.relative_to(base).parts]
+        # внутренности git и логи агентов не отдаются; регистр не важен — ФС macOS к нему нечувствительна
+        if ".git" in rel or (base == root and rel[:1] == ["logs"]):
             raise PermissionError("Путь недоступен")
         if not target.is_file():
             raise KeyError("Файл не найден")

@@ -29,3 +29,14 @@ def test_pyproject_declares_console_script():
     # assert
     assert '[project]' in text and 'name = "agent-board"' in text
     assert 'agent-board = "agent_board.cli:main"' in text
+
+
+def test_pyproject_ships_static_ui():
+    # arrange
+    root = Path(__file__).resolve().parents[2]
+
+    # act
+    text = (root / "pyproject.toml").read_text(encoding="utf-8")
+
+    # assert
+    assert '"static/*.html"' in text and '"static/*.css"' in text and '"static/js/*.js"' in text

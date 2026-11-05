@@ -1,0 +1,12 @@
+{
+  "name": "agent-board-ui-tests",
+  "private": true,
+  "type": "module",
+  "description": "Проверки интерфейса доски в headless Chrome",
+  "scripts": {
+    "skeleton": "node skeleton.mjs"
+  },
+  "devDependencies": {
+    "puppeteer": "^25.16.0"
+  }
+}

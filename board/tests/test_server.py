@@ -3,12 +3,14 @@ from __future__ import annotations
 import http.client
 import json
 import os
+import re
 import socket
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 import pytest
 
@@ -101,13 +103,14 @@ def test_cookie_set_from_query_token(server):
     cookie = r.headers["Set-Cookie"]
     assert "board_token=%s" % server.token in cookie
     assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
-    assert "Доска запускается" in r.body.decode()
+    assert '<script type="module" src="/static/js/main.js"></script>' in r.body.decode()
     # куки достаточно для API
     r2 = get(server, "/api/projects", token=None, headers={"Cookie": "board_token=%s" % server.token})
     assert r2.status == 200
 
 
 def test_static_path_traversal_blocked(tmp_home, tmp_path):
+    # arrange
     static = tmp_path / "static"
     static.mkdir()
     (static / "index.html").write_text("hi")
@@ -115,18 +118,21 @@ def test_static_path_traversal_blocked(tmp_home, tmp_path):
     srv = BoardServer(port=0, static_dir=static)
     srv.start()
     try:
-        c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
-        c.request("GET", "/../secret.txt")
-        assert c.getresponse().status in (400, 403, 404)
-        c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
-        c.request("GET", "/%2e%2e/secret.txt")
-        r = c.getresponse()
-        assert r.status in (400, 403, 404) and b"secret" not in r.read()
-        c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
-        c.request("GET", "/index.html")
-        assert c.getresponse().read() == b"hi"
+        # act
+        results = {}
+        for path in ("/static/../secret.txt", "/static/%2e%2e/secret.txt", "/../secret.txt", "/static/index.html"):
+            c = http.client.HTTPConnection("127.0.0.1", srv.port, timeout=5)
+            c.request("GET", path)
+            r = c.getresponse()
+            results[path] = (r.status, r.read())
     finally:
         srv.stop()
+    # assert
+    assert results["/static/../secret.txt"][0] == 404
+    assert results["/static/%2e%2e/secret.txt"][0] == 404
+    assert results["/../secret.txt"][0] == 404
+    assert all(b"secret" not in body for _, body in results.values())
+    assert results["/static/index.html"] == (200, b"hi")
 
 
 def test_transition_roundtrip_and_validation_error_is_400(server):
@@ -898,3 +904,88 @@ def test_diff_cut_by_bytes_when_no_line_break_fits(ui_server, monkeypatch):
     body = get(ui_server, "/api/p/pay/tasks/T-1/diff").json()
     # assert
     assert body["truncated"] is True and body["diff"] == "diff --git"
+
+
+# --- статика интерфейса ---
+
+APP_CSP = ("default-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; "
+           "frame-ancestors 'none'")
+
+
+def test_root_serves_packaged_index_with_csp(server):
+    # act
+    r = get(server, "/", token=None)
+    # assert
+    assert r.status == 200 and r.headers["Content-Type"] == "text/html; charset=utf-8"
+    assert '<script type="module" src="/static/js/main.js"></script>' in r.body.decode()
+    assert r.headers["Content-Security-Policy"] == APP_CSP
+    assert r.headers["Cache-Control"] == "no-cache"
+    assert "Set-Cookie" not in r.headers
+
+
+def test_root_with_wrong_token_sets_no_cookie(server):
+    # act
+    r = get(server, "/?token=wrong", token=None)
+    # assert
+    assert r.status == 200 and "Set-Cookie" not in r.headers
+
+
+@pytest.mark.parametrize("path, ctype", [
+    ("/static/js/main.js", "text/javascript; charset=utf-8"),
+    ("/static/app.css", "text/css; charset=utf-8"),
+])
+def test_static_assets_have_mime_and_no_cache(server, path, ctype):
+    # act
+    r = get(server, path, token=None)
+    # assert
+    assert r.status == 200 and r.headers["Content-Type"] == ctype
+    assert r.headers["Cache-Control"] == "no-cache"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+    assert r.headers["Content-Security-Policy"] == APP_CSP
+
+
+def test_static_svg_mime(tmp_home, tmp_path):
+    # arrange
+    (tmp_path / "logo.svg").write_text("<svg/>")
+    srv = BoardServer(port=0, static_dir=tmp_path)
+    srv.start()
+    try:
+        # act
+        r = get(srv, "/static/logo.svg", token=None)
+    finally:
+        srv.stop()
+    # assert
+    assert r.status == 200 and r.headers["Content-Type"] == "image/svg+xml"
+
+
+def test_unknown_page_and_missing_static_are_404(server):
+    # assert
+    assert get(server, "/index.html", token=None).status == 404
+    assert get(server, "/static/js/nope.js", token=None).status == 404
+    assert get(server, "/static/", token=None).status == 404
+
+
+def test_file_denies_git_dir_and_logs_case_insensitive(ui_server):
+    # arrange
+    store = ProjectStore("pay")
+    (store.root / "logs").mkdir()
+    (store.root / "logs" / "T-1.jsonl").write_text("{}")
+    # act
+    git_config = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.repo / ".GIT" / "config")))
+    logs = get(ui_server, "/api/p/pay/file?path=LOGS/T-1.jsonl")
+    # assert
+    assert git_config.status == logs.status == 403
+    assert b"[core]" not in git_config.body
+
+
+def test_store_js_listens_to_every_event_type():
+    # arrange
+    from agent_board.board import EVENT_TYPES
+
+    text = (Path(server_mod.__file__).parent / "static" / "js" / "store.js").read_text(encoding="utf-8")
+    block = text[text.index("export const EVENT_TYPES"):]
+    block = block[:block.index("];")]
+    # act
+    listed = set(re.findall(r"'([a-z_]+)'", block))
+    # assert
+    assert listed == set(EVENT_TYPES)

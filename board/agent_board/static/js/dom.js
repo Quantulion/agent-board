@@ -1,0 +1,177 @@
+// Безопасный вывод: любой текст попадает в DOM только текстовыми узлами.
+
+const ESC = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+
+export function esc(s) {
+  return s === null || s === undefined ? '' : String(s).replace(/[&<>"']/g, c => ESC[c]);
+}
+
+const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href']);
+const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+const HTTP = /^https?:\/\//i;
+
+// Ссылка допустима, если это http(s) или путь без схемы (javascript:, data: и прочие отбрасываются).
+export function safeUrl(url) {
+  const value = String(url).trim();
+  return HTTP.test(value) || !SCHEME.test(value) ? value : null;
+}
+
+export function h(tag, attrs, ...children) {
+  const el = document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs || {})) {
+    if (value === null || value === undefined || value === false) continue;
+    if (name.startsWith('on')) {
+      if (typeof value === 'function') el.addEventListener(name.slice(2).toLowerCase(), value);
+      continue;
+    }
+    if (name === 'style') {
+      // атрибут style запрещён CSP, свойства через CSSOM — нет
+      for (const [prop, v] of Object.entries(value)) el.style.setProperty(prop, v);
+      continue;
+    }
+    if (URL_ATTRS.has(name.toLowerCase())) {
+      const url = safeUrl(value);
+      if (url !== null) el.setAttribute(name, url);
+      continue;
+    }
+    el.setAttribute(name, value === true ? '' : String(value));
+  }
+  appendChildren(el, children);
+  return el;
+}
+
+function appendChildren(el, children) {
+  for (const child of children) {
+    if (child === null || child === undefined || child === false) continue;
+    if (Array.isArray(child)) appendChildren(el, child);
+    else if (typeof child === 'object') el.appendChild(child);
+    else el.appendChild(document.createTextNode(String(child)));
+  }
+}
+
+const FENCE = /^\s*```/;
+const INLINE = /`([^`\n]+)`|(https?:\/\/[^\s<>"'`]+)/gi;
+const TRAILING = /[.,;:!?)\]}»"']+$/;
+
+// Разбор минимального markdown: абзацы, переносы строк, `код`, блоки ``` и ссылки http(s).
+export function markdownTokens(text) {
+  const lines = String(text ?? '').replace(/\r\n?/g, '\n').split('\n');
+  const blocks = [];
+  let para = [];
+  const flush = () => {
+    if (para.length) blocks.push({ type: 'p', inlines: paragraphInlines(para) });
+    para = [];
+  };
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (FENCE.test(line)) {
+      flush();
+      const code = [];
+      for (i++; i < lines.length && !FENCE.test(lines[i]); i++) code.push(lines[i]);
+      blocks.push({ type: 'code', text: code.join('\n') });
+    } else if (line.trim() === '') {
+      flush();
+    } else {
+      para.push(line);
+    }
+  }
+  flush();
+  return blocks;
+}
+
+function paragraphInlines(lines) {
+  const out = [];
+  lines.forEach((line, i) => {
+    if (i > 0) out.push({ type: 'br' });
+    out.push(...lineInlines(line));
+  });
+  return out;
+}
+
+function lineInlines(line) {
+  const out = [];
+  const text = s => { if (s) out.push({ type: 'text', text: s }); };
+  let pos = 0;
+  for (const m of line.matchAll(INLINE)) {
+    text(line.slice(pos, m.index));
+    pos = m.index + m[0].length;
+    if (m[1] !== undefined) {
+      out.push({ type: 'code', text: m[1] });
+      continue;
+    }
+    const tail = (m[2].match(TRAILING) || [''])[0];
+    const href = m[2].slice(0, m[2].length - tail.length);
+    out.push({ type: 'link', href, text: href });
+    pos -= tail.length;
+  }
+  text(line.slice(pos));
+  // соседние текстовые куски склеиваются, чтобы не дробить вывод
+  return out.reduce((acc, t) => {
+    const prev = acc[acc.length - 1];
+    if (t.type === 'text' && prev && prev.type === 'text') prev.text += t.text;
+    else acc.push(t);
+    return acc;
+  }, []);
+}
+
+export function safeMarkdown(text) {
+  const frag = document.createDocumentFragment();
+  for (const block of markdownTokens(text)) {
+    if (block.type === 'code') {
+      frag.appendChild(h('pre', null, h('code', null, block.text)));
+      continue;
+    }
+    frag.appendChild(h('p', null, block.inlines.map(t => {
+      if (t.type === 'br') return h('br');
+      if (t.type === 'code') return h('code', null, t.text);
+      if (t.type === 'link') return h('a', { href: t.href, rel: 'noopener noreferrer', target: '_blank' }, t.text);
+      return t.text;
+    })));
+  }
+  return frag;
+}
+
+// Перерисовка списка по ключам: существующие узлы переиспользуются и только переставляются.
+export function patchList(container, items, key, render, update) {
+  const keyOf = typeof key === 'function' ? key : item => item[key];
+  const existing = new Map();
+  for (const node of [...container.children]) {
+    const k = node.getAttribute('data-key');
+    if (k !== null) existing.set(k, node);
+    else node.remove();
+  }
+  const wanted = items.map(item => {
+    const k = String(keyOf(item));
+    let node = existing.get(k);
+    if (node) {
+      existing.delete(k);
+      if (update) update(node, item);
+    } else {
+      node = render(item);
+      node.setAttribute('data-key', k);
+    }
+    return node;
+  });
+  for (const node of existing.values()) node.remove();
+  wanted.forEach((node, i) => {
+    const current = container.children[i] || null;
+    if (current !== node) container.insertBefore(node, current);
+  });
+}
+
+const ICONS = {
+  logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><path d="M5 5v14M12 5v9M19 5v5"/></svg>',
+  sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+  moon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  auto: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 1 0 18z" fill="currentColor"/></svg>',
+  board: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="5" height="16" rx="1.5"/><rect x="10" y="4" width="5" height="10" rx="1.5"/><rect x="17" y="4" width="4" height="13" rx="1.5"/></svg>',
+  graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="5" cy="6" r="2.5"/><circle cx="5" cy="18" r="2.5"/><circle cx="19" cy="12" r="2.5"/><path d="M7.5 6.5c5 0 5 5 9 5.5M7.5 17.5c5 0 5-5 9-5.5"/></svg>',
+  warn: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18v.5"/></svg>',
+};
+
+// Иконки — статичная разметка без данных.
+export function icon(name) {
+  const tpl = document.createElement('template');
+  tpl.innerHTML = ICONS[name] || '';
+  return tpl.content.firstChild || document.createTextNode('');
+}

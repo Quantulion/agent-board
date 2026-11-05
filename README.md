@@ -90,3 +90,15 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 python3 -m venv .venv && .venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
 ```
+
+Интерфейс — ES-модули в `board/agent_board/static/` без сборки и зависимостей, сервер отдаёт их по `/static/...`. Логика интерфейса проверяется встроенным раннером Node:
+
+```bash
+node --test 'board/tests/js/*.test.mjs'
+```
+
+Проверка в headless Chrome (puppeteer ставится только в `ui-tests/`): поднимает настоящий сервер на временном каталоге с fake-агентом и кладёт скриншоты в `ui-tests/out/`.
+
+```bash
+(cd ui-tests && npm install) && node ui-tests/skeleton.mjs
+```
