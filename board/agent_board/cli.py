@@ -80,7 +80,7 @@ def _p(args, suffix: str) -> str:
 
 
 def cmd_serve(args):
-    server = BoardServer(port=args.port)
+    server = BoardServer(port=args.port, runner=not args.no_runner)
     try:
         server.start()
     except ServerAlreadyRunning as e:
@@ -274,6 +274,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = add("serve", cmd_serve, help="запустить доску")
     sp.add_argument("--port", type=int, default=None, help="по умолчанию постоянный 8737–8746")
+    sp.add_argument("--no-runner", action="store_true", help="не запускать агентов (отладка доски)")
     sp = add("init", cmd_init, help="создать проект")
     sp.add_argument("slug")
     sp.add_argument("--title", required=True)
