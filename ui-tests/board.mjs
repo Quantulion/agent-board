@@ -17,7 +17,6 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-ui-'));
 const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user' };
 const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 20000 });
 const VIEW = { width: 1440, height: 900 };
-const LOOP = 'Агенты переписываются без участия пользователя — остановлено; ответьте в треде, чтобы продолжить';
 
 function withTimeout(promise, ms, what) {
   return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error('таймаут: ' + what)), ms))]);
@@ -134,13 +133,8 @@ try {
   await post('threads/PAY-113/messages', { author: 'agent', text: 'Раунд 2 открыт, 3 новых комментария от вас' });
   await post('threads/PAY-113/messages', { author: 'agent', text: 'Жду ревью' });
   await post('proposals', { kind: 'set_deps', payload: { key: 'PAY-111', deps: ['PAY-105', 'PAY-106', 'PAY-104'] }, reason: 'нужны ключи идемпотентности' });
-  // остановка переписки агентов раннер пишет системным сообщением в тред задачи
-  const threadFile = path.join(home, 'projects', 'pay', 'threads', 'PAY-106.jsonl');
-  results.loopSeeded = fs.existsSync(path.dirname(threadFile));
-  if (results.loopSeeded) {
-    fs.appendFileSync(threadFile, JSON.stringify({ id: 'm-loop', author: 'system', text: LOOP, at: new Date().toISOString() }) + '\n');
-    await update('PAY-106', 'agent', { summary: 'Сверка готова на 70%, ждёт решения по допуску ' });
-  }
+  // остановку переписки агентов раннер отмечает флагом задачи
+  await update('PAY-106', 'system', { agent_parked: true });
 
   await page.waitForFunction(() => document.querySelector('.card[data-key="PAY-110"] .chip.err')
     && document.querySelector('.card[data-key="PAY-105"] .qline')
@@ -186,7 +180,47 @@ try {
   await page.screenshot({ path: reactFile });
   results.reaction_toast_light = reactFile;
 
-  // перетаскивание в «Заблокирована»: сервер отказывает, тост с его текстом, карточка на месте
+  // «Ждут вас»: внешний блокер ведёт в карточку; фокус на пункте переживает обновление снимка
+  results.attnAfter = await page.$$eval('.attn .it', els => els.map(e => e.textContent));
+  await page.focus('.attn .it.er');
+  const focusedAttn = await page.evaluate(() => document.activeElement.textContent);
+  await update('PAY-104', 'agent', { summary: 'обновление снимка' });
+  await new Promise(r => setTimeout(r, 800));
+  results.attnFocusKept = await page.evaluate(t => document.activeElement.classList.contains('it') && document.activeElement.textContent === t, focusedAttn);
+
+  // видимая кнопка «⋯»: меню с клавиатуры, не выходит за экран, Esc возвращает фокус на кнопку
+  await page.focus('.card[data-key="PAY-113"] .more');
+  // фокус прокручивает колонки, а прокрутка закрывает меню — ждём, пока она закончится
+  await new Promise(r => setTimeout(r, 300));
+  await page.keyboard.press('Enter');
+  await page.waitForSelector('.stmenu.floating .menu', { timeout: 5000 });
+  results.menuInViewport = await page.$eval('.stmenu.floating', el => {
+    const r = el.getBoundingClientRect();
+    return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+  });
+  await page.keyboard.press('Escape');
+  results.menuFocusBack = await page.evaluate(() => !document.querySelector('.stmenu.floating') && document.activeElement.classList.contains('more'));
+  // меню у нижнего края окна прижимается вверх
+  await page.evaluate(() => {
+    const card = document.querySelector('.card[data-key="PAY-113"]');
+    card.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: innerWidth - 5, clientY: innerHeight - 5 }));
+  });
+  await page.waitForSelector('.stmenu.floating .menu', { timeout: 5000 });
+  results.edgeMenuInViewport = await page.$eval('.stmenu.floating', el => {
+    const r = el.getBoundingClientRect();
+    return r.right <= innerWidth && r.bottom <= innerHeight;
+  });
+  await page.keyboard.press('Escape');
+
+  // Space на карточке открывает её карточку задачи
+  await page.focus('.card[data-key="PAY-113"]');
+  await page.keyboard.press('Space');
+  await page.waitForSelector('.drawer[data-key="PAY-113"]', { timeout: 5000 });
+  results.spaceOpens = await page.evaluate(() => location.hash);
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => !document.querySelector('.drawer'), { timeout: 5000 });
+
+  // перетаскивание в «Заблокирована» открывает диалог внешнего блокера; отмена оставляет карточку на месте
   await new Promise(r => setTimeout(r, 4200));
   await page.evaluate(() => {
     const card = document.querySelector('.card[data-key="PAY-110"]');
@@ -197,9 +231,38 @@ try {
     col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
     card.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
   });
-  await page.waitForSelector('.toast.err', { timeout: 10000 });
-  results.errorToast = await page.$eval('.toast.err', el => el.textContent);
+  await page.waitForSelector('.modal input', { timeout: 10000 });
+  results.dropOpensBlockerDialog = await page.$eval('.modal h2', el => el.textContent);
+  await page.keyboard.press('Escape');
   results.cardStayed = await page.$eval('.card[data-key="PAY-110"]', el => el.closest('.col').dataset.st);
+
+  // ошибка сервера при переносе — красный тост role=alert, карточка на месте
+  await page.setRequestInterception(true);
+  const failTransition = req => {
+    if (req.method() === 'POST' && req.url().endsWith('/tasks/PAY-110/transition')) {
+      req.respond({ status: 400, contentType: 'application/json', body: JSON.stringify({ error: 'Переход отклонён сервером' }) });
+    } else req.continue();
+  };
+  page.on('request', failTransition);
+  await page.evaluate(() => {
+    const card = document.querySelector('.card[data-key="PAY-110"]');
+    const col = document.querySelector('.col[data-st="in_progress"]');
+    const dt = new DataTransfer();
+    card.dispatchEvent(new DragEvent('dragstart', { bubbles: true, dataTransfer: dt }));
+    col.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    // повторный перенос до ответа сервера игнорируется
+    col.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt }));
+    card.dispatchEvent(new DragEvent('dragend', { bubbles: true, dataTransfer: dt }));
+  });
+  await page.waitForSelector('.toast.err', { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 300));
+  results.errorToast = await page.$eval('.toast.err', el => el.textContent);
+  results.errorToastRole = await page.$eval('.toast.err', el => el.getAttribute('role'));
+  results.errorToasts = await page.$$eval('.toast.err', els => els.length);
+  results.cardStayedAfterError = await page.$eval('.card[data-key="PAY-110"]', el => el.closest('.col').dataset.st);
+  page.off('request', failTransition);
+  await page.setRequestInterception(false);
   await new Promise(r => setTimeout(r, 500));
   const errFile = path.join(out, 'board-error-toast-light.png');
   await page.screenshot({ path: errFile });
@@ -241,7 +304,14 @@ console.log(JSON.stringify(results, null, 2));
 const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
   && results.reactionToast === 'PAY-106 → Одобрена. Разблокирована PAY-108. Разбужен агент PAY-108.'
   && results.movedNodeKept && results.untouchedKept
-  && results.errorToast.includes('blocked') && results.cardStayed === 'not_started'
+  && results.dropOpensBlockerDialog === 'Внешний блокер для PAY-110' && results.cardStayed === 'not_started'
+  && results.errorToast.includes('Переход отклонён сервером') && results.errorToastRole === 'alert' && results.errorToasts === 1
+  && results.cardStayedAfterError === 'not_started'
+  && results.menuItems.includes('Внешний блокер…') && !results.menuItems.includes('Заблокирована')
+  && results.attn.some(t => t.includes('PAY-111') && t.includes('внешний блокер'))
+  && results.attn.some(t => t.includes('PAY-106') && t.includes('агенты переписываются'))
+  && results.attnFocusKept && results.menuInViewport && results.edgeMenuInViewport && results.menuFocusBack
+  && results.spaceOpens === '#/p/pay?task=PAY-113'
   && results.filterPersisted === 'ledger-reports' && results.themeBeforeModules === 'dark'
   && results.decompositionAttn.some(t => t.includes('нарушает правила'))
   && results.pageErrors.length === 0;

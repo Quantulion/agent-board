@@ -40,6 +40,7 @@ export function createStore(slug, client, options = {}) {
 
   let state = { snapshot: null, connection: 'connecting', error: null };
   const subscribers = new Set();
+  const eventListeners = new Set();
   let es = null;
   let attempt = 0;
   let lastSeq = 0;
@@ -52,6 +53,19 @@ export function createStore(slug, client, options = {}) {
 
   function notify(changes) {
     for (const fn of [...subscribers]) fn(state, changes);
+  }
+
+  // Отдельные события нужны тем, кто реагирует на сам факт (например, конец хода), а не на снимок.
+  function emitEvent(type, seq, raw) {
+    if (!eventListeners.size) return;
+    let data = {};
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed && parsed.data && typeof parsed.data === 'object') data = parsed.data;
+    } catch (e) {
+      data = {};
+    }
+    for (const fn of [...eventListeners]) fn({ seq, type, data });
   }
 
   function setConnection(connection) {
@@ -146,6 +160,7 @@ export function createStore(slug, client, options = {}) {
         attempt = 0;
         const seq = Number(e.lastEventId);
         if (seq > lastSeq) lastSeq = seq;
+        emitEvent(type, seq, e.data);
         scheduleRefresh();
       });
     }
@@ -156,6 +171,10 @@ export function createStore(slug, client, options = {}) {
     subscribe(fn) {
       subscribers.add(fn);
       return () => subscribers.delete(fn);
+    },
+    onEvent(fn) {
+      eventListeners.add(fn);
+      return () => eventListeners.delete(fn);
     },
     start() {
       if (running) return;

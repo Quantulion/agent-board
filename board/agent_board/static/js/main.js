@@ -1,8 +1,9 @@
 import { api } from './api.js';
 import { mountBoard, paintStepper, toast } from './board.js';
+import { closeCard, openCard } from './card.js';
 import { h, icon, patchList } from './dom.js';
 import { STAGES, T, tasksCount } from './i18n.js';
-import { boardHref, parseRoute } from './router.js';
+import { boardHref, parseRoute, withTask } from './router.js';
 import { createStore } from './store.js';
 
 const THEME_KEY = 'ab-theme';
@@ -60,12 +61,16 @@ function route() {
   // доска и разбивка одного проекта делят одно живое состояние
   if (view && view.slug && view.slug === r.slug) {
     view.setMode(r.name);
+    view.setTask(r.task || null);
     return;
   }
   if (view) view.destroy();
   view = null;
   if (r.name === 'projects') view = projectsView();
-  else if (r.name === 'board' || r.name === 'decomposition') view = projectView(r.slug, r.name);
+  else if (r.name === 'board' || r.name === 'decomposition') {
+    view = projectView(r.slug, r.name);
+    view.setTask(r.task || null);
+  }
   else root.replaceChildren(notice(T.notFound, T.notFoundHint, false));
 }
 
@@ -105,7 +110,7 @@ function projectsView() {
   }).catch(err => {
     if (alive) page.replaceChildren(errorNotice(err));
   });
-  return { slug: null, setMode() {}, destroy() { alive = false; } };
+  return { slug: null, setMode() {}, setTask() {}, destroy() { alive = false; } };
 }
 
 function projectCard({ slug, state }) {
@@ -127,11 +132,19 @@ function projectView(slug, mode) {
   const ctx = {
     slug,
     client,
+    store,
     brand,
     themeButton,
     errorNotice,
-    // заполняются задачами карточки, графа и панели «Проект»
-    openCard: () => toast(T.soon),
+    // карточка открывается и закрывается через адрес: её можно открыть ссылкой и вернуться кнопкой «Назад»
+    openCard: key => { window.location.hash = withTask(window.location.hash, key); },
+    closeCard: ({ replace = false } = {}) => {
+      if (!parseRoute(window.location.hash).task) return;
+      const next = withTask(window.location.hash, null);
+      if (replace) window.location.replace(next);
+      else window.location.hash = next;
+    },
+    // заполняются задачами графа и панели «Проект»
     openGraph: () => toast(T.soon),
     openNewTask: () => toast(T.soon),
     openProject: () => toast(T.soon),
@@ -149,7 +162,8 @@ function projectView(slug, mode) {
   return {
     slug,
     setMode: mount,
-    destroy() { destroyMode(); store.stop(); },
+    setTask: key => (key ? openCard(ctx, key) : closeCard()),
+    destroy() { closeCard(false); destroyMode(); store.stop(); },
   };
 }
 

@@ -68,17 +68,18 @@ test('waitingForYou собирает все виды пунктов', () => {
     task('P-1', { open_questions: 2, status: 'waiting_answer' }),
     task('P-2', { status: 'in_review' }),
     task('P-3', { agent_state: 'error', turn_error: 'упал', status: 'in_progress' }),
-    task('P-4', { status: 'in_progress', last_message: { author: 'system', text: LOOP, at: '' } }),
+    task('P-4', { status: 'in_progress', agent_parked: true }),
     task('P-5', { rule_violations: [{ rule: 'r1', text: 'слишком крупная' }] }),
     task('P-6', { status: 'cancelled', open_questions: 1 }),
-    task('P-7', { status: 'in_progress', last_message: { author: 'user', text: LOOP, at: '' } }),
+    task('P-7', { status: 'in_progress', last_message: { author: 'system', text: LOOP, at: '' } }),
+    task('P-8', { display_status: 'blocked', external_blocker: 'ждём доступ от DBA' }),
   ], {
     proposals: [
       { id: 'p1', kind: 'add_task', payload: { task: { key: 'P-9' } }, reason: '', status: 'open' },
       { id: 'p2', kind: 'set_deps', payload: { key: 'P-2', deps: [] }, reason: '', status: 'rejected' },
       { id: 'p3', kind: 'cancel_task', payload: { key: 'P-1' }, reason: '', status: 'open' },
     ],
-    project_agent: { state: 'error', turn_error: 'нет харнесса' },
+    project_agent: { state: 'error', turn_error: 'нет харнесса', parked: true },
   });
   const items = waitingForYou(s);
   assert.deepEqual(items.map(i => [i.kind, i.key || null]), [
@@ -89,12 +90,23 @@ test('waitingForYou собирает все виды пунктов', () => {
     ['error', 'P-3'],
     ['error', null],
     ['loop', 'P-4'],
-  ], 'нарушения правил показываются только на стадии разбивки, отменённые задачи не ждут');
+    ['loop', null],
+    ['blocker', 'P-8'],
+  ], 'нарушения правил — только на стадии разбивки; отменённые не ждут; остановку видно по флагу, а не по тексту');
+  assert.deepEqual(items[7].open, { type: 'project' });
+  assert.equal(items[8].text, 'ждём доступ от DBA');
+  assert.deepEqual(items[8].open, { type: 'card', key: 'P-8' });
   assert.equal(items[0].count, 2);
   assert.deepEqual(items[1].open, { type: 'project' });
   assert.deepEqual(items[0].open, { type: 'card', key: 'P-1' });
   assert.deepEqual(items[5].open, { type: 'project' });
   assert.equal(items[1].proposal, 'add_task');
+});
+
+test('waitingForYou не зовёт к одобренным, отправленным и готовым задачам с вопросами и перепиской', () => {
+  const s = snap(['approved', 'sent', 'done'].map((status, i) =>
+    task('D-' + i, { status, open_questions: 1, agent_parked: true, external_blocker: 'x' })));
+  assert.deepEqual(waitingForYou(s), []);
 });
 
 test('waitingForYou на стадии разбивки показывает нарушения правил', () => {

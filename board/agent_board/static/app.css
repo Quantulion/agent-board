@@ -529,3 +529,59 @@ a.brand:hover { text-decoration: none; }
 .card .ag > span:last-child { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .card .why .w.m span { overflow-wrap: anywhere; }
 @media (prefers-reduced-motion: reduce) { .card.flash, .card .ag .live { animation: none; } }
+.attn-items { display: contents; }
+.card .more { margin-left: auto; width: 22px; height: 18px; border: 0; border-radius: 5px; background: transparent; color: var(--faint); display: grid; place-items: center; cursor: pointer; padding: 0; }
+.card .est ~ .more { margin-left: 0; }
+.card .more:hover, .card .more:focus-visible { background: var(--surface-3); color: var(--fg); }
+.card .more svg { width: 14px; height: 14px; }
+.modal footer .grow { flex: 1; }
+.ferr { font-size: 12.5px; color: var(--err-fg); background: var(--err-bg); border: 1px solid var(--err-line); border-radius: 8px; padding: 7px 10px; overflow-wrap: anywhere; }
+
+/* ===== Карточка задачи на живых данных ===== */
+.slot { display: contents; }
+.offscreen { position: fixed; left: -9999px; top: 0; }
+.dh .l1 .stbtn { border: 0; padding: 0; background: transparent; display: inline-flex; align-items: center; gap: 2px; cursor: pointer; border-radius: 999px; }
+.dh .l1 .stbtn svg { width: 13px; height: 13px; color: var(--muted); }
+.dh .l1 .chip svg { width: 12px; height: 12px; }
+.dh .acts .grow { flex: 1; }
+.dh .acts .note { white-space: nowrap; }
+.banner.parked { background: var(--warn-bg); color: var(--warn-fg); }
+.tabs .tb[hidden] { display: none !important; }
+.qlist { display: grid; gap: 16px; }
+.question .composer textarea { min-height: 40px; }
+.question .rec-why svg { width: 14px; height: 14px; flex: none; color: var(--ok-fg); margin-top: 2px; }
+.question .ctx p { margin: 0 0 8px; }
+.composer .hint { font-size: 11.5px; }
+.composer textarea:disabled { opacity: .6; }
+.opt input:disabled + div { opacity: .6; }
+.sec.err { border-color: var(--err-line); background: var(--err-bg); }
+.sec.err > h3 { color: var(--err-fg); }
+.sec.err > h3 svg { width: 14px; height: 14px; }
+.sec .errtext { margin: 0; font-family: var(--mono); font-size: 12px; color: var(--err-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.violations { margin: 0; padding-left: 18px; font-size: 13px; color: var(--fg-2); display: grid; gap: 4px; }
+.summary-txt.md p { margin: 0 0 6px; }
+.dod .md { color: var(--fg-2); }
+.sec .sub { font-size: 12px; margin-top: 2px; }
+.xblock { font-size: 12.5px; border-radius: 8px; padding: 6px 6px 6px 10px; background: var(--err-bg); color: var(--err-fg); display: flex; gap: 6px; align-items: center; }
+.xblock svg { width: 13px; height: 13px; flex: none; }
+.xblock span { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.xblock .btn { color: var(--err-fg); }
+.pathrow { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.pathrow .path { flex: 1; min-width: 0; }
+.pathrow .btn svg { width: 14px; height: 14px; }
+a.report { display: inline-flex; gap: 6px; align-items: center; font-size: 13.5px; overflow-wrap: anywhere; }
+a.report svg { width: 14px; height: 14px; flex: none; }
+.sec > a.mono { display: inline-flex; gap: 5px; align-items: center; overflow-wrap: anywhere; }
+.sec > a.mono svg { width: 12px; height: 12px; flex: none; }
+.sys .md { min-width: 0; overflow-wrap: anywhere; }
+.sys .md p { margin: 0; }
+.msg .mh .chip { height: 18px; }
+.msg .mb.md pre { margin: 4px 0; }
+.file .fp bdi { unicode-bidi: plaintext; }
+.file:focus-visible { outline-offset: 0; }
+.trunc { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--warn-fg); background: var(--warn-bg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 7px 10px; }
+.trunc svg { width: 14px; height: 14px; flex: none; }
+.muted.small { font-size: 12px; margin: 2px 8px 8px; }
+.drawer:focus { outline: none; }
+@media (prefers-reduced-motion: reduce) { .drawer, .dscrim { animation: none; } }
+.file .fs.D { background: var(--del-bg); color: var(--del-fg); }

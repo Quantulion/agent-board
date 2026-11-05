@@ -316,3 +316,23 @@ test('stop закрывает поток и отменяет переподкл�
   // assert
   assert.equal(FakeEventSource.instances.length, 1);
 });
+
+test('onEvent получает разобранные события потока', async () => {
+  // arrange
+  const { store, es } = await started([snap(5, [task('A')])]);
+  const seen = [];
+  const off = store.onEvent(e => seen.push(e));
+  // act
+  for (const fn of es().listeners.turn_finished) {
+    fn({ lastEventId: '6', data: JSON.stringify({ seq: 6, type: 'turn_finished', at: '', data: { key: 'A' } }) });
+  }
+  for (const fn of es().listeners.message_posted) fn({ lastEventId: '7', data: 'не json' });
+  off();
+  es().emit('turn_finished', 8);
+  // assert
+  assert.deepEqual(seen, [
+    { seq: 6, type: 'turn_finished', data: { key: 'A' } },
+    { seq: 7, type: 'message_posted', data: {} },
+  ]);
+  store.stop();
+});

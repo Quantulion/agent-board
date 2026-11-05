@@ -44,11 +44,31 @@ def test_snapshot_contains_project_agent_state(board):
     # act
     snap = board.snapshot()
     # assert
-    assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1"}
+    assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1", "parked": False}
 
 
 def test_snapshot_project_agent_defaults(board):
-    assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None}
+    assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None, "parked": False}
+
+
+def test_snapshot_project_agent_parked_flag(board):
+    # arrange
+    board.update_meta({"project_agent_parked": True})
+    # act
+    snap = board.snapshot()
+    # assert
+    assert snap["project_agent"]["parked"] is True
+
+
+def test_agent_parked_is_runner_field(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    with pytest.raises(PermissionError):
+        board.update_task("A", "user", {"agent_parked": True})
+    board.update_task("A", "system", {"agent_parked": True})
+    # assert
+    assert board.snapshot()["tasks"][0]["agent_parked"] is True
 
 
 def test_snapshot_contains_display_status_and_open_deps(board):

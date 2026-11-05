@@ -1,12 +1,16 @@
 // Доска проекта: шапка, «Ждут вас», колонки по статусам, карточки и их перенос между статусами.
 import { h, icon, patchList } from './dom.js';
-import { AGENTS_LOOP_PREFIX, STAGES, STATUSES, T, statusInfo } from './i18n.js';
+import { STAGES, STATUSES, T, statusInfo } from './i18n.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
 const DEFAULT_BASE = 'main';
 const WORKING = new Set(['in_progress', 'waiting_answer', 'queued', 'in_review']);
 const SHIPPED = new Set(['approved', 'sent']);
+// по таким задачам работа агента закончена: вопросы и переписка больше не ждут пользователя
+const QUIET = new Set(['approved', 'sent', 'done']);
+// свой тип данных при переносе: чужой перетаскиваемый текст не примется за ключ задачи
+export const DRAG_MIME = 'application/x-ab-task';
 // порядок отрезков полосы прогресса: от готового к ещё не начатому
 const BAR_ORDER = ['done', 'sent', 'approved', 'in_review', 'queued', 'waiting_answer', 'in_progress', 'blocked', 'not_started'];
 const MAX_SLOTS = 5;
@@ -44,7 +48,8 @@ export function waitingForYou(snapshot) {
   const card = key => ({ type: 'card', key });
   const project = { type: 'project' };
   const items = [];
-  for (const t of tasks) {
+  const active = tasks.filter(t => !QUIET.has(t.status));
+  for (const t of active) {
     if (t.open_questions > 0) items.push({ kind: 'question', key: t.key, count: t.open_questions, open: card(t.key) });
   }
   for (const p of snapshot.proposals || []) {
@@ -58,11 +63,11 @@ export function waitingForYou(snapshot) {
   }
   const pa = snapshot.project_agent;
   if (pa && pa.state === 'error') items.push({ kind: 'error', error: pa.turn_error || '', open: project });
-  for (const t of tasks) {
-    const m = t.last_message;
-    if (m && m.author === 'system' && String(m.text).startsWith(AGENTS_LOOP_PREFIX)) {
-      items.push({ kind: 'loop', key: t.key, open: card(t.key) });
-    }
+  for (const t of active) if (t.agent_parked) items.push({ kind: 'loop', key: t.key, open: card(t.key) });
+  if (pa && pa.parked) items.push({ kind: 'loop', open: project });
+  for (const t of active) {
+    const text = typeof t.external_blocker === 'string' ? t.external_blocker.trim() : '';
+    if (text) items.push({ kind: 'blocker', key: t.key, text, open: card(t.key) });
   }
   if (snapshot.config && snapshot.config.stage === 'decomposition') {
     for (const t of tasks) {
@@ -148,23 +153,36 @@ export function toast(text, options = {}) {
     host = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
     document.body.append(host);
   }
-  const el = h('div', { class: options.error ? 'toast err' : 'toast' }, h('span', null, text));
+  const el = h('div', { class: options.error ? 'toast err' : 'toast', role: options.error ? 'alert' : null }, h('span', null, text));
   host.append(el);
   setTimeout(() => el.remove(), options.error ? 6000 : 4000);
   return el;
 }
 
 // Меню выбора статуса; onPick получает id выбранного статуса.
+// «Заблокирована» вычисляется сервером, вручную задаётся только внешний блокер — пункт открывает его диалог.
 export function statusMenu(current, onPick) {
   return h('div', { class: 'menu', role: 'menu', 'aria-label': T.statusMenuAria },
     STATUSES.map(s => h('button', {
       type: 'button', role: 'menuitem', class: s.id === current ? 'cur' : null,
       onclick: () => onPick(s.id),
-    }, sdot(s.id), s.label)));
+    }, sdot(s.id), s.id === 'blocked' ? T.externalBlockerItem : s.label)));
 }
 
+// Выбор в меню статуса или перенос в колонку: «Заблокирована» — диалог внешнего блокера, иначе смена статуса.
+export function requestMove(ctx, task, to) {
+  if (to === 'blocked') return externalBlockerDialog(ctx, task);
+  if (to !== statusOf(task)) moveTask(ctx.client, task.key, to);
+  return null;
+}
+
+const moving = new Set();
+
 // Перенос задачи пользователем: тост с реакцией сервера или с его ошибкой (карточка тогда остаётся на месте).
+// Повторный перенос той же задачи до ответа сервера игнорируется.
 export async function moveTask(client, key, to) {
+  if (moving.has(key)) return null;
+  moving.add(key);
   try {
     const res = await client.post('/tasks/' + encodeURIComponent(key) + '/transition', { to, actor: 'user' });
     const events = (res && res.events) || [];
@@ -173,7 +191,68 @@ export async function moveTask(client, key, to) {
   } catch (err) {
     toast(T.moveFailed(key) + ((err && err.message) || String(err)), { error: true });
     return null;
+  } finally {
+    moving.delete(key);
   }
+}
+
+// Модальное окно поверх всего; Esc и клик мимо закрывают только его. Возвращает close().
+export function openModal(title, body, footer, onClose) {
+  const before = document.activeElement;
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true);
+    host.remove();
+    if (onClose) onClose();
+    if (before && before.isConnected && typeof before.focus === 'function') before.focus();
+  };
+  const onKey = e => {
+    if (e.key !== 'Escape') return;
+    e.stopPropagation();
+    e.preventDefault();
+    close();
+  };
+  const host = h('div', { class: 'modal-host' },
+    h('div', { class: 'scrim', onclick: close }),
+    h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
+      h('header', null, h('h2', null, title),
+        h('button', { class: 'btn icon ghost', type: 'button', 'aria-label': T.close, onclick: close }, icon('x'))),
+      h('div', { class: 'body' }, body),
+      h('footer', null, footer)));
+  document.addEventListener('keydown', onKey, true);
+  document.body.append(host);
+  return close;
+}
+
+// Внешний блокер задаёт и снимает пользователь: задача не стартует, пока он есть, причину видят все.
+export function externalBlockerDialog(ctx, task) {
+  const current = typeof task.external_blocker === 'string' ? task.external_blocker.trim() : '';
+  const input = h('input', { type: 'text', id: 'ext-blocker', placeholder: T.blocker.placeholder });
+  input.value = current;
+  const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
+  const save = value => {
+    error.hidden = true;
+    buttons.forEach(b => { b.disabled = true; });
+    ctx.client.post('/tasks/' + encodeURIComponent(task.key) + '/update', { actor: 'user', fields: { external_blocker: value } })
+      .then(() => {
+        close();
+        toast(value ? T.blocker.set(task.key) : T.blocker.cleared(task.key));
+      })
+      .catch(err => {
+        buttons.forEach(b => { b.disabled = false; });
+        error.textContent = (err && err.message) || String(err);
+        error.hidden = false;
+      });
+  };
+  const submit = () => save(input.value.trim() || null);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  const clearBtn = current ? h('button', { class: 'btn danger', type: 'button', onclick: () => save(null) }, T.blocker.clear) : null;
+  const okBtn = h('button', { class: 'btn primary', type: 'button', onclick: submit }, current ? T.blocker.save : T.blocker.block);
+  const buttons = [clearBtn, okBtn].filter(Boolean);
+  const close = openModal(T.blocker.title(task.key),
+    [h('div', { class: 'field' }, h('label', { for: 'ext-blocker' }, T.blocker.label), input), error],
+    [clearBtn, h('span', { class: 'grow' }), h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel), okBtn]);
+  input.focus();
+  return close;
 }
 
 export function paintStepper(stepper, stage) {
@@ -280,14 +359,18 @@ export function mountBoard(root, store, ctx) {
         s.id === 'cancelled' ? collapseBtn : null),
       cb);
     col.addEventListener('click', () => { if (col.classList.contains('collapsed')) setCollapsed(s.id, false); });
-    col.addEventListener('dragover', e => { e.preventDefault(); col.classList.add('over'); });
+    col.addEventListener('dragover', e => {
+      if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
+      e.preventDefault();
+      col.classList.add('over');
+    });
     col.addEventListener('dragleave', e => { if (!col.contains(e.relatedTarget)) col.classList.remove('over'); });
     col.addEventListener('drop', e => {
       e.preventDefault();
       col.classList.remove('over');
-      const key = e.dataTransfer.getData('text/plain');
-      const entry = cards.get(key);
-      if (entry && entry.model.status !== s.id) moveTask(ctx.client, key, s.id);
+      const key = e.dataTransfer.getData(DRAG_MIME);
+      const task = taskOf(key);
+      if (task) requestMove(ctx, task, s.id);
     });
     cols.append(col);
     return { col, n, cb, collapseBtn };
@@ -323,14 +406,23 @@ export function mountBoard(root, store, ctx) {
     setTimeout(() => c.classList.remove('over'), 700);
   }
 
+  const taskOf = key => {
+    const snap = store.get().snapshot;
+    return (snap && snap.tasks.find(t => t.key === key)) || null;
+  };
+
   // --- карточки ---
 
   function cardNode(key) {
     const node = h('article', { class: 'card', draggable: 'true', tabindex: '0' });
     node.addEventListener('click', () => ctx.openCard(key));
-    node.addEventListener('keydown', e => { if (e.key === 'Enter') ctx.openCard(key); });
+    node.addEventListener('keydown', e => {
+      if (e.target !== node || (e.key !== 'Enter' && e.key !== ' ')) return;
+      e.preventDefault();
+      ctx.openCard(key);
+    });
     node.addEventListener('dragstart', e => {
-      e.dataTransfer.setData('text/plain', key);
+      e.dataTransfer.setData(DRAG_MIME, key);
       e.dataTransfer.effectAllowed = 'move';
       node.classList.add('dragging');
     });
@@ -343,13 +435,19 @@ export function mountBoard(root, store, ctx) {
     return node;
   }
 
-  function cardParts(m) {
+  function cardParts(m, node) {
+    const more = h('button', {
+      class: 'more', type: 'button', 'aria-label': T.statusMenuAria, 'aria-haspopup': 'menu', title: T.statusMenuAria,
+      onclick: e => { e.stopPropagation(); openMenu(node, m.key, null, more); },
+      onkeydown: e => e.stopPropagation(),
+    }, icon('dots'));
     const parts = [
       h('div', { class: 'ct' },
         h('span', { class: 'key' }, m.key),
         h('span', { class: 'ty', title: m.kind === 'research' ? T.kindResearch : T.kindCode }, icon(m.kind === 'research' ? 'flask' : 'code')),
         m.repo ? h('span', { class: 'chip repo' }, m.repo) : null,
-        m.estimate !== null ? h('span', { class: 'est' }, T.estimate(m.estimate)) : null),
+        m.estimate !== null ? h('span', { class: 'est' }, T.estimate(m.estimate)) : null,
+        more),
       h('div', { class: 'ttl' }, m.title),
     ];
     if (m.why) {
@@ -391,7 +489,7 @@ export function mountBoard(root, store, ctx) {
       entry.sig = sig;
       entry.model = model;
       entry.node.className = 'card st-' + model.status;
-      entry.node.replaceChildren(...cardParts(model));
+      entry.node.replaceChildren(...cardParts(model, entry.node));
     }
     return entry.node;
   }
@@ -426,32 +524,43 @@ export function mountBoard(root, store, ctx) {
   // --- меню статуса на карточке (правая кнопка или клавиша меню) ---
 
   let menu = null;
-  function closeMenu() {
-    if (menu) menu.remove();
+  let menuOwner = null;
+  // refocus — вернуть фокус туда, откуда открыли меню (Esc, выбор пункта)
+  function closeMenu(refocus) {
+    if (!menu) return;
+    const [node, owner] = [menu, menuOwner];
+    // сначала обнуляем: удаление узла с фокусом вызывает focusout, который снова закрыл бы меню
     menu = null;
+    menuOwner = null;
+    node.remove();
+    if (refocus && owner && owner.isConnected) owner.focus();
   }
-  function openMenu(node, key, at) {
+  function openMenu(node, key, at, owner) {
     closeMenu();
     const entry = cards.get(key);
     if (!entry) return;
-    const rect = node.getBoundingClientRect();
-    const pos = at || { x: rect.left + 12, y: rect.top + 28 };
+    const rect = (owner || node).getBoundingClientRect();
+    const pos = at || { x: rect.left, y: rect.bottom + 4 };
+    menuOwner = owner || node;
     menu = h('div', { class: 'stmenu floating' }, statusMenu(entry.model.status, to => {
-      closeMenu();
-      node.focus();
-      if (to !== entry.model.status) moveTask(ctx.client, key, to);
+      closeMenu(true);
+      const task = taskOf(key);
+      if (task) requestMove(ctx, task, to);
     }));
-    menu.style.setProperty('left', Math.min(pos.x, window.innerWidth - 230) + 'px');
-    menu.style.setProperty('top', Math.min(pos.y, window.innerHeight - 380) + 'px');
+    menu.addEventListener('focusout', e => { if (menu && !menu.contains(e.relatedTarget)) closeMenu(); });
     document.body.append(menu);
+    // меню целиком остаётся в окне: прижимается к краям, если не помещается
+    const box = menu.getBoundingClientRect();
+    menu.style.setProperty('left', Math.max(8, Math.min(pos.x, window.innerWidth - box.width - 8)) + 'px');
+    menu.style.setProperty('top', Math.max(8, Math.min(pos.y, window.innerHeight - box.height - 8)) + 'px');
     const first = menu.querySelector('button.cur') || menu.querySelector('button');
     if (first) first.focus();
   }
   const onDocClick = e => { if (menu && !menu.contains(e.target)) closeMenu(); };
-  const onKey = e => { if (e.key === 'Escape') closeMenu(); };
+  const onKey = e => { if (e.key === 'Escape' && menu) { e.stopPropagation(); closeMenu(true); } };
   document.addEventListener('click', onDocClick);
   document.addEventListener('keydown', onKey);
-  cols.addEventListener('scroll', closeMenu, true);
+  cols.addEventListener('scroll', () => closeMenu(), true);
   cleanups.push(() => {
     document.removeEventListener('click', onDocClick);
     document.removeEventListener('keydown', onKey);
@@ -474,11 +583,14 @@ export function mountBoard(root, store, ctx) {
       live.filter(t => WORKING.has(statusOf(t))).length);
     bar.replaceChildren(...BAR_ORDER.filter(count).map(id =>
       h('span', { title: statusInfo(id).label + ': ' + count(id), style: { '--c': color(id), flex: String(count(id)) } })));
-    pills.replaceChildren(...STATUSES.map(s => {
-      const n = snap.tasks.filter(t => statusOf(t) === s.id).length;
-      return h('button', { type: 'button', class: n ? 'pill' : 'pill zero', onclick: () => jumpTo(s.id) },
-        sdot(s.id), s.label + ' ', h('b', null, String(n)));
-    }));
+    // узлы плашек и пунктов «Ждут вас» переиспользуются: фокус клавиатуры не теряется при обновлении
+    patchList(pills, STATUSES.map(s => ({ s, n: snap.tasks.filter(t => statusOf(t) === s.id).length })), item => item.s.id,
+      item => {
+        const node = h('button', { type: 'button', class: 'pill', onclick: () => jumpTo(item.s.id) });
+        paintPill(node, item);
+        return node;
+      },
+      paintPill);
 
     artifacts.replaceChildren(h('span', { class: 'lbl' }, T.planning),
       ...(cfg.links || []).map(link => {
@@ -502,31 +614,58 @@ export function mountBoard(root, store, ctx) {
     repoSelect.value = prefs.repo || '';
   }
 
+  function paintPill(node, { s, n }) {
+    const sig = s.id + ':' + n;
+    if (node.dataset.sig === sig) return;
+    node.dataset.sig = sig;
+    node.className = n ? 'pill' : 'pill zero';
+    node.replaceChildren(sdot(s.id), s.label + ' ', h('b', null, String(n)));
+  }
+
   const ATTN_LOOK = {
     question: ['q', 'chat'], proposal: ['pa', 'spark'], review: ['rv', 'eye'],
-    error: ['er', 'warn'], loop: ['er', 'chat'], violation: ['er', 'warn'],
+    error: ['er', 'warn'], loop: ['er', 'chat'], violation: ['er', 'warn'], blocker: ['er', 'lock'],
   };
 
   function attnText(item) {
     if (item.kind === 'question') return T.attn.question(item.count);
     if (item.kind === 'proposal') return T.attn.proposal[item.proposal] || T.attn.proposal.add_task;
     if (item.kind === 'error') return item.key ? T.attn.error : T.attn.projectError;
+    if (item.kind === 'loop') return item.key ? T.attn.loop : T.attn.projectLoop;
     if (item.kind === 'violation') return T.attn.violation(item.count);
     return T.attn[item.kind];
+  }
+
+  const attnLabel = h('span', { class: 'lbl' });
+  const attnList = h('span', { class: 'attn-items' });
+  attn.append(attnLabel, attnList);
+
+  function paintAttnItem(node, item) {
+    node._item = item;
+    const [cls, ic] = ATTN_LOOK[item.kind];
+    const showKey = item.key && !(item.kind === 'proposal' && item.proposal === 'add_task');
+    const sig = JSON.stringify(item);
+    if (node.dataset.sig === sig) return;
+    node.dataset.sig = sig;
+    node.className = 'it ' + cls;
+    if (item.error || item.text) node.title = item.error || item.text;
+    else node.removeAttribute('title');
+    node.replaceChildren(icon(ic), showKey ? h('span', { class: 'k' }, item.key) : null, attnText(item));
   }
 
   function paintAttn(snap) {
     const items = waitingForYou(snap);
     attn.hidden = !items.length;
-    attn.replaceChildren(h('span', { class: 'lbl' }, icon('warn'), T.waitingForYou + ' · ' + items.length),
-      ...items.map(item => {
-        const [cls, ic] = ATTN_LOOK[item.kind];
-        const showKey = item.key && !(item.kind === 'proposal' && item.proposal === 'add_task');
-        return h('button', {
-          type: 'button', class: 'it ' + cls, title: item.error || null,
-          onclick: () => (item.open.type === 'card' ? ctx.openCard(item.open.key) : ctx.openProject()),
-        }, icon(ic), showKey ? h('span', { class: 'k' }, item.key) : null, attnText(item));
-      }));
+    attnLabel.replaceChildren(icon('warn'), T.waitingForYou + ' · ' + items.length);
+    patchList(attnList, items, item => item.kind + ':' + (item.key || item.id || ''), item => {
+      const node = h('button', { type: 'button', onclick: () => {
+        const it = node._item;
+        if (it.open.type === 'card') ctx.openCard(it.open.key);
+        else ctx.openProject();
+      } });
+      paintAttnItem(node, item);
+      return node;
+    }, paintAttnItem);
   }
 
   function paintConnection(state) {

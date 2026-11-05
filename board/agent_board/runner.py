@@ -282,7 +282,12 @@ class Runner:
                     self._pending[(slug, key)] = list(restored[key])
             self._saved_pending[slug] = restored
             woken = set()
+            # счётчик переписки агентов не переживает перезапуск — снимаем и остановки
+            if meta.get("project_agent_parked"):
+                board.update_meta({"project_agent_parked": False})
             for key, task in sorted(tasks.items()):
+                if task.agent_parked:
+                    board.update_task(key, "system", {"agent_parked": False})
                 if task.agent_state == "running":
                     self._kill_leftover(board, key, task.turn_process)
                     board.update_task(key, "system", {"agent_state": "idle", "turn_process": None})
@@ -357,7 +362,17 @@ class Runner:
 
     def _unpark(self, k: Key) -> None:
         self._agent_wakes.pop(k, None)
-        self._parked.discard(k)
+        if k in self._parked:
+            self._parked.discard(k)
+            self._set_parked(k, False)
+
+    def _set_parked(self, k: Key, parked: bool) -> None:
+        """Флаг остановки переписки на карточке — по нему интерфейс показывает, что агент ждёт пользователя."""
+        board = self._board(k[0])
+        if k[1] == PROJECT_THREAD:
+            board.update_meta({"project_agent_parked": parked})
+        elif k[1] in board.store.load_tasks():
+            board.update_task(k[1], "system", {"agent_parked": parked})
 
     def _park_agent_loop(self, k: Key, reason: dict) -> bool:
         """Защита от переписки агентов по кругу: True — пробуждение отложено до действия пользователя."""
@@ -372,6 +387,7 @@ class Runner:
         self._pending.setdefault(k, []).append(reason)
         if k not in self._parked:
             self._parked.add(k)
+            self._set_parked(k, True)
             self._board(k[0]).post_message(k[1], "system", AGENTS_LOOP_TEXT)
         return True
 

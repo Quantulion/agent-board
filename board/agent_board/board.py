@@ -17,12 +17,12 @@ UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
-    "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations",
+    "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations", "agent_parked",
 }
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process",
+    "turn_process", "agent_parked",
 }
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
@@ -196,6 +196,7 @@ class Board:
                     "state": meta.get("project_agent_state") or "idle",
                     "turn_error": meta.get("project_turn_error") or "",
                     "session_id": config.project_session_id,
+                    "parked": bool(meta.get("project_agent_parked")),
                 },
                 "last_seq": self.store.last_seq(),
             }

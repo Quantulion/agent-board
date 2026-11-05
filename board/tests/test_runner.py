@@ -899,13 +899,36 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     assert parked_turns == runner_mod.MAX_AGENT_WAKES
     assert len(events(store, "turn_started", "T-1")) == runner_mod.MAX_AGENT_WAKES + 1
     assert thread_texts(store, "_project").count(runner_mod.AGENTS_LOOP_TEXT) == 1
+    assert srv.board_for("pay").snapshot()["project_agent"]["parked"] is True
     # act: пользователь отвечает в треде — агент проекта снова работает
     srv.board_for("pay").post_message("_project", "user", "продолжайте")
     wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
+    runner_sync(srv)
     # assert
     assert project_turns() == parked_turns + 1
+    snap = srv.board_for("pay").snapshot()
+    assert snap["project_agent"]["parked"] is False
+    assert [t["agent_parked"] for t in snap["tasks"]] == [True]
     assert "продолжайте" in [c for c in calls if c["env"]["AGENT_BOARD_ACTOR"] == "project_agent"][-1]["text"]
+
+
+def test_restart_clears_parked_flags(make_project, start_server):
+    # arrange: счётчик переписки живёт в памяти, после перезапуска остановка снята
+    store = make_project(project_session_id="p-1")
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.agent_parked = True
+    store.save_task(t)
+    meta = store.load_meta()
+    meta["project_agent_parked"] = True
+    store.save_meta(meta)
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    snap = srv.board_for("pay").snapshot()
+    assert snap["project_agent"]["parked"] is False
+    assert snap["tasks"][0]["agent_parked"] is False
 
 
 # --- восстановление очереди и потерянные сессии ---
