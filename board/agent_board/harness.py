@@ -226,6 +226,9 @@ def _parse(line: str) -> Optional[dict]:
     return event if isinstance(event, dict) else None
 
 
+BOARD_CLI_PERMISSION = "Bash(agent-board:*)"
+
+
 class ClaudeHarness(Harness):
     binary = "claude"
 
@@ -238,7 +241,9 @@ class ClaudeHarness(Harness):
         return str(uuid.uuid4())
 
     def _common(self) -> List[str]:
-        return ["--output-format", "stream-json", "--verbose", "--permission-mode", self.permission_mode]
+        # CLI доски разрешён агенту в любом режиме, остальные команды подчиняются permission_mode
+        return ["--output-format", "stream-json", "--verbose", "--permission-mode", self.permission_mode,
+                "--allowedTools", BOARD_CLI_PERMISSION]
 
     def build_start_args(self, session_id: str, system_file: Path) -> List[str]:
         args = [self.binary, "-p", "--session-id", session_id] + self._common()

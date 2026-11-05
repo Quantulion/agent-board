@@ -44,7 +44,7 @@ def test_claude_start_args(tmp_path):
     # assert
     assert args == [
         "claude", "-p", "--session-id", "sid-1", "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "plan", "--model", "opus", "--append-system-prompt-file", str(tmp_path / "s.md"),
+        "--permission-mode", "plan", "--allowedTools", "Bash(agent-board:*)", "--model", "opus", "--append-system-prompt-file", str(tmp_path / "s.md"),
     ]
 
 
@@ -56,7 +56,7 @@ def test_claude_resume_args():
     args = ClaudeHarness("auto").build_resume_args("sid-1")
     assert args == [
         "claude", "-p", "--resume", "sid-1", "--output-format", "stream-json", "--verbose",
-        "--permission-mode", "auto",
+        "--permission-mode", "auto", "--allowedTools", "Bash(agent-board:*)",
     ]
 
 

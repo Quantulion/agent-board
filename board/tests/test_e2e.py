@@ -33,7 +33,6 @@ class ServerProcess:
         self.launches = 0
 
     def start(self) -> None:
-        old = read_discovery()
         env = dict(os.environ, AGENT_BOARD_HOME=str(self.home))
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [PKG_ROOT, os.environ.get("PYTHONPATH")]))
         self.launches += 1
@@ -86,7 +85,7 @@ def test_full_flow_with_server_crash_during_dependent_turn(tmp_home, git_repo):
         server.call("POST", "tasks", {"actor": "user", "task": {"key": "B", "title": "Задача B", "description": b_script,
                                                                 "deps": ["A"]}})
         # act: A задаёт вопрос, пользователь отвечает, агент отправляет задачу в ревью
-        wait_events(store, "question_asked", "A", )
+        wait_events(store, "question_asked", "A")
         question = store.load_tasks()["A"].questions[0]
         wait_events(store, "turn_finished", "A")
         resume_a = script({"cli": ["status", "A", "in_review"]})
@@ -123,6 +122,10 @@ def test_full_flow_with_server_crash_during_dependent_turn(tmp_home, git_repo):
         assert any("прерван" in t for t in texts) and LEFTOVER_MISSING_TEXT not in texts
         assert len([e for e in store.read_events() if e.type == "turn_started" and e.data.get("key") == "B"]) == 2
         assert not [e for e in store.read_events() if e.type == "turn_failed"]
+    except BaseException:
+        for log in sorted(tmp_home.glob("server-*.log")):
+            print("--- %s ---\n%s" % (log.name, log.read_text()))
+        raise
     finally:
         server.stop()
         for pgid in fake_pgids(store) + ([old_group] if old_group else []):
