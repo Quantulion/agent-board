@@ -280,6 +280,13 @@ def test_project_unread_lives_in_meta(board):
     assert board.snapshot()["project_unread"] == 0
 
 
+def test_snapshot_project_thread_size_follows_messages(board):
+    assert board.snapshot()["project_thread_size"] == 0
+    board.post_message("_project", "user", "1")
+    board.post_message("_project", "project_agent", "2")
+    assert board.snapshot()["project_thread_size"] == 2
+
+
 def test_post_message_unknown_thread_rejected(board):
     with pytest.raises(KeyError):
         board.post_message("ZZ", "user", "x")

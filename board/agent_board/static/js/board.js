@@ -1,6 +1,9 @@
 // Доска проекта: шапка, «Ждут вас», колонки по статусам, карточки и их перенос между статусами.
 import { h, icon, patchList } from './dom.js';
+import { mountGraph } from './graph.js';
 import { STAGES, STATUSES, T, statusInfo } from './i18n.js';
+import { openNewTaskDialog } from './newtask.js';
+import { mountProjectPanel, proposalsTouching } from './project.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
@@ -14,6 +17,8 @@ export const DRAG_MIME = 'application/x-ab-task';
 // порядок отрезков полосы прогресса: от готового к ещё не начатому
 const BAR_ORDER = ['done', 'sent', 'approved', 'in_review', 'queued', 'waiting_answer', 'in_progress', 'blocked', 'not_started'];
 const MAX_SLOTS = 5;
+// критический путь на графе — по работе, которая ещё осталась
+const FINISHED = ['cancelled', 'done', 'sent', 'approved'];
 
 const statusOf = t => t.display_status || t.status;
 const firstLine = s => (typeof s === 'string' ? s.trim().split('\n')[0].trim() : '');
@@ -21,14 +26,19 @@ const unique = list => [...new Set(list)];
 
 // --- Чистые функции ---
 
-export function columnsOf(snapshot, filters = {}) {
-  const tasks = snapshot ? [...snapshot.tasks].sort(byKeyOrder) : [];
+// Проходит ли задача фильтры доски (репозиторий, тип, «только требующие меня», поиск).
+export function taskFilter(snapshot, filters = {}) {
   const attn = filters.attn ? new Set(waitingForYou(snapshot).map(i => i.key).filter(Boolean)) : null;
   const q = String(filters.q || '').trim().toLowerCase();
-  const pass = t => (!filters.repo || t.repo === filters.repo)
+  return t => (!filters.repo || t.repo === filters.repo)
     && (!filters.type || t.kind === filters.type)
     && (!attn || attn.has(t.key))
     && (!q || (t.key + ' ' + t.title).toLowerCase().includes(q));
+}
+
+export function columnsOf(snapshot, filters = {}) {
+  const tasks = snapshot ? [...snapshot.tasks].sort(byKeyOrder) : [];
+  const pass = taskFilter(snapshot, filters);
   return STATUSES.map(s => {
     const all = tasks.filter(t => statusOf(t) === s.id);
     return { id: s.id, label: s.label, color: s.color, total: all.length, tasks: all.filter(pass) };
@@ -206,7 +216,7 @@ export function openModal(title, body, footer, onClose) {
     if (before && before.isConnected && typeof before.focus === 'function') before.focus();
   };
   const onKey = e => {
-    if (e.key !== 'Escape') return;
+    if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return;
     e.stopPropagation();
     e.preventDefault();
     close();
@@ -223,10 +233,12 @@ export function openModal(title, body, footer, onClose) {
   return close;
 }
 
+const BLOCKER_MAX = 500;
+
 // Внешний блокер задаёт и снимает пользователь: задача не стартует, пока он есть, причину видят все.
 export function externalBlockerDialog(ctx, task) {
   const current = typeof task.external_blocker === 'string' ? task.external_blocker.trim() : '';
-  const input = h('input', { type: 'text', id: 'ext-blocker', placeholder: T.blocker.placeholder });
+  const input = h('input', { type: 'text', id: 'ext-blocker', placeholder: T.blocker.placeholder, maxlength: String(BLOCKER_MAX) });
   input.value = current;
   const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const save = value => {
@@ -243,8 +255,19 @@ export function externalBlockerDialog(ctx, task) {
         error.hidden = false;
       });
   };
-  const submit = () => save(input.value.trim() || null);
-  input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); submit(); } });
+  const submit = () => {
+    const value = input.value.trim();
+    // пустая причина снимает блокер, только если он есть; иначе задача заблокировалась бы без объяснения
+    const problem = !value && !current ? T.blocker.needReason : value.length > BLOCKER_MAX ? T.blocker.tooLong(BLOCKER_MAX) : '';
+    if (problem) {
+      error.textContent = problem;
+      error.hidden = false;
+      input.focus();
+      return;
+    }
+    save(value || null);
+  };
+  input.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); submit(); } });
   const clearBtn = current ? h('button', { class: 'btn danger', type: 'button', onclick: () => save(null) }, T.blocker.clear) : null;
   const okBtn = h('button', { class: 'btn primary', type: 'button', onclick: submit }, current ? T.blocker.save : T.blocker.block);
   const buttons = [clearBtn, okBtn].filter(Boolean);
@@ -270,7 +293,7 @@ export function paintStepper(stepper, stage) {
 // --- Настройки вида, переживающие перезагрузку ---
 
 function loadPrefs(key) {
-  const defaults = { repo: '', type: '', q: '', attn: false, collapsed: { cancelled: true } };
+  const defaults = { view: 'board', repo: '', type: '', q: '', attn: false, collapsed: { cancelled: true } };
   try {
     const saved = JSON.parse(window.localStorage.getItem(key) || 'null');
     return saved && typeof saved === 'object' ? { ...defaults, ...saved } : defaults;
@@ -302,7 +325,7 @@ export function mountBoard(root, store, ctx) {
   const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
   const syncText = h('span');
   const sync = h('div', { class: 'sync static busy', role: 'status' }, h('span', { class: 'sdot' }), syncText);
-  const projectBtn = h('button', { class: 'btn', type: 'button', onclick: () => ctx.openProject() });
+  const projectBtn = h('button', { class: 'btn', type: 'button', 'aria-pressed': 'false', onclick: () => panel.toggle() });
   const doneText = h('b');
   const restText = h('span', { class: 'muted' });
   const bar = h('div', { class: 'bar' });
@@ -327,6 +350,25 @@ export function mountBoard(root, store, ctx) {
   const columns = new Map();
   for (const s of STATUSES) columns.set(s.id, column(s));
 
+  const graphHost = h('div', { class: 'graph-wrap' });
+  const graphEmpty = h('p', { class: 'muted', hidden: true }, T.graphEmpty);
+  const graphView = h('div', { class: 'graphview', hidden: true },
+    h('div', { class: 'gbar' },
+      h('div', { class: 'legend' },
+        STATUSES.filter(s => s.id !== 'cancelled').map(s => h('span', null, sdot(s.id), s.label)),
+        h('span', null, h('i', { class: 'ln' }), T.graphCritical),
+        h('span', null, h('i', { class: 'ln cyc' }), T.graphCyclic)),
+      h('span', { class: 'muted ghint' }, T.graphHint)),
+    graphEmpty, graphHost);
+  const graph = mountGraph(graphHost, key => ctx.openCard(key));
+  const viewButtons = [['board', T.board, 'board'], ['graph', T.graph, 'graph']].map(([id, label, ic]) =>
+    h('button', { type: 'button', 'data-view': id, 'aria-pressed': String(prefs.view === id), onclick: () => setView(id) }, icon(ic), label));
+
+  const panel = mountProjectPanel(ctx, store, on => projectBtn.setAttribute('aria-pressed', String(on)));
+  ctx.openProject = () => panel.reveal();
+  ctx.openGraph = () => setView('graph');
+  ctx.openNewTask = () => openNewTaskDialog(ctx);
+
   root.replaceChildren(h('div', { class: 'app' },
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
@@ -338,15 +380,36 @@ export function mountBoard(root, store, ctx) {
         artifacts),
       attn, banner),
     h('div', { class: 'toolbar' },
-      h('div', { class: 'seg', role: 'group', 'aria-label': T.viewAria },
-        h('button', { type: 'button', 'aria-pressed': 'true' }, icon('board'), T.board),
-        h('button', { type: 'button', 'aria-pressed': 'false', onclick: () => ctx.openGraph() }, icon('graph'), T.graph)),
+      h('div', { class: 'seg', role: 'group', 'aria-label': T.viewAria }, viewButtons),
       repoSelect, typeSeg,
       h('label', { class: 'toggle' }, attnToggle, ' ' + T.onlyMine),
       h('div', { class: 'search' }, icon('search'), search),
       h('span', { class: 'grow' }),
       h('button', { class: 'btn primary', type: 'button', onclick: () => ctx.openNewTask() }, icon('plus'), T.newTask)),
-    h('div', { class: 'work' }, cols)));
+    h('div', { class: 'work' }, h('div', { class: 'views' }, cols, graphView), panel.el)));
+
+  function setView(id) {
+    prefs.view = id === 'graph' ? 'graph' : 'board';
+    savePrefs(prefsKey, prefs);
+    paintView();
+  }
+
+  function paintView() {
+    const isGraph = prefs.view === 'graph';
+    cols.hidden = isGraph;
+    graphView.hidden = !isGraph;
+    viewButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === prefs.view)));
+    const snap = store.get().snapshot;
+    if (isGraph && snap) paintGraph(snap);
+  }
+
+  function paintGraph(snap) {
+    const live = snap.tasks.filter(t => statusOf(t) !== 'cancelled');
+    const pass = taskFilter(snap, prefs);
+    graphEmpty.hidden = live.length > 0;
+    graphHost.hidden = !live.length;
+    graph.paint(live, { skipCritical: FINISHED, isOut: t => !pass(t) });
+  }
 
   function column(s) {
     const n = h('span', { class: 'n' }, '0');
@@ -396,9 +459,11 @@ export function mountBoard(root, store, ctx) {
     typeSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === prefs.type)));
     const snap = store.get().snapshot;
     if (snap) paintColumns(snap, new Set());
+    if (snap && prefs.view === 'graph') paintGraph(snap);
   }
 
   function jumpTo(id) {
+    if (prefs.view !== 'board') setView('board');
     if (prefs.collapsed && prefs.collapsed[id]) setCollapsed(id, false);
     const c = columns.get(id).col;
     c.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
@@ -504,7 +569,7 @@ export function mountBoard(root, store, ctx) {
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const modelCtx = {
       byKey,
-      proposalKeys: new Set((snap.proposals || []).filter(p => p.status === 'open').map(proposalKey).filter(Boolean)),
+      proposalKeys: new Set(snap.tasks.filter(t => proposalsTouching(snap.proposals, t.key).length).map(t => t.key)),
       repoBase: new Map((snap.config.repos || []).map(r => [r.name, r.base || DEFAULT_BASE])),
     };
     for (const c of columnsOf(snap, prefs)) {
@@ -650,7 +715,8 @@ export function mountBoard(root, store, ctx) {
     node.className = 'it ' + cls;
     if (item.error || item.text) node.title = item.error || item.text;
     else node.removeAttribute('title');
-    node.replaceChildren(icon(ic), showKey ? h('span', { class: 'k' }, item.key) : null, attnText(item));
+    // replaceChildren превратил бы null в текст «null»
+    node.replaceChildren(...[icon(ic), showKey ? h('span', { class: 'k' }, item.key) : null, attnText(item)].filter(Boolean));
   }
 
   function paintAttn(snap) {
@@ -684,15 +750,19 @@ export function mountBoard(root, store, ctx) {
     paintHeader(snap);
     paintAttn(snap);
     paintColumns(snap, painted ? changes.tasks : new Set());
+    if (prefs.view === 'graph') paintGraph(snap);
     painted = true;
   }
 
   paintCollapsed();
+  paintView();
   const unsubscribe = store.subscribe(paint);
   paint(store.get(), { tasks: new Set(), snapshot: true });
 
   return function destroy() {
     unsubscribe();
+    panel.destroy();
+    for (const name of ['openProject', 'openGraph', 'openNewTask']) ctx[name] = () => {};
     cleanups.forEach(fn => fn());
   };
 }

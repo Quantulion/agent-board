@@ -162,6 +162,8 @@ try {
   // меню статуса по правой кнопке; одобрение PAY-106 разблокирует PAY-108 — тост с реакцией
   const card106 = await page.$('.card[data-key="PAY-106"]');
   await card106.evaluate(el => el.scrollIntoView({ block: 'nearest', inline: 'nearest' }));
+  // событие прокрутки колонок приходит позже и закрыло бы только что открытое меню
+  await new Promise(r => setTimeout(r, 300));
   const box = await card106.boundingBox();
   await page.mouse.click(box.x + 60, box.y + 30, { button: 'right' });
   await page.waitForSelector('.stmenu.floating .menu', { timeout: 5000 });

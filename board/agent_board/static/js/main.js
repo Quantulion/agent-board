@@ -1,5 +1,5 @@
 import { api } from './api.js';
-import { mountBoard, paintStepper, toast } from './board.js';
+import { mountBoard, paintStepper } from './board.js';
 import { closeCard, openCard } from './card.js';
 import { h, icon, patchList } from './dom.js';
 import { STAGES, T, tasksCount } from './i18n.js';
@@ -144,10 +144,10 @@ function projectView(slug, mode) {
       if (replace) window.location.replace(next);
       else window.location.hash = next;
     },
-    // заполняются задачами графа и панели «Проект»
-    openGraph: () => toast(T.soon),
-    openNewTask: () => toast(T.soon),
-    openProject: () => toast(T.soon),
+    // задаёт смонтированная доска: панель «Проект», граф и окно новой задачи живут в ней
+    openGraph: () => {},
+    openNewTask: () => {},
+    openProject: () => {},
   };
   let destroyMode = null;
   let current = null;

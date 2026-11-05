@@ -192,6 +192,7 @@ class Board:
                 "tasks": items,
                 "proposals": [p.to_dict() for p in self.store.load_proposals()],
                 "project_unread": meta["project_unread"],
+                "project_thread_size": self.store.thread_summary(PROJECT_THREAD)[0],
                 "project_agent": {
                     "state": meta.get("project_agent_state") or "idle",
                     "turn_error": meta.get("project_turn_error") or "",

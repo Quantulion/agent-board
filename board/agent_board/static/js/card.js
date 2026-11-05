@@ -3,12 +3,14 @@
 import { externalBlockerDialog, requestMove, statusMenu, toast } from './board.js';
 import { h, icon, patchList, safeMarkdown, safeUrl } from './dom.js';
 import { T, statusInfo } from './i18n.js';
+import { proposalNote, proposalsTouching } from './project.js';
+import { createThread, draftsFor, formatTime } from './thread.js';
+
+export { authorOf, createDrafts, formatTime } from './thread.js';
 
 const WIDTH_KEY = 'ab-dw';
 const TAB_KEY = 'ab-card-tab';
 const MIN_WIDTH = 420;
-// столько пикселей от низа треда ещё считается «внизу»: новое сообщение прокрутит к себе
-const BOTTOM_SLACK = 40;
 
 const statusOf = t => t.display_status || t.status;
 const isResearch = t => t.kind === 'research';
@@ -103,49 +105,6 @@ export function diffFiles(paths, text) {
   return order.map(p => parsed.get(p) || { path: p, status: 'M', add: null, del: null, lines: [] });
 }
 
-export function authorOf(author) {
-  if (author === 'user') return { cls: 'user', label: T.authors.user };
-  if (author === 'agent') return { cls: 'agent', label: T.authors.agent };
-  if (author === 'project_agent') return { cls: 'pa', label: T.authors.project_agent };
-  return { cls: 'sys', label: T.authors.system };
-}
-
-const pad = n => String(n).padStart(2, '0');
-
-export function formatTime(iso, now = new Date()) {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const time = pad(d.getHours()) + ':' + pad(d.getMinutes());
-  const sameDay = d.getFullYear() === now.getFullYear() && d.getMonth() === now.getMonth() && d.getDate() === now.getDate();
-  return sameDay ? time : d.getDate() + ' ' + T.card.months[d.getMonth()] + ' ' + time;
-}
-
-// Черновики сообщений по задачам: в памяти и в sessionStorage, чтобы пережить перерисовки, закрытие и перезагрузку.
-export function createDrafts(storage, slug) {
-  const mem = new Map();
-  const id = key => 'ab-draft:' + slug + ':' + key;
-  return {
-    get(key) {
-      if (mem.has(key)) return mem.get(key);
-      try {
-        return (storage && storage.getItem(id(key))) || '';
-      } catch (e) {
-        return '';
-      }
-    },
-    set(key, text) {
-      mem.set(key, text);
-      try {
-        if (text) storage.setItem(id(key), text);
-        else storage.removeItem(id(key));
-      } catch (e) {
-        // хранилище недоступно — черновик живёт в памяти вкладки
-      }
-    },
-  };
-}
-
 // Ссылка на отчёт исследования: внешняя — как есть, локальный файл — через file; относительный путь — от worktree.
 export function reportHref(slug, task) {
   const report = typeof task.report === 'string' ? task.report.trim() : '';
@@ -222,7 +181,6 @@ const copyButton = text => h('button', {
 // --- Открытая карточка ---
 
 let current = null;
-let drafts = null;
 
 export function openCard(ctx, key) {
   if (current && current.key === key && current.ctx === ctx) return;
@@ -240,7 +198,7 @@ export function closeCard(restoreFocus = true) {
 
 function createCard(ctx, key, returnFocus) {
   const { store, client, slug } = ctx;
-  if (!drafts || drafts.slug !== slug) drafts = Object.assign(createDrafts(globalThis.sessionStorage, slug), { slug });
+  const drafts = draftsFor(slug);
   const cleanups = [];
   const self = { key, ctx, returnFocus, destroy };
   let ui = null;
@@ -351,7 +309,8 @@ function createCard(ctx, key, returnFocus) {
 
     // Esc закрывает сначала меню статуса, потом карточку; модальные окна перехватывают Esc раньше.
     const onKey = e => {
-      if (e.key !== 'Escape' || e.defaultPrevented) return;
+      // Esc во время набора через IME отменяет композицию, а не закрывает карточку
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.keyCode === 229) return;
       if (head.menuOpen()) {
         head.closeMenu(true);
         return;
@@ -390,12 +349,13 @@ function createCard(ctx, key, returnFocus) {
 
     function overviewPane() {
       const questions = h('div', { class: 'qlist' });
+      const proposals = h('div', { class: 'qlist' });
       const parts = {
         error: region('div'), violations: region('div'), task: region('div'), summary: region('div'),
         deps: region('div'), work: region('div'), tracker: region('div'),
       };
       const el = h('div', { class: 'dgrid' },
-        h('main', null, questions, parts.error.el, parts.violations.el, parts.task.el, parts.summary.el),
+        h('main', null, questions, proposals, parts.error.el, parts.violations.el, parts.task.el, parts.summary.el),
         h('aside', null, parts.deps.el, parts.work.el, parts.tracker.el));
       return {
         el,
@@ -403,6 +363,11 @@ function createCard(ctx, key, returnFocus) {
           const open = (t.questions || []).filter(q => !q.answer);
           patchList(questions, open, 'id', q => questionForm(q));
           questions.hidden = !open.length;
+          const byKey = new Map(snap.tasks.map(x => [x.key, x]));
+          const touching = proposalsTouching(snap.proposals || [], key);
+          // узел пересоздаётся только при смене содержания: состояние кнопок переживает обновления снимка
+          patchList(proposals, touching, p => p.id + ':' + JSON.stringify(p.payload), p => proposalNote(ctx, p, byKey));
+          proposals.hidden = !touching.length;
           parts.error.paint(t.turn_error, () => t.turn_error ? h('section', { class: 'sec err' },
             h('h3', null, icon('warn'), T.card.turnError), h('pre', { class: 'errtext' }, t.turn_error)) : null);
           const violations = t.rule_violations || [];
@@ -428,7 +393,13 @@ function createCard(ctx, key, returnFocus) {
     function questionForm(q) {
       const name = 'q-' + key + '-' + q.id;
       const options = Array.isArray(q.options) ? q.options : [];
+      // комментарий и выбранный вариант переживают закрытие карточки и перезагрузку, пока ответ не отправлен
+      const draftKey = key + '#q:' + q.id;
+      const choiceKey = draftKey + ':choice';
+      const savedChoice = drafts.get(choiceKey);
       const comment = h('textarea', { placeholder: options.length ? T.card.answerComment : T.card.answerFree });
+      comment.value = drafts.get(draftKey);
+      comment.addEventListener('input', () => drafts.set(draftKey, comment.value));
       const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
       const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.answer);
       const radios = [];
@@ -439,7 +410,8 @@ function createCard(ctx, key, returnFocus) {
         options.length ? h('div', { class: 'opts' }, options.map(opt => {
           const rec = q.recommended === opt;
           const radio = h('input', { type: 'radio', name, value: opt });
-          radio.checked = rec;
+          radio.checked = savedChoice && options.includes(savedChoice) ? savedChoice === opt : rec;
+          radio.addEventListener('change', () => { if (radio.checked) drafts.set(choiceKey, opt); });
           radios.push(radio);
           return h('label', { class: rec ? 'opt rec' : 'opt' }, radio,
             h('div', null, h('div', { class: 'ot' }, opt, rec ? h('span', { class: 'rtag' }, T.card.recommended) : null)));
@@ -450,7 +422,7 @@ function createCard(ctx, key, returnFocus) {
           h('div', { class: 'row' }, h('span', { class: 'faint hint' }, T.card.answerHint), send)),
         error);
       comment.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
           e.preventDefault();
           submit();
         }
@@ -470,7 +442,11 @@ function createCard(ctx, key, returnFocus) {
         controls.forEach(c => { c.disabled = true; });
         client.post('/tasks/' + encodeURIComponent(key) + '/questions/' + encodeURIComponent(q.id) + '/answer',
           { choice: picked ? picked.value : null, comment: text })
-          .then(() => toast(T.card.answered(key)))
+          .then(() => {
+            drafts.set(draftKey, '');
+            drafts.set(choiceKey, '');
+            toast(T.card.answered(key));
+          })
           .catch(err => {
             controls.forEach(c => { c.disabled = false; });
             error.textContent = (err && err.message) || String(err);
@@ -535,117 +511,24 @@ function createCard(ctx, key, returnFocus) {
     }
 
     function threadPane() {
-      const list = h('div', { class: 'thread' });
-      const empty = h('p', { class: 'muted', hidden: true }, T.card.noMessages);
-      const loadError = h('div', { class: 'ferr', role: 'alert', hidden: true });
-      const sendError = h('div', { class: 'ferr', role: 'alert', hidden: true });
-      const area = h('textarea', { placeholder: T.card.composer(key), 'aria-label': T.card.composer(key) });
-      area.value = drafts.get(key);
-      const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.send);
       const sessionNote = h('span', { class: 'r faint' });
-      const el = h('div', { class: 'pane' },
-        h('section', { class: 'sec' },
-          h('h3', null, T.card.threadTitle, sessionNote),
-          loadError, list, empty,
-          h('div', { class: 'composer' }, area,
-            h('div', { class: 'row' }, h('span', { class: 'faint hint' }, T.card.composerHint), send)),
-          sendError));
-      area.addEventListener('input', () => drafts.set(key, area.value));
-      area.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-          e.preventDefault();
-          submit();
-        }
+      const thread = createThread({
+        client, thread: key, drafts, agentName: key,
+        scroller: () => body,
+        visible: () => isVisible('thread'),
+        alive: () => current === self,
+        placeholder: T.card.composer(key),
       });
-
-      let messages = [];
-      let loading = false;
-      let reading = false;
-      let firstShown = false;
-
-      function atBottom() {
-        return body.scrollHeight - body.scrollTop - body.clientHeight < BOTTOM_SLACK;
-      }
-
-      async function load() {
-        if (loading) return;
-        loading = true;
-        try {
-          const res = await client.get('/threads/' + encodeURIComponent(key));
-          if (!current || current !== self) return;
-          loadError.hidden = true;
-          const stick = isVisible('thread') && atBottom();
-          messages = (res && res.messages) || [];
-          patchList(list, messages, 'id', renderMessage);
-          empty.hidden = messages.length > 0;
-          if (stick) body.scrollTop = body.scrollHeight;
-        } catch (err) {
-          loadError.textContent = T.card.threadLoadFailed + ((err && err.message) || String(err));
-          loadError.hidden = false;
-        } finally {
-          loading = false;
-        }
-        if (task.thread_size > messages.length && loadError.hidden) load();
-      }
-
-      function markRead() {
-        if (reading || !isVisible('thread') || !(task.unread > 0)) return;
-        reading = true;
-        client.post('/threads/' + encodeURIComponent(key) + '/read').catch(() => {}).finally(() => { reading = false; });
-      }
-
-      function submit() {
-        const text = area.value.trim();
-        if (!text || send.disabled) return;
-        // поле сразу свободно для следующего сообщения; при ошибке отправленный текст возвращается в него
-        const sent = area.value;
-        area.value = '';
-        drafts.set(key, '');
-        send.disabled = true;
-        sendError.hidden = true;
-        client.post('/threads/' + encodeURIComponent(key) + '/messages', { author: 'user', text })
-          .then(() => { body.scrollTop = body.scrollHeight; })
-          .catch(err => {
-            area.value = area.value ? sent + '\n\n' + area.value : sent;
-            drafts.set(key, area.value);
-            sendError.textContent = (err && err.message) || String(err);
-            sendError.hidden = false;
-          })
-          .finally(() => { send.disabled = false; });
-      }
-
+      const el = h('div', { class: 'pane' },
+        h('section', { class: 'sec' }, h('h3', null, T.card.threadTitle, sessionNote), thread.list, thread.composer));
       return {
         el,
         paint(t) {
           sessionNote.textContent = t.session_id ? T.card.sessionShort(t.session_id.slice(0, 8)) : '';
-          empty.hidden = messages.length > 0 || t.thread_size > 0;
-          if (t.thread_size > messages.length) load();
-          markRead();
+          thread.paint({ size: t.thread_size, unread: t.unread });
         },
-        shown() {
-          if (!firstShown) {
-            firstShown = true;
-            body.scrollTop = body.scrollHeight;
-          }
-          markRead();
-        },
+        shown: thread.shown,
       };
-    }
-
-    function renderMessage(m) {
-      const who = authorOf(m.author);
-      const time = h('span', { class: 't', title: m.at || null }, formatTime(m.at));
-      if (who.cls === 'sys') {
-        return h('div', { class: 'sys' }, icon('clock'), md(m.text), time);
-      }
-      const avatar = who.cls === 'user' ? T.authors.user
-        : who.cls === 'pa' ? icon('spark') : String(key.split('-').pop()).slice(0, 3);
-      return h('div', { class: 'msg ' + who.cls },
-        h('span', { class: 'av' }, avatar),
-        h('div', null,
-          h('div', { class: 'mh' }, h('b', null, who.cls === 'agent' ? who.label + ' ' + key : who.label),
-            m.question_id ? h('span', { class: 'chip' }, T.card.answerChip) : null, time),
-          md(m.text, who.cls === 'pa' ? 'mb bubble' : 'mb')));
     }
 
     function reviewPane() {
@@ -671,10 +554,12 @@ function createCard(ctx, key, returnFocus) {
     }
 
     function roundRow(x) {
-      const item = x && typeof x === 'object' ? x : { text: String(x) };
-      const state = T.card.roundState[item.state] || item.state || '';
-      const text = item.text || item.summary || '';
-      return h('div', { class: 'round' }, h('span', { class: 'rn' }, item.round ? String(item.round) : '·'),
+      const item = x && typeof x === 'object' ? x : { text: x };
+      // формат истории ревью ещё не зафиксирован: любые значения выводятся строкой
+      const str = v => (v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v));
+      const state = T.card.roundState[str(item.state)] || str(item.state);
+      const text = str(item.text) || str(item.summary);
+      return h('div', { class: 'round' }, h('span', { class: 'rn' }, item.round ? str(item.round) : '·'),
         h('div', null, h('div', { class: 'rt' }, state || text), state && text ? h('div', { class: 'rd' }, text) : null));
     }
 
@@ -833,10 +718,12 @@ function createCard(ctx, key, returnFocus) {
         keySlot.replaceChildren(trackerUrl
           ? h('a', { class: 'key', href: trackerUrl, target: '_blank', rel: 'noopener noreferrer', title: T.card.openTracker }, key, icon('ext'))
           : h('span', { class: 'key' }, key));
-        chips.replaceChildren(
+        // replaceChildren превратил бы null в текст «null»
+        chips.replaceChildren(...[
           t.repo ? h('span', { class: 'chip repo' }, t.repo) : null,
           h('span', { class: 'chip' }, icon(isResearch(t) ? 'flask' : 'code'), isResearch(t) ? T.kindResearch : T.kindCode),
-          t.estimate !== null && t.estimate !== undefined ? h('span', { class: 'chip' }, T.estimate(t.estimate)) : null);
+          t.estimate !== null && t.estimate !== undefined ? h('span', { class: 'chip' }, T.estimate(t.estimate)) : null,
+        ].filter(Boolean));
         statusBtn.replaceChildren(spill(statusOf(t)), icon('chev'));
         title.textContent = t.title;
         terminal.disabled = !t.terminal_command;

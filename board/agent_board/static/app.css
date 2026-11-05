@@ -585,3 +585,47 @@ a.report svg { width: 14px; height: 14px; flex: none; }
 .drawer:focus { outline: none; }
 @media (prefers-reduced-motion: reduce) { .drawer, .dscrim { animation: none; } }
 .file .fs.D { background: var(--del-bg); color: var(--del-fg); }
+
+/* ===== Граф, панель «Проект», новая задача ===== */
+.views { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; min-width: 0; }
+.graphview .ghint { font-size: 12px; }
+.graphview .graph-wrap { justify-self: start; max-width: 100%; }
+.graph-wrap:focus-within { outline: none; }
+svg .edge-end { fill: var(--line-strong); }
+svg .edge.cyc { stroke: var(--s-answer); stroke-dasharray: 5 4; }
+svg .node rect.sbar { fill: var(--s-todo); }
+svg .node.cyc rect.bg { stroke: var(--s-answer); stroke-dasharray: 5 3; stroke-width: 1.6; }
+svg .node:focus { outline: none; }
+svg .node:focus-visible rect.bg { stroke: var(--focus); stroke-width: 2.2; }
+.legend .ln.cyc { border-top: 2px dashed var(--s-answer); }
+.dock .ptitle { min-width: 0; }
+.dock header .grow { flex: 1; }
+.dock .pstate { display: flex; align-items: center; gap: 6px; }
+.dock .pstate .sdot { width: 7px; height: 7px; }
+.dock .pstate .sdot.idle { --c: var(--s-todo); }
+.dock .pstate .sdot.run { --c: var(--s-progress); animation: pulse 1.4s infinite; }
+.dock .pstate .sdot.err { --c: var(--s-blocked); }
+.dock .pbanners, .dock .popen, .dock .phist { display: grid; gap: 10px; }
+.dock .phistory summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
+.dock .phistory[open] summary { margin-bottom: 10px; }
+.dock .foot .ferr { margin-top: 8px; }
+.proposal .chg .op.del { background: var(--del-bg); color: var(--del-fg); }
+.proposal .pt, .proposal .chg span { overflow-wrap: anywhere; min-width: 0; }
+.proposal .res.ok { color: var(--ok-fg); }
+.proposal a.mono, .pa-note a.mono { font-family: var(--mono); font-size: 12px; }
+.pa-note .chg { display: grid; gap: 4px; }
+.pa-note .chg div { display: flex; gap: 8px; align-items: baseline; }
+.pa-note .chg .op { font-family: var(--mono); font-size: 11px; font-weight: 600; border-radius: 4px; padding: 0 5px; flex: none; background: var(--surface); color: var(--pa-fg); }
+.pa-note .why { color: var(--muted); }
+.pa-note .pa-act { display: flex; gap: 8px; }
+.modal .foot-note { margin-right: auto; font-size: 12px; }
+.modal.newtask textarea { min-height: 72px; }
+.picker label .ps { margin-left: auto; flex: none; }
+.picker .pick-none { padding: 6px 7px; font-size: 12.5px; }
+.pick-search { height: 30px; }
+input[aria-invalid="true"] { border-color: var(--err-line); }
+@media (prefers-reduced-motion: reduce) { .dock .pstate .sdot.run { animation: none; } }
+.dock .scroll > .thread:empty { display: none; }
+.dock .scroll > p.muted { margin: 0; font-size: 13px; }
+.proposal .pt a.mono { color: inherit; font-size: 13px; }
+.modal .two { align-items: start; }

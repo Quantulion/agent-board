@@ -73,7 +73,7 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 
 Поддержка Codex не проверялась на живом `codex`.
 
-Снимок проекта (`state`) кроме задач содержит `project_agent: {state, turn_error, session_id, parked}`, а у каждой задачи — `locks: [{resource, position}]` (0 — задача держит ресурс, больше 0 — место в очереди).
+Снимок проекта (`state`) кроме задач содержит `project_agent: {state, turn_error, session_id, parked}`, `project_unread` и `project_thread_size` (непрочитанное и число сообщений треда `_project`), а у каждой задачи — `locks: [{resource, position}]` (0 — задача держит ресурс, больше 0 — место в очереди).
 
 ## Переменные окружения
 
@@ -103,6 +103,7 @@ node --test 'board/tests/js/*.test.mjs'
 (cd ui-tests && npm install) && node ui-tests/skeleton.mjs
 node ui-tests/board.mjs   # доска: 14 задач во всех статусах, меню статуса, тосты; рядом снимки макета для сравнения
 node ui-tests/card.mjs    # карточка задачи с раннером и fake-агентом: ответ на вопрос, тред, дифф, ресайз; снимки вкладок и макета
+node ui-tests/graph.mjs   # граф, панель «Проект» и новая задача: узлы без переполнения, предложения агента проекта, проверка полей
 ```
 
-Карточка задачи открывается по адресу `#/p/<slug>?task=<KEY>`; ширина панели хранится в `localStorage`, черновики сообщений — в `sessionStorage`.
+Карточка задачи открывается по адресу `#/p/<slug>?task=<KEY>`; ширина панели хранится в `localStorage`, черновики сообщений и ответов на вопросы — в `sessionStorage`. Вид доски (колонки или граф) и свёрнутость панели «Проект» тоже хранятся в `localStorage`.

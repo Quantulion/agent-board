@@ -5,7 +5,9 @@
   "description": "Проверки интерфейса доски в headless Chrome",
   "scripts": {
     "skeleton": "node skeleton.mjs",
-    "board": "node board.mjs"
+    "board": "node board.mjs",
+    "card": "node card.mjs",
+    "graph": "node graph.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"
