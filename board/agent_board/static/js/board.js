@@ -268,6 +268,55 @@ export function stepperModel(stage, trackerType) {
   });
 }
 
+// Следующий шаг проекта, который пользователь делает из шкалы этапов: из трекера — к работе,
+// а когда все задачи готовы или отменены — завершение проекта.
+export function stageAction(snapshot) {
+  if (!snapshot) return null;
+  const stage = snapshot.config.stage;
+  const tasks = snapshot.tasks || [];
+  if (stage === 'tracker') return { to: 'work', ...T.stageGo.work };
+  if (stage === 'work' && tasks.length && tasks.every(t => t.status === 'done' || t.status === 'cancelled')) {
+    return { to: 'done', ...T.stageGo.done };
+  }
+  return null;
+}
+
+function confirmStage(ctx, action) {
+  const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
+  let sending = false;
+  const go = () => {
+    if (sending) return;
+    sending = true;
+    okBtn.disabled = true;
+    error.hidden = true;
+    ctx.client.post('/stage', { stage: action.to, actor: 'user' })
+      .then(() => {
+        close();
+        toast(action.toast);
+      })
+      .catch(err => {
+        okBtn.disabled = false;
+        error.textContent = (err && err.message) || String(err);
+        error.hidden = false;
+      })
+      .finally(() => { sending = false; });
+  };
+  const okBtn = h('button', { class: 'btn primary', type: 'button', onclick: go }, action.ok);
+  const { close } = openModal(action.title, [h('p', { class: 'mtext' }, action.text), error],
+    [h('span', { class: 'grow' }), h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel), okBtn]);
+  okBtn.focus();
+}
+
+// Кнопка следующего шага рядом со шкалой; узел переиспользуется, пока шаг тот же, — фокус не теряется.
+export function paintStageAction(slot, ctx, snapshot) {
+  const action = stageAction(snapshot);
+  slot.hidden = !action;
+  if (!action) return slot.replaceChildren();
+  if (slot.dataset.to === action.to && slot.firstChild) return;
+  slot.dataset.to = action.to;
+  slot.replaceChildren(h('button', { class: 'btn sm primary', type: 'button', onclick: () => confirmStage(ctx, action) }, action.label));
+}
+
 export function paintStepper(stepper, config) {
   const items = [];
   stepperModel(config.stage, config.tracker && config.tracker.type).forEach((s, i) => {
@@ -313,6 +362,7 @@ export function mountBoard(root, store, ctx) {
   const title = h('h1', null, h('span', { class: 'skel title' }));
   const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
   const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
+  const stageGo = h('span', { class: 'stage-go', hidden: true });
   const syncText = h('span');
   const sync = h('div', { class: 'sync static busy', role: 'status' }, h('span', { class: 'sdot' }), syncText);
   const projectBtn = h('button', { class: 'btn', type: 'button', 'aria-pressed': 'false', onclick: () => panel.toggle() });
@@ -374,7 +424,7 @@ export function mountBoard(root, store, ctx) {
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
         h('div', { class: 'proj' }, title, sub),
-        stepper, h('span', { class: 'spacer' }), sync, projectBtn, ctx.themeButton()),
+        stepper, stageGo, h('span', { class: 'spacer' }), sync, projectBtn, ctx.themeButton()),
       h('div', { class: 'row2' },
         h('div', { class: 'progress' }, h('div', { class: 'ptxt' }, doneText, restText), bar, pills),
         artifacts),
@@ -646,6 +696,7 @@ export function mountBoard(root, store, ctx) {
     title.textContent = cfg.title;
     sub.textContent = T.projectSub((cfg.repos || []).length, cfg.max_agents, cfg.chains);
     paintStepper(stepper, cfg);
+    paintStageAction(stageGo, ctx, snap);
 
     const live = snap.tasks.filter(t => statusOf(t) !== 'cancelled');
     const count = id => live.filter(t => statusOf(t) === id).length;

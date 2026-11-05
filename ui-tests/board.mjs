@@ -107,9 +107,26 @@ try {
   await page.screenshot({ path: decFile });
   results.board_decomposition_light = decFile;
 
-  // переходим в работу и раскладываем задачи по статусам
+  // из трекера в работу — кнопкой рядом со шкалой этапов, с подтверждением
   cli('stage', 'tracker');
-  cli('stage', 'work');
+  await page.waitForFunction(() => {
+    const b = document.querySelector('.top .stage-go button');
+    return b && b.offsetParent !== null;
+  }, { timeout: 10000 });
+  results.stageGoLabel = await page.$eval('.top .stage-go button', el => el.textContent);
+  results.stageGoOneRow = await page.$eval('.top .row1', el => el.getBoundingClientRect().height < 50);
+  const goFile = path.join(out, 'board-stage-go-light.png');
+  await page.screenshot({ path: goFile, clip: { x: 0, y: 0, width: VIEW.width, height: 120 } });
+  results.board_stage_go_light = goFile;
+  await page.click('.top .stage-go button');
+  await page.waitForSelector('.modal .btn.primary', { timeout: 5000 });
+  results.stageGoDialog = await page.$eval('.modal h2', el => el.textContent);
+  await page.click('.modal .btn.primary');
+  await page.waitForFunction(() => document.querySelector('.stepper .st.cur')?.textContent.includes('Работа')
+    && document.querySelector('.top .stage-go').hidden, { timeout: 10000 });
+  results.stageAfterGo = (await post('stage', { stage: 'work', actor: 'user' }).catch(e => e.message));
+
+  // раскладываем задачи по статусам
   for (const k of ['PAY-101', 'PAY-102']) await status(k, 'done');
   await status('PAY-103', 'sent');
   await status('PAY-104', 'in_progress');
@@ -316,6 +333,8 @@ try {
 }
 console.log(JSON.stringify(results, null, 2));
 const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
+  && results.stageGoLabel === 'Перейти к работе' && results.stageGoOneRow && results.stageGoDialog === 'Перейти к работе?'
+  && /Недопустимый переход стадии/.test(results.stageAfterGo)
   && results.invisibleChangeFlashes === 0 && results.visibleChangeFlashes > 0
   && results.reactionToast === 'PAY-106 → Одобрена. Разблокирована PAY-108. Разбужен агент PAY-108.'
   && results.movedNodeKept && results.untouchedKept

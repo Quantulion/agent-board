@@ -1,6 +1,6 @@
 // Согласование разбивки: задачи с нарушениями правил и комментариями, граф по шагам, общий тред с агентом проекта
 // и утверждение, которое переводит проект на следующую стадию. После утверждения страница только для чтения.
-import { connectionIndicator, paintStepper } from './board.js';
+import { connectionIndicator, paintStageAction, paintStepper } from './board.js';
 import { h, icon, patchList, safeMarkdown } from './dom.js';
 import { criticalPath, layoutGraph, laneLabels, mountGraph } from './graph.js';
 import { T } from './i18n.js';
@@ -79,6 +79,7 @@ export function mountDecomposition(root, store, ctx) {
   const title = h('h1', null, h('span', { class: 'skel title' }));
   const sub = h('span', { class: 'sub' }, T.dc.sub);
   const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
+  const stageGo = h('span', { class: 'stage-go', hidden: true });
   const syncText = h('span');
   const sync = h('div', { class: 'sync static busy', role: 'status' }, h('span', { class: 'sdot' }), syncText);
   const banner = h('div', { class: 'banner-slot', hidden: true });
@@ -147,7 +148,7 @@ export function mountDecomposition(root, store, ctx) {
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
         h('div', { class: 'proj' }, title, sub),
-        stepper, h('span', { class: 'spacer' }), sync,
+        stepper, stageGo, h('span', { class: 'spacer' }), sync,
         h('a', { class: 'btn ghost', href: boardHref(slug) }, icon('board'), T.board),
         ctx.themeButton())),
     scroll,
@@ -427,6 +428,7 @@ export function mountDecomposition(root, store, ctx) {
     document.title = cfg.title + ' — ' + T.dc.heading;
     title.textContent = cfg.title;
     paintStepper(stepper, cfg);
+    paintStageAction(stageGo, ctx, snap);
     summary = decompositionSummary(snap);
     colors = repoColors((cfg.repos || []).map(r => r.name), summary.tasks);
     paintSources(cfg);

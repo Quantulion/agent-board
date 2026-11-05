@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, cardSignature, columnsOf, connectionIndicator, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { cardModel, cardSignature, columnsOf, connectionIndicator, reactionText, stageAction, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -206,6 +206,28 @@ test('cardSignature не меняется от невидимых на карт�
   // assert
   assert.equal(cardSignature(invisible, ctx), cardSignature(before, ctx));
   assert.notEqual(cardSignature(visible, ctx), cardSignature(before, ctx));
+});
+
+test('stageAction: из трекера — «Перейти к работе»', () => {
+  const a = stageAction(snap([task('A')], { config: { stage: 'tracker' } }));
+  assert.equal(a.to, 'work');
+  assert.equal(a.label, 'Перейти к работе');
+  assert.ok(a.title && a.text);
+});
+
+test('stageAction: в работе предлагает завершить проект, только когда все задачи готовы или отменены', () => {
+  const at = tasks => stageAction(snap(tasks, { config: { stage: 'work' } }));
+  assert.equal(at([task('A', { status: 'done' }), task('B', { status: 'in_review' })]), null);
+  assert.equal(at([task('A', { status: 'approved' })]), null, 'одобренная, но не готовая задача держит проект');
+  assert.equal(at([]), null, 'пустой проект не завершается сам собой');
+  const a = at([task('A', { status: 'done' }), task('B', { status: 'cancelled' })]);
+  assert.equal(a.to, 'done');
+  assert.equal(a.label, 'Завершить проект');
+});
+
+test('stageAction: на разбивке и после завершения действия в шкале нет', () => {
+  assert.equal(stageAction(snap([task('A', { status: 'done' })], { config: { stage: 'decomposition' } })), null);
+  assert.equal(stageAction(snap([task('A', { status: 'done' })], { config: { stage: 'done' } })), null);
 });
 
 test('connectionIndicator: при отключённом потоке «Переподключение…» важнее ошибки снимка', () => {
