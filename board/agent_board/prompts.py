@@ -123,33 +123,39 @@ def _wake_line(r: dict, cli: str) -> str:
             out += " " + _read_hint("%s show %s" % (cli, key), "The answer")
         return out
     if reason == "returned":
-        return ("The task was returned to work from status `%s`. Find out why in the card and thread, "
-                "then continue." % (r.get("from") or "?"))
+        origin = "from status `%s`" % r["from"] if r.get("from") else \
+            "(the previous status is missing here; see `%s show %s`)" % (cli, key)
+        return ("The task was returned to work %s. Find out why in the card and thread, then continue." % origin)
     if reason == "rebase":
         base = r.get("base") or "the new base"
-        dep = r.get("from") or "?"
+        dep = "dependency %s" % r["from"] if r.get("from") else \
+            "a dependency (which one: see `%s show %s`)" % (cli, key)
         files = r.get("conflict_files") or []
         if r.get("rebase_ok") is False:
-            return ("The branch of dependency %s changed; the board could not move your work onto %s. "
+            return ("The branch of %s changed; the board could not move your work onto %s. "
                     "Do not run any git commands; ask a question on the card." % (dep, base))
         if files:
-            return ("The branch of dependency %s changed; the board moved your work onto %s, but these files "
+            return ("The branch of %s changed; the board moved your work onto %s, but these files "
                     "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
                     % (dep, base, ", ".join(files)))
-        return ("The branch of dependency %s changed; the board moved your work onto %s. Continue." % (dep, base))
+        return ("The branch of %s changed; the board moved your work onto %s. Continue." % (dep, base))
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
     if reason == "escalation":
-        src = r.get("from") or "a task agent"
+        if r.get("from"):
+            src, ref, who = r["from"], r["from"], "task agent %s" % r["from"]
+        else:
+            src, ref, who = None, "<KEY>", "an unknown task (find it with `%s events --since <n>` or `%s thread _project`)" % (cli, cli)
+        answer = " Answer it with `%s say %s --text ...`." % (cli, ref)
         if r.get("text"):
-            return ("Escalation from task agent %s, verbatim:\n%s\nAnswer it with `%s say %s --text ...`."
-                    % (src, _quote(str(r["text"])), cli, src))
-        return ("Escalation from task agent %s. " % src) + _read_hint("%s thread _project" % cli, "Its text") + \
-            " Answer with `%s say %s --text ...`." % (cli, src)
+            return "Escalation from %s, verbatim:\n%s\n%s" % (who, _quote(str(r["text"])), answer.strip())
+        return "Escalation from %s. " % who + _read_hint("%s thread _project" % cli, "Its text") + answer
     if reason == "proposal_rejected":
-        return "The user rejected your proposal%s. Do not repeat it; adapt." % (
-            " (%s)" % r["id"] if r.get("id") else "")
+        if r.get("id"):
+            return "The user rejected your proposal %s. Do not repeat it; adapt." % r["id"]
+        return "The user rejected one of your proposals. " + _read_hint("%s thread _project" % cli, "Which one") + \
+            " Do not repeat it; adapt."
     if reason == "unblocked":
         return "The task is unblocked: its dependencies are done or the external blocker was removed. Start working."
     if reason in ("ready", "manual"):
@@ -163,8 +169,8 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text; answer -> question_id, question, choice, comment;
       returned -> from; rebase -> from, base, rebase_ok, conflict_files;
-      escalation -> from, text; interrupted, unblocked, ready, manual, proposal_rejected -> без полей.
-    Общий ключ key (агент_wake) нужен только для подсказок «прочитай на доске».
+      escalation -> from, text; proposal_rejected -> id; interrupted, unblocked, ready, manual -> без полей.
+    Ключ key (задача получателя) используется только в подсказках «прочитай на доске».
     """
     out = "\n\n".join(_wake_line(r, board_cli) for r in reasons)
     if digest and digest.strip():

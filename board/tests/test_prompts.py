@@ -230,3 +230,17 @@ def test_project_prompt_escalation_answered_to_task_thread():
 
     # assert
     assert "escalation" in text and "say <KEY>" in text and "only for the user" in text
+
+
+def test_wake_message_missing_from_and_id_point_to_the_board_without_placeholders_like_question_mark():
+    # arrange
+    reasons = [{"reason": "returned", "key": "PAY-7"}, {"reason": "rebase", "key": "PAY-7", "base": "main", "rebase_ok": True},
+               {"reason": "proposal_rejected", "key": "_project"}, {"reason": "escalation", "key": "_project"}]
+
+    # act
+    text = wake_message(reasons, "", "ab")
+
+    # assert
+    assert "a task agent" not in text and "?" not in text
+    assert "ab show PAY-7" in text and "ab thread _project" in text
+    assert "ab events --since" in text and "ab say <KEY> --text" in text
