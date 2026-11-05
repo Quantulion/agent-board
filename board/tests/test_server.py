@@ -861,6 +861,18 @@ def test_update_rule_violations_validated(server, bad):
     assert r.status == 400
 
 
+def test_update_rule_violations_strips_unknown_keys_and_caps_length(server):
+    # arrange
+    add_task(server)
+    value = [{"rule": "r" * 300, "text": "t" * 3000, "extra": "x", "html": "<b>"}]
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"rule_violations": value}})
+    # assert
+    assert r.status == 200
+    stored = get(server, "/api/p/pay/state").json()["tasks"][0]["rule_violations"]
+    assert stored == [{"rule": "r" * 200, "text": "t" * 2000}]
+
+
 def test_state_exposes_links_and_rule_violations(server):
     # arrange
     add_task(server)

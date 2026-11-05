@@ -27,6 +27,8 @@ RUNNER_FIELDS = {
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
 MAX_RULE_VIOLATIONS = 50
+MAX_RULE_CHARS = 200
+MAX_RULE_TEXT_CHARS = 2000
 LAST_MESSAGE_CHARS = 200
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
@@ -106,12 +108,16 @@ def new_task_from_dict(d: Any) -> Task:
     return Task(**dict(d, deps=list(deps)))
 
 
-def _check_rule_violations(value: Any) -> None:
+def _clean_rule_violations(value: Any) -> List[dict]:
+    """Проверяет нарушения правил и оставляет в них только правило и текст разумной длины."""
     if not isinstance(value, list) or len(value) > MAX_RULE_VIOLATIONS:
         raise ValueError("rule_violations должен быть списком не длиннее %d" % MAX_RULE_VIOLATIONS)
+    result = []
     for item in value:
         if not isinstance(item, dict) or not isinstance(item.get("rule"), str) or not isinstance(item.get("text"), str):
             raise ValueError("Элемент rule_violations должен быть объектом со строками rule и text")
+        result.append({"rule": item["rule"][:MAX_RULE_CHARS], "text": item["text"][:MAX_RULE_TEXT_CHARS]})
+    return result
 
 
 def _utc_now() -> str:
@@ -316,7 +322,7 @@ class Board:
             if "rule_violations" in fields:
                 if actor not in RULE_VIOLATION_AUTHORS:
                     raise PermissionError("Нарушения правил фиксируют пользователь и агент проекта")
-                _check_rule_violations(fields["rule_violations"])
+                fields = dict(fields, rule_violations=_clean_rule_violations(fields["rule_violations"]))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
