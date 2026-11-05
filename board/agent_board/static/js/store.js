@@ -10,6 +10,10 @@ export const EVENT_TYPES = [
 ];
 
 export const COALESCE_MS = 150;
+// столько нужно провести в сети без событий, чтобы следующая ошибка снова начала с короткой задержки
+export const STABLE_MS = 5000;
+// снимок с такой ошибкой не появится сам: поток закрывается до ручной перезагрузки
+const FATAL_STATUSES = new Set([401, 404]);
 
 export function nextBackoff(n) {
   return Math.min(8000, 500 * 2 ** Math.max(0, n));
@@ -41,6 +45,7 @@ export function createStore(slug, client, options = {}) {
   let lastSeq = 0;
   let running = false;
   let reconnectTimer = null;
+  let stableTimer = null;
   let refreshTimer = null;
   let inFlight = false;
   let again = false;
@@ -76,7 +81,8 @@ export function createStore(slug, client, options = {}) {
     } catch (e) {
       if (running) {
         state = { ...state, error: e };
-        notify({ tasks: new Set(), snapshot: false, connection: false });
+        if (e && FATAL_STATUSES.has(e.status)) halt();
+        notify({ tasks: new Set(), snapshot: false, connection: true });
       }
     } finally {
       inFlight = false;
@@ -95,13 +101,35 @@ export function createStore(slug, client, options = {}) {
     }, coalesceMs);
   }
 
+  function clearTimer(which) {
+    const t = which === 'stable' ? stableTimer : which === 'reconnect' ? reconnectTimer : refreshTimer;
+    if (t !== null) timers.clearTimeout(t);
+    if (which === 'stable') stableTimer = null;
+    else if (which === 'reconnect') reconnectTimer = null;
+    else refreshTimer = null;
+  }
+
+  function closeAll() {
+    if (es) es.close();
+    es = null;
+    for (const which of ['stable', 'reconnect', 'refresh']) clearTimer(which);
+  }
+
+  // Неустранимая ошибка: поток и переподключения прекращаются, состояние остаётся видимым.
+  function halt() {
+    running = false;
+    closeAll();
+    state = { ...state, connection: 'offline' };
+  }
+
   function connect() {
     reconnectTimer = null;
     if (!running) return;
     const source = new ES('/api/p/' + encodeURIComponent(slug) + '/stream?since=' + lastSeq);
     es = source;
     source.onopen = () => {
-      attempt = 0;
+      clearTimer('stable');
+      stableTimer = timers.setTimeout(() => { stableTimer = null; attempt = 0; }, STABLE_MS);
       setConnection('live');
       scheduleRefresh();
     };
@@ -109,11 +137,13 @@ export function createStore(slug, client, options = {}) {
       source.close();
       if (es !== source || !running) return;
       es = null;
+      clearTimer('stable');
       setConnection('reconnecting');
       reconnectTimer = timers.setTimeout(connect, nextBackoff(attempt++));
     };
     for (const type of EVENT_TYPES) {
       source.addEventListener(type, e => {
+        attempt = 0;
         const seq = Number(e.lastEventId);
         if (seq > lastSeq) lastSeq = seq;
         scheduleRefresh();
@@ -134,10 +164,7 @@ export function createStore(slug, client, options = {}) {
     },
     stop() {
       running = false;
-      if (es) es.close();
-      es = null;
-      for (const t of [reconnectTimer, refreshTimer]) if (t !== null) timers.clearTimeout(t);
-      reconnectTimer = refreshTimer = null;
+      closeAll();
     },
   };
 }

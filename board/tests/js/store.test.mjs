@@ -125,8 +125,128 @@ test('ошибка потока: переподключение с нараст�
   es().onopen();
   assert.equal(store.get().connection, 'live');
   es().onerror();
-  await timers.advance(500);
+  await timers.advance(1999);
+  assert.equal(FakeEventSource.instances.length, 3);
+  await timers.advance(1);
   assert.equal(FakeEventSource.instances.length, 4);
+  store.stop();
+});
+
+test('задержка сбрасывается после 5 с в сети', async () => {
+  // arrange
+  const { store, es, timers } = await started([snap(5, [])]);
+  es().onerror();
+  await timers.advance(500);
+  es().onerror();
+  await timers.advance(1000);
+  // act
+  es().onopen();
+  await timers.advance(5000);
+  es().onerror();
+  await timers.advance(500);
+  // assert
+  assert.equal(FakeEventSource.instances.length, 4);
+  store.stop();
+});
+
+test('задержка сбрасывается после полученного события', async () => {
+  // arrange
+  const { store, es, timers } = await started([snap(5, [])]);
+  es().onerror();
+  await timers.advance(500);
+  es().onerror();
+  await timers.advance(1000);
+  // act
+  es().onopen();
+  es().emit('task_added', 6);
+  es().onerror();
+  await timers.advance(500);
+  // assert
+  assert.equal(FakeEventSource.instances.length, 4);
+  store.stop();
+});
+
+test('событие во время чтения снимка вызывает ещё одно чтение после него', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  const pending = [];
+  const api = { calls: 0, get: () => { api.calls++; return new Promise(resolve => pending.push(resolve)); } };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  store.start();
+  pending.shift()(snap(5, []));
+  await flush();
+  const es = FakeEventSource.instances[0];
+  es.emit('task_added', 6);
+  await timers.advance(150);
+  assert.equal(api.calls, 2);
+  // act
+  es.emit('task_added', 7);
+  await timers.advance(150);
+  const duringFlight = api.calls;
+  pending.shift()(snap(6, []));
+  await flush();
+  await timers.advance(150);
+  // assert
+  assert.equal(duringFlight, 2);
+  assert.equal(api.calls, 3);
+  store.stop();
+});
+
+for (const status of [401, 404]) {
+  test(`ошибка ${status} снимка останавливает поток и переподключения`, async () => {
+    // arrange
+    FakeEventSource.instances = [];
+    const timers = fakeTimers();
+    let calls = 0;
+    const api = { get: async () => { calls++; if (calls === 1) return snap(5, []); throw Object.assign(new Error('x'), { status }); } };
+    const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+    store.start();
+    await flush();
+    const es = FakeEventSource.instances[0];
+    // act
+    es.emit('task_added', 6);
+    await timers.advance(150);
+    es.onerror();
+    await timers.advance(60000);
+    // assert
+    assert.equal(es.closed, true);
+    assert.equal(FakeEventSource.instances.length, 1);
+    assert.equal(store.get().connection, 'offline');
+    assert.equal(store.get().error.status, status);
+  });
+}
+
+test('ошибка 401 при старте — поток не открывается', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  const api = { get: async () => { throw Object.assign(new Error('x'), { status: 401 }); } };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  // act
+  store.start();
+  await flush();
+  // assert
+  assert.equal(FakeEventSource.instances.length, 0);
+  assert.equal(store.get().connection, 'offline');
+});
+
+test('временная ошибка снимка не останавливает поток, следующий снимок её снимает', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  let calls = 0;
+  const api = { get: async () => { calls++; if (calls === 1) throw Object.assign(new Error('boom'), { status: 500 }); return snap(5, []); } };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  store.start();
+  await flush();
+  assert.equal(store.get().error.status, 500);
+  // act
+  FakeEventSource.instances[0].onopen();
+  await timers.advance(150);
+  // assert
+  assert.equal(store.get().error, null);
+  assert.equal(store.get().snapshot.last_seq, 5);
   store.stop();
 });
 

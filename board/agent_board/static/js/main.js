@@ -136,7 +136,9 @@ function projectView(slug, mode) {
   const note = h('p', { class: 'muted' });
   const list = h('div', { class: 'tasklist' },
     [1, 2, 3].map(() => h('div', { class: 'row skeleton' }, h('span', { class: 'skel w40' }))));
-  const body = h('div', { class: 'placeholder' }, note, list);
+  // ошибки показываются поверх содержимого и исчезают со следующим удачным снимком
+  const banner = h('div', { class: 'banner-slot', hidden: true });
+  const body = h('div', { class: 'placeholder' }, banner, note, list);
   const app = h('div', { class: 'app' },
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
@@ -150,17 +152,19 @@ function projectView(slug, mode) {
   const paintMode = () => { note.textContent = currentMode === 'decomposition' ? T.decompositionSoon : T.boardSoon; };
   paintMode();
 
-  const paintConnection = connection => {
-    syncText.textContent = T.connection[connection] || connection;
-    sync.classList.toggle('busy', connection !== 'live');
+  const paintConnection = state => {
+    const failed = Boolean(state.error);
+    syncText.textContent = failed ? T.syncError : T.connection[state.connection] || state.connection;
+    sync.classList.toggle('err', failed);
+    sync.classList.toggle('busy', !failed && state.connection !== 'live');
   };
 
   const paint = (state, changes) => {
-    paintConnection(state.connection);
-    if (state.error && !state.snapshot) {
-      body.replaceChildren(errorNotice(state.error));
-      return;
-    }
+    paintConnection(state);
+    banner.hidden = !state.error;
+    if (state.error) banner.replaceChildren(errorNotice(state.error));
+    else banner.replaceChildren();
+    list.hidden = !state.snapshot && Boolean(state.error);
     if (!state.snapshot || !changes.snapshot) return;
     const snap = state.snapshot;
     document.title = snap.config.title + ' — ' + T.appName;
@@ -175,7 +179,7 @@ function projectView(slug, mode) {
       if (changes.tasks.has(task.key)) node.replaceChildren(...taskRowParts(task));
     });
   };
-  paintConnection(store.get().connection);
+  paintConnection(store.get());
   const unsubscribe = store.subscribe(paint);
   store.start();
 

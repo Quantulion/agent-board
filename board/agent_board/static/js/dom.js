@@ -6,35 +6,43 @@ export function esc(s) {
   return s === null || s === undefined ? '' : String(s).replace(/[&<>"']/g, c => ESC[c]);
 }
 
-const URL_ATTRS = new Set(['href', 'src', 'action', 'formaction', 'xlink:href']);
-const SCHEME = /^[a-z][a-z0-9+.-]*:/i;
-const HTTP = /^https?:\/\//i;
+const URL_ATTRS = new Set(['href', 'src', 'action', 'xlink:href']);
+const FORBIDDEN_ATTRS = new Set(['srcdoc', 'formaction']);
 
-// Ссылка допустима, если это http(s) или путь без схемы (javascript:, data: и прочие отбрасываются).
+// Ссылка допустима, только если браузер разберёт её как http(s): схема проверяется тем же разбором URL,
+// что и у браузера (он выбрасывает табуляции и переводы строк внутри и управляющие символы по краям).
 export function safeUrl(url) {
   const value = String(url).trim();
-  return HTTP.test(value) || !SCHEME.test(value) ? value : null;
+  const base = (globalThis.location && globalThis.location.href) || 'http://localhost/';
+  try {
+    const protocol = new URL(value, base).protocol;
+    return protocol === 'http:' || protocol === 'https:' ? value : null;
+  } catch (e) {
+    return null;
+  }
 }
 
 export function h(tag, attrs, ...children) {
   const el = document.createElement(tag);
-  for (const [name, value] of Object.entries(attrs || {})) {
+  for (const [rawName, value] of Object.entries(attrs || {})) {
     if (value === null || value === undefined || value === false) continue;
+    const name = rawName.toLowerCase();
     if (name.startsWith('on')) {
-      if (typeof value === 'function') el.addEventListener(name.slice(2).toLowerCase(), value);
+      if (typeof value === 'function') el.addEventListener(name.slice(2), value);
       continue;
     }
+    if (FORBIDDEN_ATTRS.has(name)) continue;
     if (name === 'style') {
       // атрибут style запрещён CSP, свойства через CSSOM — нет
       for (const [prop, v] of Object.entries(value)) el.style.setProperty(prop, v);
       continue;
     }
-    if (URL_ATTRS.has(name.toLowerCase())) {
+    if (URL_ATTRS.has(name)) {
       const url = safeUrl(value);
       if (url !== null) el.setAttribute(name, url);
       continue;
     }
-    el.setAttribute(name, value === true ? '' : String(value));
+    el.setAttribute(rawName, value === true ? '' : String(value));
   }
   appendChildren(el, children);
   return el;
@@ -51,7 +59,7 @@ function appendChildren(el, children) {
 
 const FENCE = /^\s*```/;
 const INLINE = /`([^`\n]+)`|(https?:\/\/[^\s<>"'`]+)/gi;
-const TRAILING = /[.,;:!?)\]}»"']+$/;
+const TRAILING = /[.,;:!?)\]}»"']/;
 
 // Разбор минимального markdown: абзацы, переносы строк, `код`, блоки ``` и ссылки http(s).
 export function markdownTokens(text) {
@@ -99,10 +107,9 @@ function lineInlines(line) {
       out.push({ type: 'code', text: m[1] });
       continue;
     }
-    const tail = (m[2].match(TRAILING) || [''])[0];
-    const href = m[2].slice(0, m[2].length - tail.length);
+    const href = trimUrl(m[2]);
     out.push({ type: 'link', href, text: href });
-    pos -= tail.length;
+    pos -= m[2].length - href.length;
   }
   text(line.slice(pos));
   // соседние текстовые куски склеиваются, чтобы не дробить вывод
@@ -112,6 +119,19 @@ function lineInlines(line) {
     else acc.push(t);
     return acc;
   }, []);
+}
+
+// Пунктуация в конце ссылки — часть предложения; закрывающая скобка остаётся, если в ссылке есть парная.
+function trimUrl(url) {
+  let end = url.length;
+  while (end > 0 && TRAILING.test(url[end - 1])) {
+    if (url[end - 1] === ')') {
+      const head = url.slice(0, end);
+      if ((head.match(/\(/g) || []).length >= (head.match(/\)/g) || []).length) break;
+    }
+    end--;
+  }
+  return url.slice(0, end);
 }
 
 export function safeMarkdown(text) {

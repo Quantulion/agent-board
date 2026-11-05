@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { installFakeDocument } from './fake-dom.mjs';
-import { esc, h, markdownTokens, safeMarkdown, patchList } from '../../agent_board/static/js/dom.js';
+import { esc, h, markdownTokens, safeMarkdown, patchList, safeUrl } from '../../agent_board/static/js/dom.js';
 
 installFakeDocument();
+globalThis.location = { href: 'http://127.0.0.1:8737/#/p/pay' };
 
 test('esc экранирует спецсимволы html', () => {
   assert.equal(esc(`<a href="x">&'`), '&lt;a href=&quot;x&quot;&gt;&amp;&#39;');
@@ -158,4 +159,46 @@ test('patchList убирает узлы без ключа (скелет, «За�
   patchList(container, ['x'], s => s, s => h('i', null, s));
   // assert
   assert.deepEqual(container.children.map(n => n.getAttribute('data-key')), ['x']);
+});
+
+test('safeUrl отбрасывает опасные схемы с обходами разбора', () => {
+  // arrange
+  const bad = ['java\tscript:alert(1)', 'java\nscript:alert(1)', '\x01javascript:alert(1)', ' JaVaScRiPt:alert(1)',
+    'data:text/html,<b>', 'vbscript:msgbox(1)', 'jav&#x09;ascript:alert(1)'.replace('&#x09;', '\r'), 'file:///etc/passwd'];
+  // act
+  const results = bad.map(safeUrl);
+  // assert
+  assert.deepEqual(results, bad.map(() => null));
+});
+
+test('safeUrl пропускает http(s), относительные пути и hash', () => {
+  // act
+  const ok = ['https://ex.com/a', 'HTTP://ex.com', '#/p/x', '/static/x', 'notes.md', '//cdn.example/a'];
+  // assert
+  // протокольно-относительная ссылка разрешается в http(s) — допустима, как и любая внешняя http(s)
+  assert.deepEqual(ok.map(safeUrl), ok);
+});
+
+test('h: атрибуты-обработчики в любом регистре не попадают в DOM, srcdoc и formaction запрещены', () => {
+  // act
+  const el = h('iframe', { ONCLICK: 'alert(1)', OnError: 'x', srcdoc: '<script>1</script>', formaction: 'https://ex.com' });
+  // assert
+  assert.equal(el.attributes.size, 0);
+});
+
+test('h: href с табуляцией внутри схемы отброшен', () => {
+  assert.equal(h('a', { href: 'java\tscript:alert(1)' }).getAttribute('href'), null);
+});
+
+test('markdownTokens: сбалансированная скобка в конце ссылки сохраняется', () => {
+  // act
+  const inl = markdownTokens('см. https://en.wikipedia.org/wiki/Foo_(bar) и (https://ex.com/a).')[0].inlines;
+  // assert
+  assert.deepEqual(inl, [
+    { type: 'text', text: 'см. ' },
+    { type: 'link', href: 'https://en.wikipedia.org/wiki/Foo_(bar)', text: 'https://en.wikipedia.org/wiki/Foo_(bar)' },
+    { type: 'text', text: ' и (' },
+    { type: 'link', href: 'https://ex.com/a', text: 'https://ex.com/a' },
+    { type: 'text', text: ').' },
+  ]);
 });

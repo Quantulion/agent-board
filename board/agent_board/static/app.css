@@ -497,7 +497,8 @@ body.resizing { cursor: col-resize; user-select: none; }
 /* ===== Каркас приложения ===== */
 a.brand { color: var(--fg); }
 a.brand:hover { text-decoration: none; }
-.sync.static { cursor: default; }
+.sync.static, .sync.static.err { cursor: default; }
+.placeholder .notice { margin: 0; max-width: 900px; }
 .notice { max-width: 560px; margin: 64px auto; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; display: grid; gap: 8px; }
 .notice h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .notice p { margin: 0; color: var(--fg-2); }

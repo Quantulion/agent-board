@@ -55,10 +55,31 @@ try {
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
   await page.setViewport({ width: 1280, height: 720 });
+  // первое чтение снимка падает с 500: страница должна сама восстановиться без перезагрузки
+  let failState = 1;
+  let failedServed = 0;
+  await page.setRequestInterception(true);
+  page.on('request', req => {
+    if (req.url().includes('/api/p/pay/state') && failState > 0) {
+      failState--;
+      failedServed++;
+      req.respond({ status: 500, contentType: 'application/json', body: '{"error":"сбой сервера"}' });
+    } else {
+      req.continue();
+    }
+  });
+  await page.evaluateOnNewDocument(() => {
+    new MutationObserver(() => {
+      if (document.querySelector('.sync.err') && document.querySelector('.banner-slot:not([hidden]) .notice.err')) window.__sawError = true;
+    }).observe(document, { subtree: true, childList: true, attributes: true });
+  });
 
   // вход по ссылке с токеном: токен уходит из адреса, hash сохраняется
   await page.goto(url + '#/p/pay', { waitUntil: 'domcontentloaded' });
   await page.waitForFunction(() => document.querySelectorAll('.tasklist .row[data-key]').length === 3, { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.banner-slot').hidden && !document.querySelector('.sync.err'), { timeout: 10000 });
+  results.recoveredAfter500 = { failedServed, sawError: await page.evaluate(() => window.__sawError === true) };
+  results.syncCursor = await page.$eval('.sync', el => getComputedStyle(el).cursor);
   results.addressAfterLogin = await page.evaluate(() => location.pathname + location.search + location.hash);
   await page.waitForFunction(() => document.querySelector('.sync').textContent === 'В сети', { timeout: 10000 });
 
@@ -77,6 +98,22 @@ try {
   await page.waitForFunction(() => document.querySelector('.tasklist .row[data-key="PAY-101"] .spill').textContent === 'В работе', { timeout: 10000 });
   results.liveSub = await page.$eval('.proj .sub', el => el.textContent);
   results.rowNodeKept = await page.evaluate(el => el.isConnected, firstRow);
+
+  // сбой чтения посреди работы: ошибка видна, данные остаются; следующий снимок её снимает
+  failState = 1;
+  cli('status', 'PAY-104', 'cancelled');
+  await page.waitForFunction(() => document.querySelector('.sync.err'), { timeout: 10000 });
+  results.laterFailure = await page.evaluate(() => ({
+    banner: !document.querySelector('.banner-slot').hidden,
+    rows: document.querySelectorAll('.tasklist .row[data-key]').length,
+  }));
+  const errFile = path.join(out, 'skeleton-board-error-light.png');
+  await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+  await page.screenshot({ path: errFile });
+  results.board_error_light = errFile;
+  cli('status', 'PAY-104', 'not_started');
+  await page.waitForFunction(() => document.querySelector('.banner-slot').hidden && !document.querySelector('.sync.err'), { timeout: 10000 });
+  results.laterFailure.recovered = true;
 
   // безопасный markdown: разметка из текста не исполняется
   results.markdown = await page.evaluate(async () => {
@@ -107,7 +144,22 @@ try {
   await page.screenshot({ path: projDark });
   results.projects_dark = projDark;
 
-  results.pageErrors = errors;
+  results.pageErrors = errors.filter(e => !e.includes('status of 500'));
+
+  // без куки: 401, ошибка на месте содержимого, поток не переподключается
+  const anon = await browser.createBrowserContext();
+  const anonPage = await anon.newPage();
+  let streams = 0;
+  anonPage.on('request', req => { if (req.url().includes('/stream')) streams++; });
+  await anonPage.goto(url.replace(/\?.*$/, '') + '#/p/pay', { waitUntil: 'domcontentloaded' });
+  await anonPage.waitForSelector('.banner-slot:not([hidden]) .notice.err', { timeout: 10000 });
+  await new Promise(r => setTimeout(r, 2000));
+  results.unauthorized = {
+    title: await anonPage.$eval('.banner-slot h2', el => el.textContent),
+    sync: await anonPage.$eval('.sync', el => el.className + ' / ' + el.textContent),
+    streams,
+  };
+  await anon.close();
 } finally {
   if (browser) await browser.close();
   proc.kill('SIGTERM');
@@ -117,5 +169,9 @@ try {
 console.log(JSON.stringify(results, null, 2));
 const ok = results.markdown.pwned === null && results.markdown.img === 0 && results.markdown.script === 0
   && results.rowNodeKept && results.addressAfterLogin === '/#/p/pay' && results.pageErrors.length === 0
-  && results.themeAfterToggle === 'dark';
+  && results.themeAfterToggle === 'dark'
+  && results.recoveredAfter500.failedServed === 1 && results.recoveredAfter500.sawError
+  && results.laterFailure.banner && results.laterFailure.rows === 4 && results.laterFailure.recovered
+  && results.unauthorized.title === 'Нет доступа' && results.unauthorized.streams === 0
+  && results.syncCursor === 'default';
 process.exit(ok ? 0 : 1);
