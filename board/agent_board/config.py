@@ -20,3 +20,8 @@ class ProjectConfig(_Serializable):
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
+    harness: dict = field(default_factory=lambda: {"type": "claude", "permission_mode": "auto"})
+    branch_template: str = "{key}"
+    global_max_agents: int = 6
+    project_brief: str = ""
+    project_session_id: Optional[str] = None

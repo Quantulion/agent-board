@@ -481,7 +481,8 @@ def test_event_vocabulary_covers_every_emitted_event():
     assert emitted and emitted <= set(board_mod.EVENT_TYPES)
     assert reasons <= set(board_mod.WAKE_REASONS)
     assert set(board_mod.WAKE_REASONS) == {
-        "ready", "unblocked", "returned", "answer", "message", "proposal_rejected", "escalation", "manual"}
+        "ready", "unblocked", "returned", "answer", "message", "proposal_rejected", "escalation", "manual",
+        "rebase", "interrupted"}
 
 
 def test_new_task_from_dict_builds_task_from_creatable_fields():
@@ -510,3 +511,93 @@ def test_new_task_from_dict_rejects_invalid_input(raw):
     # act / assert
     with pytest.raises(ValueError):
         new_task_from_dict(raw)
+
+
+def test_update_task_accepts_agent_state(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    board.update_task("A", "system", {"agent_state": "running", "turn_error": "", "last_turn_at": "t", "harness": "fake"})
+    # assert
+    t = [x for x in board.snapshot()["tasks"] if x["key"] == "A"][0]
+    assert t["agent_state"] == "running" and t["harness"] == "fake"
+
+
+def test_reapproving_dep_wakes_dependent_with_session_as_rebase(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.update_task("B", "agent", {"session_id": "s1"})
+    board.transition("A", Status.APPROVED, "user")
+    board.transition("A", Status.IN_PROGRESS, "user")
+    # act
+    ev = flat(board.transition("A", Status.APPROVED, "user"))
+    # assert
+    assert dict(type="agent_wake", key="B", reason="rebase", **{"from": "A"}) in ev
+
+
+def test_dep_done_wakes_dependent_with_session_as_rebase(board_strict):
+    # arrange
+    board_strict.add_task(mk("A"), "user")
+    board_strict.add_task(mk("B", deps=["A"]), "user")
+    board_strict.update_task("B", "agent", {"session_id": "s1"})
+    # act
+    ev = flat(board_strict.transition("A", Status.DONE, "user"))
+    # assert
+    assert dict(type="agent_wake", key="B", reason="rebase", **{"from": "A"}) in ev
+
+
+def test_rebase_not_sent_without_session_or_for_closed_dependent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.add_task(mk("C", deps=["A"]), "user")
+    board.update_task("C", "agent", {"session_id": "s1"})
+    board.transition("C", Status.CANCELLED, "user")
+    # act
+    ev = flat(board.transition("A", Status.APPROVED, "user"))
+    # assert
+    assert not [e for e in ev if e.get("reason") == "rebase"]
+    assert wake("B", "unblocked") in ev
+
+
+def test_rebase_not_sent_for_agent_actor(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.update_task("B", "agent", {"session_id": "s1"})
+    # act
+    ev = flat(board.transition("A", Status.APPROVED, "agent"))
+    # assert
+    assert not [e for e in ev if e.get("reason") == "rebase"]
+
+
+def test_record_appends_event_and_notifies(tmp_home):
+    # arrange
+    seen = []
+    board = make_board(True, on_event=seen.append)
+    # act
+    ev = board.record("turn_started", {"key": "A"})
+    # assert
+    assert ev.type == "turn_started" and ev.data == {"key": "A"}
+    assert seen == [ev]
+
+
+def test_record_unknown_type_raises(board):
+    # arrange / act / assert
+    with pytest.raises(ValueError):
+        board.record("nope", {})
+
+
+def test_snapshot_terminal_command_via_hook_only_for_tasks_with_session(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    board.update_task("B", "agent", {"session_id": "s1"})
+    assert all(t["terminal_command"] is None for t in board.snapshot()["tasks"])
+    board.terminal_command_for = lambda t: "claude --resume %s" % t.session_id
+    # act
+    tasks = {t["key"]: t for t in board.snapshot()["tasks"]}
+    # assert
+    assert tasks["A"]["terminal_command"] is None
+    assert tasks["B"]["terminal_command"] == "claude --resume s1"

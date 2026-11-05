@@ -22,3 +22,21 @@ def test_status_labels():
 def test_config_defaults():
     c = ProjectConfig(slug="pay", title="Платежи")
     assert c.chains is True and c.max_agents == 3 and c.tracker == {"type": "none"} and c.review == {"tool": "crit"}
+
+
+def test_task_execution_fields_roundtrip_and_defaults():
+    # arrange
+    t = Task(key="K", title="T")
+    assert (t.agent_state, t.turn_error, t.last_turn_at, t.harness) == ("idle", "", "", "")
+    t.agent_state, t.turn_error, t.last_turn_at, t.harness = "error", "boom", "2026-01-01", "codex"
+    # act / assert
+    assert Task.from_dict(t.to_dict()) == t
+
+
+def test_config_execution_defaults():
+    # arrange / act
+    c = ProjectConfig(slug="pay", title="Платежи")
+    # assert
+    assert c.harness == {"type": "claude", "permission_mode": "auto"}
+    assert c.branch_template == "{key}" and c.global_max_agents == 6
+    assert c.project_brief == "" and c.project_session_id is None

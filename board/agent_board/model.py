@@ -105,6 +105,10 @@ class Task(_Serializable):
     changed_files: List[str] = field(default_factory=list)
     report: Optional[str] = None
     unread: int = 0
+    agent_state: str = "idle"
+    turn_error: str = ""
+    last_turn_at: str = ""
+    harness: str = ""
     updated_at: str = ""
 
     @classmethod

@@ -16,7 +16,9 @@ UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
+    "agent_state", "turn_error", "last_turn_at", "harness",
 }
+REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
 TASK_KINDS = ("code", "research")
 
@@ -36,6 +38,13 @@ EVENT_TYPES: Dict[str, str] = {
     "proposal_created": "id",
     "proposal_applied": "id",
     "proposal_rejected": "id",
+    "turn_started": "key — раннер начал ход агента",
+    "turn_finished": "key — ход агента завершён",
+    "turn_failed": "key, error — ход агента завершился ошибкой",
+    "task_committed": "key — раннер закоммитил результат задачи",
+    "lock_waiting": "key, resource — задача ждёт общий ресурс",
+    "lock_acquired": "key, resource",
+    "lock_released": "key, resource",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -48,6 +57,8 @@ WAKE_REASONS: Dict[str, str] = {
     "proposal_rejected": "агенту проекта отклонили предложение",
     "escalation": "from — агент задачи написал в тред проекта",
     "manual": "пользователь сам запустил задачу без сессии агента",
+    "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
+    "interrupted": "ход агента был прерван, нужно продолжить",
 }
 
 
@@ -92,6 +103,14 @@ class Board:
         self._clock = clock or _utc_now
         self._on_event = on_event
         self._lock = threading.RLock()
+        self.terminal_command_for: Optional[Callable[[Task], Optional[str]]] = None
+
+    def record(self, type: str, data: dict) -> Event:
+        """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
+        if type not in EVENT_TYPES:
+            raise ValueError("Неизвестный тип события: %r" % type)
+        with self._lock:
+            return self._emit(type, dict(data))
 
     def snapshot(self) -> dict:
         with self._lock:
@@ -103,6 +122,8 @@ class Board:
                 d = t.to_dict()
                 d["display_status"] = display_status(t, tasks, config.chains).value
                 d["open_deps"] = open_deps(t, tasks, config.chains)
+                hook = self.terminal_command_for
+                d["terminal_command"] = hook(t) if hook is not None and t.session_id else None
                 items.append(d)
             return {
                 "config": config.to_dict(),
@@ -158,9 +179,19 @@ class Board:
             events.extend(self._unblocked(before, affected))
             if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
                 events.append(self._emit("agent_wake", {"key": key, "reason": "returned", "from": prev.value}))
+            if actor in ("user", "tracker") and to in (Status.APPROVED, Status.DONE):
+                events.extend(self._rebase_wakes(key, affected))
             if actor == "user":
                 events.extend(self._manual_wake(task, prev))
             return events
+
+    def _rebase_wakes(self, key: str, affected: List[str]) -> List[Event]:
+        tasks = self.store.load_tasks()
+        return [
+            self._emit("agent_wake", {"key": k, "reason": "rebase", "from": key})
+            for k in affected
+            if k in tasks and tasks[k].session_id and tasks[k].status not in REBASE_CLOSED
+        ]
 
     def _manual_wake(self, task: Task, prev: Status) -> List[Event]:
         to = task.status
