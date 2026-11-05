@@ -536,6 +536,31 @@ def test_message_during_turn_survives_restart_and_old_process_is_killed(make_pro
     assert resume[0]["text"].count("не потеряй меня") == 1
 
 
+def test_graceful_stop_terminates_turn_and_next_start_resumes_it(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1", script({"sleep": 30}))
+    wait_events(store, "turn_started", "T-1")
+    runner_sync(srv)
+    proc = calls[0]["proc"]
+    # act
+    srv.stop()
+    # assert: процесс остановлен, карточка помнит идущий ход
+    assert proc.poll() is not None
+    t = task(store, "T-1")
+    assert t.agent_state == "running" and t.turn_process["pgid"] == proc.pid
+    assert not events(store, "turn_finished", "T-1")
+    # act: следующий старт продолжает ход как прерванный
+    start_server()
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    wake = [e.data["reason"] for e in events(store, "agent_wake", "T-1")]
+    assert wake.count("interrupted") == 1
+    assert [c["kind"] for c in calls] == ["start", "resume"] and "interrupted" in calls[1]["text"]
+    assert runner_mod.LEFTOVER_MISSING_TEXT not in thread_texts(store, "T-1")
+
+
 def test_queued_task_pending_message_survives_restart(make_project, start_server, calls):
     # arrange
     store = make_project(max_agents=1)

@@ -538,7 +538,7 @@ class BoardServer:
 
     def stop(self) -> None:
         if self.runner is not None:
-            self.runner.stop_leaving_agents_running()
+            self.runner.stop()
             self.runner = None
         self.hub.wake_all()
         if self._httpd is not None:

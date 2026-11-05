@@ -14,7 +14,16 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 from . import prompts
 from .board import Board
 from .graph import base_for, open_deps
-from .harness import Harness, TurnResult, is_same_process, make_harness, terminate, terminate_group, turn_process_record
+from .harness import (
+    Harness,
+    TurnResult,
+    group_alive,
+    is_same_process,
+    make_harness,
+    terminate,
+    terminate_group,
+    turn_process_record,
+)
 from .model import Event, Status, Task
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
@@ -120,15 +129,20 @@ class Runner:
         self._thread = threading.Thread(target=self._loop, name="board-runner", daemon=True)
         self._thread.start()
 
-    def stop_leaving_agents_running(self) -> None:
-        """Останавливает раннер; процессы идущих ходов продолжают работу, при следующем старте ходы считаются прерванными."""
+    def stop(self) -> None:
+        """Штатная остановка: процессы идущих ходов завершаются, а на доске ходы остаются идущими,
+        чтобы следующий старт продолжил их как прерванные."""
         self._server.hub.unsubscribe(self.on_event)
         self._inbox.put(None)
         if self._thread is not None:
             self._thread.join(timeout=30)
             self._thread = None
-
-    stop = stop_leaving_agents_running
+        stoppers = [threading.Thread(target=terminate, args=(turn.proc, STOP_GRACE_SECONDS), daemon=True)
+                    for turn in list(self._turns.values())]
+        for t in stoppers:
+            t.start()
+        for t in stoppers:
+            t.join(STOP_GRACE_SECONDS + 10)
 
     def kill_all_for_tests(self, grace: float = 1.0) -> None:
         """Останавливает процессы всех идущих ходов (после stop, чтобы тесты не оставляли агентов)."""
@@ -232,6 +246,10 @@ class Runner:
     def _kill_leftover(board: Board, thread: str, record) -> None:
         # процесс прерванного хода мог пережить сервер: две копии на одной сессии недопустимы
         if not isinstance(record, dict):
+            return
+        pgid = record.get("pgid")
+        if isinstance(pgid, int) and pgid > 0 and not group_alive(pgid):
+            # процесса уже нет (например, сервер остановлен штатно): трогать нечего
             return
         if is_same_process(record):
             terminate_group(record["pgid"], STOP_GRACE_SECONDS)
