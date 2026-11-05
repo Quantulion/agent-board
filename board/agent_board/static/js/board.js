@@ -724,7 +724,8 @@ export function mountBoard(root, store, ctx) {
 
     const open = (snap.proposals || []).filter(p => p.status === 'open').length;
     projectBtn.replaceChildren(icon('spark'), T.projectPanel,
-      ...(open ? [h('span', { class: 'chip pa' }, T.proposalsCount(open))] : []));
+      // в шапке только число: полная подпись — в подсказке, чтобы шапка помещалась в одну строку
+      ...(open ? [h('span', { class: 'chip pa', title: T.proposalsCount(open), 'aria-label': T.proposalsCount(open) }, String(open))] : []));
 
     const repos = unique([...(cfg.repos || []).map(r => r.name), ...snap.tasks.map(t => t.repo).filter(Boolean)]).sort();
     if (prefs.repo && !repos.includes(prefs.repo)) repos.push(prefs.repo);

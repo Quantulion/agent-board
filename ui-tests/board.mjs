@@ -157,6 +157,10 @@ try {
     && document.querySelector('.card[data-key="PAY-105"] .qline')
     && document.querySelector('.card[data-key="PAY-111"] .chip.pa'), { timeout: 10000 });
   await new Promise(r => setTimeout(r, 1500));
+  // шапка на 1440: пропущенный трекер и чип предложений помещаются в одну строку
+  results.headerSkipped = await page.$eval('.top .stepper', el => el.textContent.includes('пропущен'));
+  results.headerChip = await page.$('.top .row1 .chip.pa') !== null;
+  results.headerOneRow = await page.$eval('.top .row1', el => el.getBoundingClientRect().height < 50);
   results.columns = await page.$$eval('.col', cols => Object.fromEntries(cols.map(c => [c.dataset.st, [...c.querySelectorAll('.card')].map(x => x.dataset.key)])));
   results.attn = await page.$$eval('.attn .it', els => els.map(e => e.textContent));
   for (const theme of ['light', 'dark']) {
@@ -335,6 +339,7 @@ console.log(JSON.stringify(results, null, 2));
 const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
   && results.stageGoLabel === 'Перейти к работе' && results.stageGoOneRow && results.stageGoDialog === 'Перейти к работе?'
   && /Недопустимый переход стадии/.test(results.stageAfterGo)
+  && results.headerSkipped && results.headerChip && results.headerOneRow
   && results.invisibleChangeFlashes === 0 && results.visibleChangeFlashes > 0
   && results.reactionToast === 'PAY-106 → Одобрена. Разблокирована PAY-108. Разбужен агент PAY-108.'
   && results.movedNodeKept && results.untouchedKept
