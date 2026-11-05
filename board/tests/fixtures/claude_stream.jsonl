@@ -1,0 +1,3 @@
+{"type": "system", "subtype": "init", "cwd": "/work/repo", "session_id": "106d935a-53e5-4157-992b-1f9195627674", "model": "claude-opus-5-5", "permissionMode": "plan"}
+{"type": "assistant", "message": {"role": "assistant", "content": [{"type": "text", "text": "ok"}]}, "parent_tool_use_id": null, "session_id": "106d935a-53e5-4157-992b-1f9195627674"}
+{"type": "result", "subtype": "success", "is_error": false, "num_turns": 1, "result": "ok", "stop_reason": "end_turn", "session_id": "106d935a-53e5-4157-992b-1f9195627674", "terminal_reason": "completed"}
