@@ -52,3 +52,9 @@ test('errorField: ошибка сервера показывается под с
   assert.equal(errorField('Оценка задачи должна быть числом'), 'estimate');
   assert.equal(errorField('Задачи меняет только пользователь'), null);
 });
+
+test('suggestKey: номер растёт, пока ключ совпадает с существующим без учёта регистра', () => {
+  // act + assert
+  assert.equal(suggestKey(['PAY-1', 'PAY-2', 'pay-3'], 'pay'), 'PAY-4');
+  assert.equal(suggestKey(['PAY-1', 'PAY-2', 'pay-3', 'Pay-4'], 'pay'), 'PAY-5');
+});

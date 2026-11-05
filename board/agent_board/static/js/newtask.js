@@ -1,7 +1,7 @@
 // Модальное окно «Новая задача»: поля задачи, зависимости с поиском, проверка до отправки и ошибки сервера под полями.
-import { openModal, toast } from './board.js';
 import { h, icon } from './dom.js';
 import { STATUSES, T, statusInfo } from './i18n.js';
+import { openModal, toast } from './ui.js';
 
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
 const NUMBERED = /^(.*?)(\d+)$/;
@@ -32,9 +32,12 @@ export function suggestKey(keys, slug) {
   for (const [prefix, g] of groups) {
     if (!best || g.count > best[1].count || (g.count === best[1].count && prefix < best[0])) best = [prefix, g];
   }
-  if (!best) return String(slug || 'task').toUpperCase() + '-1';
-  const [prefix, g] = best;
-  return prefix + String(g.max + 1).padStart(g.width, '0');
+  const taken = new Set(keys.map(k => k.toLowerCase()));
+  const [prefix, start, width] = best ? [best[0], best[1].max + 1, best[1].width] : [String(slug || 'task').toUpperCase() + '-', 1, 0];
+  // ключи сравниваются без учёта регистра, как на сервере
+  let n = start;
+  while (taken.has((prefix + String(n).padStart(width, '0')).toLowerCase())) n++;
+  return prefix + String(n).padStart(width, '0');
 }
 
 // Ошибки полей формы до отправки; пустой объект — можно отправлять.
@@ -82,17 +85,18 @@ export function errorField(message) {
 
 const SNAPSHOT_WAIT_MS = 5000;
 
+// true — задача появилась в снимке, false — не дождались.
 function whenInSnapshot(store, key) {
   const has = state => Boolean(state.snapshot && state.snapshot.tasks.some(t => t.key === key));
-  if (has(store.get())) return Promise.resolve();
+  if (has(store.get())) return Promise.resolve(true);
   return new Promise(resolve => {
-    const done = () => {
+    const done = found => {
       clearTimeout(timer);
       unsubscribe();
-      resolve();
+      resolve(found);
     };
-    const unsubscribe = store.subscribe(state => { if (has(state)) done(); });
-    const timer = setTimeout(done, SNAPSHOT_WAIT_MS);
+    const unsubscribe = store.subscribe(state => { if (has(state)) done(true); });
+    const timer = setTimeout(() => done(false), SNAPSHOT_WAIT_MS);
   });
 }
 
@@ -188,13 +192,12 @@ export function openNewTaskDialog(ctx) {
     prev,
     general,
   ];
-  const close = openModal(T.newTask, body, [
+  const { close, modal } = openModal(T.newTask, body, [
     h('span', { class: 'muted foot-note' }, T.nt.footer),
     h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel),
     createBtn,
   ]);
-  const modal = document.querySelector('.modal-host:last-of-type .modal');
-  if (modal) modal.classList.add('newtask');
+  modal.classList.add('newtask');
 
   const inputs = { key: keyInput, title: titleInput, estimate: estInput };
   function showErrors(errors) {
@@ -232,8 +235,14 @@ export function openNewTaskDialog(ctx) {
         const key = (res && res.key) || form.key.trim();
         close();
         toast(T.nt.created(key));
-        // карточка открывается, когда задача появится в снимке: иначе она сочла бы задачу несуществующей
-        whenInSnapshot(ctx.store, key).then(() => ctx.openCard(key));
+        // карточка открывается, когда задача появится в снимке: иначе она сочла бы задачу несуществующей;
+        // если пользователь уже ушёл на другой адрес, его не уводим
+        const from = window.location.hash;
+        whenInSnapshot(ctx.store, key).then(found => {
+          if (window.location.hash !== from) return;
+          if (found) ctx.openCard(key);
+          else toast(T.nt.notYetVisible(key));
+        });
       })
       .catch(e => {
         const message = (e && e.message) || String(e);

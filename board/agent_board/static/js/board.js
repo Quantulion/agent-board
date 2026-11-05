@@ -3,6 +3,7 @@ import { h, icon, patchList } from './dom.js';
 import { mountGraph } from './graph.js';
 import { STAGES, STATUSES, T, statusInfo } from './i18n.js';
 import { openNewTaskDialog } from './newtask.js';
+import { openModal, toast } from './ui.js';
 import { mountProjectPanel, proposalsTouching } from './project.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
@@ -157,18 +158,6 @@ export function cardModel(task, ctx) {
 const color = id => 'var(' + statusInfo(id).color + ')';
 const sdot = id => h('span', { class: 'sdot', style: { '--c': color(id) } });
 
-export function toast(text, options = {}) {
-  let host = document.querySelector('.toasts');
-  if (!host) {
-    host = h('div', { class: 'toasts', role: 'status', 'aria-live': 'polite' });
-    document.body.append(host);
-  }
-  const el = h('div', { class: options.error ? 'toast err' : 'toast', role: options.error ? 'alert' : null }, h('span', null, text));
-  host.append(el);
-  setTimeout(() => el.remove(), options.error ? 6000 : 4000);
-  return el;
-}
-
 // Меню выбора статуса; onPick получает id выбранного статуса.
 // «Заблокирована» вычисляется сервером, вручную задаётся только внешний блокер — пункт открывает его диалог.
 export function statusMenu(current, onPick) {
@@ -204,33 +193,6 @@ export async function moveTask(client, key, to) {
   } finally {
     moving.delete(key);
   }
-}
-
-// Модальное окно поверх всего; Esc и клик мимо закрывают только его. Возвращает close().
-export function openModal(title, body, footer, onClose) {
-  const before = document.activeElement;
-  const close = () => {
-    document.removeEventListener('keydown', onKey, true);
-    host.remove();
-    if (onClose) onClose();
-    if (before && before.isConnected && typeof before.focus === 'function') before.focus();
-  };
-  const onKey = e => {
-    if (e.key !== 'Escape' || e.isComposing || e.keyCode === 229) return;
-    e.stopPropagation();
-    e.preventDefault();
-    close();
-  };
-  const host = h('div', { class: 'modal-host' },
-    h('div', { class: 'scrim', onclick: close }),
-    h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true', 'aria-label': title },
-      h('header', null, h('h2', null, title),
-        h('button', { class: 'btn icon ghost', type: 'button', 'aria-label': T.close, onclick: close }, icon('x'))),
-      h('div', { class: 'body' }, body),
-      h('footer', null, footer)));
-  document.addEventListener('keydown', onKey, true);
-  document.body.append(host);
-  return close;
 }
 
 const BLOCKER_MAX = 500;
@@ -271,7 +233,7 @@ export function externalBlockerDialog(ctx, task) {
   const clearBtn = current ? h('button', { class: 'btn danger', type: 'button', onclick: () => save(null) }, T.blocker.clear) : null;
   const okBtn = h('button', { class: 'btn primary', type: 'button', onclick: submit }, current ? T.blocker.save : T.blocker.block);
   const buttons = [clearBtn, okBtn].filter(Boolean);
-  const close = openModal(T.blocker.title(task.key),
+  const { close } = openModal(T.blocker.title(task.key),
     [h('div', { class: 'field' }, h('label', { for: 'ext-blocker' }, T.blocker.label), input), error],
     [clearBtn, h('span', { class: 'grow' }), h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel), okBtn]);
   input.focus();
@@ -351,6 +313,16 @@ export function mountBoard(root, store, ctx) {
   for (const s of STATUSES) columns.set(s.id, column(s));
 
   const graphHost = h('div', { class: 'graph-wrap' });
+  // затемнение у края, за которым есть ещё задачи: граф шире окна, его прокручивают
+  const graphFrame = h('div', { class: 'graph-frame' }, graphHost);
+  const paintPan = () => {
+    const rest = graphHost.scrollWidth - graphHost.clientWidth - graphHost.scrollLeft;
+    graphFrame.classList.toggle('can-l', graphHost.scrollLeft > 1);
+    graphFrame.classList.toggle('can-r', rest > 1);
+  };
+  graphHost.addEventListener('scroll', paintPan, { passive: true });
+  const resizeObserver = typeof ResizeObserver === 'function' ? new ResizeObserver(paintPan) : null;
+  if (resizeObserver) resizeObserver.observe(graphHost);
   const graphEmpty = h('p', { class: 'muted', hidden: true }, T.graphEmpty);
   const graphView = h('div', { class: 'graphview', hidden: true },
     h('div', { class: 'gbar' },
@@ -359,12 +331,12 @@ export function mountBoard(root, store, ctx) {
         h('span', null, h('i', { class: 'ln' }), T.graphCritical),
         h('span', null, h('i', { class: 'ln cyc' }), T.graphCyclic)),
       h('span', { class: 'muted ghint' }, T.graphHint)),
-    graphEmpty, graphHost);
+    graphEmpty, graphFrame);
   const graph = mountGraph(graphHost, key => ctx.openCard(key));
   const viewButtons = [['board', T.board, 'board'], ['graph', T.graph, 'graph']].map(([id, label, ic]) =>
     h('button', { type: 'button', 'data-view': id, 'aria-pressed': String(prefs.view === id), onclick: () => setView(id) }, icon(ic), label));
 
-  const panel = mountProjectPanel(ctx, store, on => projectBtn.setAttribute('aria-pressed', String(on)));
+  const panel = mountProjectPanel(ctx, store, projectBtn);
   ctx.openProject = () => panel.reveal();
   ctx.openGraph = () => setView('graph');
   ctx.openNewTask = () => openNewTaskDialog(ctx);
@@ -407,8 +379,9 @@ export function mountBoard(root, store, ctx) {
     const live = snap.tasks.filter(t => statusOf(t) !== 'cancelled');
     const pass = taskFilter(snap, prefs);
     graphEmpty.hidden = live.length > 0;
-    graphHost.hidden = !live.length;
+    graphFrame.hidden = !live.length;
     graph.paint(live, { skipCritical: FINISHED, isOut: t => !pass(t) });
+    paintPan();
   }
 
   function column(s) {
@@ -762,6 +735,7 @@ export function mountBoard(root, store, ctx) {
   return function destroy() {
     unsubscribe();
     panel.destroy();
+    if (resizeObserver) resizeObserver.disconnect();
     for (const name of ['openProject', 'openGraph', 'openNewTask']) ctx[name] = () => {};
     cleanups.forEach(fn => fn());
   };

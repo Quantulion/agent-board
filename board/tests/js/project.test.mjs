@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentStateLine, describeProposal, partsText, proposalsTouching } from '../../agent_board/static/js/project.js';
+import { agentStateLine, describeFor, describeProposal, partsText, proposalSignature, proposalsTouching } from '../../agent_board/static/js/project.js';
 
 const tasks = new Map([
   ['PAY-104', { key: 'PAY-104', title: 'Переливка истории', status: 'in_progress' }],
@@ -94,4 +94,39 @@ test('agentStateLine: состояние агента проекта челов�
   assert.deepEqual(agentStateLine({ state: 'error', turn_error: 'boom' }), { cls: 'err', text: 'ошибка хода' });
   assert.deepEqual(agentStateLine({ state: 'idle', parked: true }), { cls: 'err', text: 'переписка агентов остановлена' });
   assert.deepEqual(agentStateLine(null), { cls: 'idle', text: 'ждёт' });
+});
+
+test('proposalSignature: меняется вместе с текущими зависимостями, от которых считается описание', () => {
+  // arrange
+  const setDeps = { id: 'p2', kind: 'set_deps', status: 'open', payload: { key: 'PAY-107', deps: ['PAY-109'] } };
+  const cancel = { id: 'p3', kind: 'cancel_task', status: 'open', payload: { key: 'PAY-109' } };
+  const add = { id: 'p1', kind: 'add_task', status: 'open', payload: { task: { key: 'PAY-115', title: 'x', deps: ['PAY-120'] } } };
+  const moved = new Map(tasks);
+  moved.set('PAY-107', { ...tasks.get('PAY-107'), deps: ['PAY-109'] });
+  const dependent = new Map(tasks);
+  dependent.set('PAY-107', { ...tasks.get('PAY-107'), deps: ['PAY-104', 'PAY-109'] });
+  const created = new Map(tasks);
+  created.set('PAY-120', { key: 'PAY-120', title: 'новая', deps: [] });
+  // act + assert
+  assert.notEqual(proposalSignature(setDeps, tasks), proposalSignature(setDeps, moved), 'зависимости цели поменялись');
+  assert.notEqual(proposalSignature(cancel, tasks), proposalSignature(cancel, dependent), 'появилась зависящая задача');
+  assert.notEqual(proposalSignature(add, tasks), proposalSignature(add, created), 'зависимость новой задачи появилась');
+  assert.equal(proposalSignature(setDeps, tasks), proposalSignature({ ...setDeps }, new Map(tasks)));
+  assert.notEqual(proposalSignature(setDeps, tasks), proposalSignature({ ...setDeps, status: 'applied' }, tasks));
+});
+
+test('describeFor: обработанное предложение сохраняет описание, каким оно было открытым', () => {
+  // arrange
+  const cache = new Map();
+  const open = { id: 'p2', kind: 'set_deps', status: 'open', payload: { key: 'PAY-107', deps: ['PAY-109'] } };
+  const after = new Map(tasks);
+  after.set('PAY-107', { ...tasks.get('PAY-107'), deps: ['PAY-109'] });
+  // act
+  const before = describeFor(cache, open, tasks);
+  const applied = describeFor(cache, { ...open, status: 'applied' }, after);
+  const unseen = describeFor(cache, { ...open, id: 'p9', status: 'applied' }, after);
+  // assert
+  assert.deepEqual(applied, before);
+  assert.deepEqual(text(applied).slice(1), ['+ связь будет ждать PAY-109', '− связь больше не ждёт PAY-104']);
+  assert.deepEqual(unseen.changes, [], 'без открытого состояния описание считается по текущему графу');
 });

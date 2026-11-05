@@ -589,7 +589,12 @@ a.report svg { width: 14px; height: 14px; flex: none; }
 /* ===== Граф, панель «Проект», новая задача ===== */
 .views { display: grid; grid-template-rows: minmax(0, 1fr); min-height: 0; min-width: 0; }
 .graphview .ghint { font-size: 12px; }
-.graphview .graph-wrap { justify-self: start; max-width: 100%; }
+.graph-frame { position: relative; justify-self: start; max-width: 100%; min-width: 0; }
+.graph-frame > .graph-wrap { max-width: 100%; }
+.graph-frame::before, .graph-frame::after { content: ""; position: absolute; top: 1px; bottom: 1px; width: 56px; pointer-events: none; opacity: 0; transition: opacity .15s; z-index: 1; }
+.graph-frame::before { left: 1px; border-radius: 11px 0 0 11px; background: linear-gradient(to right, var(--surface), transparent); }
+.graph-frame::after { right: 1px; border-radius: 0 11px 11px 0; background: linear-gradient(to left, var(--surface), transparent); }
+.graph-frame.can-l::before, .graph-frame.can-r::after { opacity: 1; }
 .graph-wrap:focus-within { outline: none; }
 svg .edge-end { fill: var(--line-strong); }
 svg .edge.cyc { stroke: var(--s-answer); stroke-dasharray: 5 4; }
@@ -629,3 +634,4 @@ input[aria-invalid="true"] { border-color: var(--err-line); }
 .dock .scroll > p.muted { margin: 0; font-size: 13px; }
 .proposal .pt a.mono { color: inherit; font-size: 13px; }
 .modal .two { align-items: start; }
+@media (prefers-reduced-motion: reduce) { .graph-frame::before, .graph-frame::after { transition: none; } }

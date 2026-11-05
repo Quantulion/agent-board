@@ -135,6 +135,28 @@ try {
     if (lines > 2) bad.push('lines:' + lines);
     return bad.length ? [n.dataset.key + ':' + bad.join(',')] : [];
   }));
+  // граф шире области при открытой панели: у правого края затемнение, прокрутка показывает последний слой
+  results.panBefore = await page.evaluate(() => {
+    const wrap = document.querySelector('.graph-wrap');
+    const frame = document.querySelector('.graph-frame');
+    return { wider: wrap.scrollWidth > wrap.clientWidth, right: frame.classList.contains('can-r'), left: frame.classList.contains('can-l') };
+  });
+  await page.$eval('.graph-wrap', el => { el.scrollLeft = el.scrollWidth; });
+  await sleep(200);
+  results.panAfter = await page.evaluate(() => {
+    const wrap = document.querySelector('.graph-wrap');
+    const frame = document.querySelector('.graph-frame');
+    const box = wrap.getBoundingClientRect();
+    const nodes = [...wrap.querySelectorAll('g.node')];
+    const right = Math.max(...nodes.map(n => n.getBoundingClientRect().right));
+    const last = nodes.filter(n => n.getBoundingClientRect().right === right).map(n => n.dataset.key);
+    return { lastVisible: right <= box.right && right > box.left, last, right: frame.classList.contains('can-r'), left: frame.classList.contains('can-l') };
+  });
+  const panFile = path.join(out, 'graph-scrolled-light.png');
+  await page.screenshot({ path: panFile });
+  shots.graph_scrolled_light = panFile;
+  await page.$eval('.graph-wrap', el => { el.scrollLeft = 0; });
+  await sleep(200);
   results.longTitleLines = await page.$eval('g.node[data-key="PAY-111"] .gt', gt => Math.round(gt.getBoundingClientRect().height / parseFloat(getComputedStyle(gt).lineHeight)));
   results.critical = await page.$$eval('.graph-wrap path.edge.crit', els => els.map(e => e.parentNode.dataset.key));
   results.okEdges = await page.$$eval('.graph-wrap path.edge.ok', els => els.length);
@@ -212,6 +234,23 @@ try {
   }
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
 
+  // описание открытого предложения следует за текущими зависимостями задачи
+  await post('proposals', { kind: 'set_deps', reason: 'Отчёты нужны сразу после теневой записи.', payload: { key: 'PAY-108', deps: ['PAY-107', 'PAY-105'] } });
+  const block108 = () => page.evaluate(() => {
+    const b = [...document.querySelectorAll('.dock .popen .proposal')].find(p => p.textContent.includes('PAY-108: зависимости'));
+    return b ? b.textContent : '';
+  });
+  await page.waitForFunction(() => [...document.querySelectorAll('.dock .popen .proposal')].some(p => p.textContent.includes('PAY-108: зависимости')), { timeout: 10000 });
+  results.staleBefore = await block108();
+  await post('tasks/PAY-108/deps', { deps: ['PAY-107', 'PAY-104'], actor: 'user' });
+  await page.waitForFunction(() => [...document.querySelectorAll('.dock .popen .proposal')].some(p => p.textContent.includes('больше не ждёт PAY-104')), { timeout: 10000 });
+  results.staleAfter = await block108();
+  await page.evaluate(() => [...document.querySelectorAll('.dock .popen .proposal')].find(p => p.textContent.includes('PAY-108: зависимости'))
+    .querySelector('.pa-act .btn:not(.ok)').click());
+  await page.waitForFunction(() => [...document.querySelectorAll('.dock .phist .proposal.rejected')].some(p => p.textContent.includes('PAY-108')), { timeout: 10000 });
+  // в истории изменения остаются такими, какими их видели до обработки
+  results.historyRows = await page.$$eval('.dock .phist .proposal', els => els.map(e => e.querySelector('.pt').textContent + ' | ' + [...e.querySelectorAll('.chg > div')].map(r => r.textContent).join(' / ')));
+
   // тред проекта: сообщение пользователя появляется в панели
   await page.type('.dock .foot textarea', 'Где сейчас узкое место проекта?');
   await page.keyboard.down('Meta');
@@ -283,18 +322,40 @@ try {
   await page.click('.modal footer .btn.primary');
   results.blockerEmpty = await page.$eval('.modal .ferr', el => !el.hidden && el.textContent);
   results.blockerMax = await page.$eval('#ext-blocker', el => el.maxLength);
+  await page.evaluate(() => import('/static/js/ui.js').then(m => m.toast('Проверка тоста над окном')));
+  results.toastAboveFooter = await page.evaluate(() => {
+    const t = [...document.querySelectorAll('.toast')].pop().getBoundingClientRect();
+    const f = document.querySelector('.modal footer').getBoundingClientRect();
+    return t.bottom <= f.top;
+  });
   await page.keyboard.press('Escape');
   await page.keyboard.press('Escape');
   await page.waitForFunction(() => !document.querySelector('.drawer'), { timeout: 5000 });
 
   // панель сворачивается и остаётся свёрнутой после перезагрузки
   await page.click('.dock header .btn');
+  results.focusAfterCollapse = await page.evaluate(() => document.activeElement === document.querySelector('.row1 .btn[aria-pressed]'));
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.graph-wrap g.node', { timeout: 10000 });
   results.dockAfterReload = await page.$eval('.dock', el => el.hidden);
   results.projectBtnAfterReload = await page.$eval('.row1 .btn[aria-pressed]', el => el.getAttribute('aria-pressed'));
   await page.click('.row1 .btn[aria-pressed]');
   results.dockReopened = await page.$eval('.dock', el => !el.hidden);
+
+  // узкий экран: панель поверх доски закрывается по Esc и клику мимо
+  await page.setViewport({ width: 800, height: 900 });
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForSelector('.graph-wrap g.node', { timeout: 10000 });
+  results.narrowDefaultHidden = await page.$eval('.dock', el => el.hidden);
+  await page.click('.row1 .btn[aria-pressed]');
+  results.narrowOverlay = await page.$eval('.dock', el => !el.hidden && getComputedStyle(el).position === 'fixed');
+  await page.keyboard.press('Escape');
+  results.narrowEscCloses = await page.$eval('.dock', el => el.hidden);
+  results.narrowEscFocus = await page.evaluate(() => document.activeElement === document.querySelector('.row1 .btn[aria-pressed]'));
+  await page.click('.row1 .btn[aria-pressed]');
+  await page.mouse.click(40, 600);
+  results.narrowClickOutside = await page.$eval('.dock', el => el.hidden);
+  await page.setViewport(VIEW);
   results.pageErrors = errors;
 
   // макет того же размера: граф, панель «Проект», новая задача
@@ -334,6 +395,14 @@ try {
 }
 console.log(JSON.stringify({ results, shots }, null, 2));
 const ok = results.proposalTitles.length === 3 && results.projectBtnPressed === 'true' && results.chipOn107
+  && results.panBefore.wider && results.panBefore.right && !results.panBefore.left
+  && results.panAfter.lastVisible && results.panAfter.left && !results.panAfter.right
+  && results.staleBefore.includes('будет ждать PAY-105') && !results.staleBefore.includes('больше не ждёт')
+  && results.staleAfter.includes('будет ждать PAY-105') && results.staleAfter.includes('больше не ждёт PAY-104')
+  && results.historyRows.some(r => r.startsWith('PAY-108: зависимости') && r.includes('больше не ждёт PAY-104'))
+  && results.historyRows.some(r => r.startsWith('PAY-107: зависимости') && r.includes('будет ждать PAY-105'))
+  && results.toastAboveFooter && results.focusAfterCollapse
+  && results.narrowDefaultHidden && results.narrowOverlay && results.narrowEscCloses && results.narrowEscFocus && results.narrowClickOutside
   && results.colsHidden && !results.cancelledOnGraph && results.overflow.length === 0 && results.longTitleLines === 2
   && results.critical.length > 0 && results.okEdges > 0 && results.diamond
   && results.hoverEdges.join() === 'PAY-103>PAY-106,PAY-104>PAY-106,PAY-106>PAY-107,PAY-106>PAY-111'

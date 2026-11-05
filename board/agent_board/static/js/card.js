@@ -1,10 +1,11 @@
 // Карточка задачи: выезжающая панель поверх доски с вкладками «Обзор / Тред / Ревью / Изменения».
 // Панель и вкладки создаются один раз на открытую карточку; живые обновления правят их на месте.
-import { externalBlockerDialog, requestMove, statusMenu, toast } from './board.js';
+import { externalBlockerDialog, requestMove, statusMenu } from './board.js';
 import { h, icon, patchList, safeMarkdown, safeUrl } from './dom.js';
 import { T, statusInfo } from './i18n.js';
-import { proposalNote, proposalsTouching } from './project.js';
+import { proposalNote, proposalSignature, proposalsTouching } from './project.js';
 import { createThread, draftsFor, formatTime } from './thread.js';
+import { toast } from './ui.js';
 
 export { authorOf, createDrafts, formatTime } from './thread.js';
 
@@ -365,8 +366,8 @@ function createCard(ctx, key, returnFocus) {
           questions.hidden = !open.length;
           const byKey = new Map(snap.tasks.map(x => [x.key, x]));
           const touching = proposalsTouching(snap.proposals || [], key);
-          // узел пересоздаётся только при смене содержания: состояние кнопок переживает обновления снимка
-          patchList(proposals, touching, p => p.id + ':' + JSON.stringify(p.payload), p => proposalNote(ctx, p, byKey));
+          // узел пересоздаётся только при смене описания: состояние кнопок переживает прочие обновления снимка
+          patchList(proposals, touching, p => proposalSignature(p, byKey), p => proposalNote(ctx, p, byKey));
           proposals.hidden = !touching.length;
           parts.error.paint(t.turn_error, () => t.turn_error ? h('section', { class: 'sec err' },
             h('h3', null, icon('warn'), T.card.turnError), h('pre', { class: 'errtext' }, t.turn_error)) : null);

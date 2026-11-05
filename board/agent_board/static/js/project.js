@@ -1,11 +1,13 @@
 // Панель «Проект»: тред с агентом проекта, его состояние и предложения по изменению графа задач.
-import { toast } from './board.js';
 import { h, icon, patchList } from './dom.js';
 import { T } from './i18n.js';
 import { createThread, draftsFor } from './thread.js';
+import { toast } from './ui.js';
 
 export const PROJECT_THREAD = '_project';
 const DOCK_KEY = 'ab-dock';
+// на узком экране панель выезжает поверх доски и закрывается, как всплывающее окно
+const NARROW = '(max-width: 900px)';
 
 const str = v => (typeof v === 'string' ? v : '');
 const strList = v => (Array.isArray(v) ? v.filter(x => typeof x === 'string') : []);
@@ -79,6 +81,22 @@ export function proposalsTouching(proposals, key) {
   });
 }
 
+// Сигнатура блока предложения: описание считается от текущих зависимостей, и при их смене блок перерисовывается.
+export function proposalSignature(p, byKey) {
+  return JSON.stringify([p.id, p.status, describeProposal(p, byKey)]);
+}
+
+// Описание для показа: пока предложение открыто, оно запоминается в cache; обработанное показывается таким,
+// каким его видел пользователь, — после применения текущий граф уже не отличается от предложенного.
+export function describeFor(cache, p, byKey) {
+  if (p.status === 'open') {
+    const d = describeProposal(p, byKey);
+    cache.set(p.id, d);
+    return d;
+  }
+  return cache.get(p.id) || describeProposal(p, byKey);
+}
+
 export function agentStateLine(pa) {
   if (pa && pa.parked) return { cls: 'err', text: T.project.state.parked };
   const state = pa && pa.state;
@@ -89,8 +107,19 @@ export function agentStateLine(pa) {
 
 // --- Предложение: блок с кнопками «Применить» / «Отклонить» ---
 
-// предложения, по которым запрос уже ушёл: повторный клик (в панели или карточке) ничего не делает
+// предложения, по которым запрос в пути или уже выполнен: кнопки в панели и карточке неактивны,
+// пока следующий снимок не уберёт предложение из открытых
 const pending = new Set();
+const settled = new Set();
+// описания открытых предложений по проектам — для истории
+const described = new Map();
+
+function cacheFor(slug) {
+  if (!described.has(slug)) described.set(slug, new Map());
+  return described.get(slug);
+}
+
+const actionKey = (ctx, p) => ctx.slug + ':' + p.id;
 
 function renderParts(ctx, parts) {
   return parts.map(p => {
@@ -109,30 +138,35 @@ function changeRows(ctx, d) {
 
 function actions(ctx, p, d) {
   const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
+  const id = actionKey(ctx, p);
   const act = action => {
-    if (pending.has(p.id)) return;
-    pending.add(p.id);
+    if (pending.has(id) || settled.has(id)) return;
+    pending.add(id);
     buttons.forEach(b => { b.disabled = true; });
     error.hidden = true;
     ctx.client.post('/proposals/' + encodeURIComponent(p.id) + '/' + action)
-      .then(() => toast(action === 'apply' ? T.proposal.appliedToast(partsText(d.title)) : T.proposal.rejectedToast))
+      .then(() => {
+        settled.add(id);
+        toast(action === 'apply' ? T.proposal.appliedToast(partsText(d.title)) : T.proposal.rejectedToast);
+      })
       .catch(err => {
         buttons.forEach(b => { b.disabled = false; });
         error.textContent = (err && err.message) || String(err);
         error.hidden = false;
       })
-      .finally(() => pending.delete(p.id));
+      .finally(() => pending.delete(id));
   };
+  const busy = pending.has(id) || settled.has(id);
   const buttons = [
-    h('button', { class: 'btn ok sm', type: 'button', onclick: () => act('apply') }, icon('check'), T.proposal.apply),
-    h('button', { class: 'btn sm', type: 'button', onclick: () => act('reject') }, T.proposal.reject),
+    h('button', { class: 'btn ok sm', type: 'button', disabled: busy, onclick: () => act('apply') }, icon('check'), T.proposal.apply),
+    h('button', { class: 'btn sm', type: 'button', disabled: busy, onclick: () => act('reject') }, T.proposal.reject),
   ];
   return [h('div', { class: 'pa-act' }, buttons), error];
 }
 
 // Предложение в панели «Проект»: открытое — с кнопками, обработанное — с итогом.
 export function proposalCard(ctx, p, byKey) {
-  const d = describeProposal(p, byKey);
+  const d = describeFor(cacheFor(ctx.slug), p, byKey);
   const reason = str(p.reason).trim();
   const status = p.status === 'applied' || p.status === 'rejected' ? p.status : 'open';
   return h('div', { class: 'proposal ' + status, 'data-id': p.id },
@@ -148,7 +182,7 @@ export function proposalCard(ctx, p, byKey) {
 
 // Предложение в карточке задачи, которую оно затрагивает.
 export function proposalNote(ctx, p, byKey) {
-  const d = describeProposal(p, byKey);
+  const d = describeFor(cacheFor(ctx.slug), p, byKey);
   const reason = str(p.reason).trim();
   return h('div', { class: 'pa-note', 'data-id': p.id },
     h('div', null, h('b', null, T.proposal.suggests), ' ', renderParts(ctx, d.title)),
@@ -167,9 +201,13 @@ function storedOpen() {
   }
 }
 
-// Панель справа от доски; свёрнутость запоминается. onToggle(open) — сообщить кнопке в шапке.
-export function mountProjectPanel(ctx, store, onToggle) {
-  let open = storedOpen() && !(window.matchMedia && window.matchMedia('(max-width: 900px)').matches);
+const narrow = () => Boolean(window.matchMedia && window.matchMedia(NARROW).matches);
+
+// Панель справа от доски; свёрнутость запоминается. toggleButton — кнопка «Проект» в шапке:
+// ей сообщается состояние панели, на неё возвращается фокус после сворачивания.
+export function mountProjectPanel(ctx, store, toggleButton) {
+  let open = storedOpen() && !narrow();
+  const onToggle = on => toggleButton.setAttribute('aria-pressed', String(on));
   let alive = true;
   const stateDot = h('span', { class: 'sdot' });
   const stateText = h('span');
@@ -194,9 +232,28 @@ export function mountProjectPanel(ctx, store, onToggle) {
       h('div', { class: 'ptitle' }, h('h3', null, T.projectPanel),
         h('div', { class: 'sub pstate' }, stateDot, T.project.agent + ' · ', stateText)),
       h('span', { class: 'grow' }),
-      h('button', { class: 'btn icon ghost sm', type: 'button', 'aria-label': T.collapse, title: T.collapse, onclick: () => setOpen(false) }, icon('x'))),
+      h('button', { class: 'btn icon ghost sm', type: 'button', 'aria-label': T.collapse, title: T.collapse, onclick: () => collapse() }, icon('x'))),
     scroll,
     h('div', { class: 'foot' }, ...thread.composer));
+
+  function collapse() {
+    setOpen(false);
+    if (toggleButton.isConnected) toggleButton.focus();
+  }
+
+  const onKey = e => {
+    if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || !open || !narrow()) return;
+    // карточка и модальные окна поверх панели закрываются своим Esc
+    if (document.querySelector('.drawer, .modal-host')) return;
+    collapse();
+  };
+  const onDocClick = e => {
+    if (!open || !narrow() || el.contains(e.target) || toggleButton.contains(e.target)) return;
+    if (e.target.closest && e.target.closest('.drawer, .modal-host, .toasts')) return;
+    setOpen(false);
+  };
+  document.addEventListener('keydown', onKey);
+  document.addEventListener('click', onDocClick);
 
   function setOpen(on) {
     open = on;
@@ -228,11 +285,11 @@ export function mountProjectPanel(ctx, store, onToggle) {
 
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const proposals = snap.proposals || [];
-    const sig = p => p.id + ':' + p.status + ':' + JSON.stringify(p.payload);
     const openOnes = proposals.filter(p => p.status === 'open');
     const done = proposals.filter(p => p.status !== 'open').reverse();
-    patchList(openList, openOnes, sig, p => proposalCard(ctx, p, byKey));
-    patchList(history, done, sig, p => proposalCard(ctx, p, byKey));
+    patchList(openList, openOnes, p => proposalSignature(p, byKey), p => proposalCard(ctx, p, byKey));
+    // обработанные не меняются: их описание заморожено в момент обработки
+    patchList(history, done, p => p.id + ':' + p.status, p => proposalCard(ctx, p, byKey));
     historyBox.hidden = !done.length;
     historyCount.textContent = T.project.history(done.length);
     thread.paint({ size: snap.project_thread_size, unread: snap.project_unread });
@@ -257,6 +314,8 @@ export function mountProjectPanel(ctx, store, onToggle) {
     destroy() {
       alive = false;
       unsubscribe();
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('click', onDocClick);
     },
   };
 }
