@@ -19,6 +19,11 @@ UPDATABLE_FIELDS = {
     "description", "done_when", "title", "estimate",
     "agent_state", "turn_error", "last_turn_at", "harness", "turn_process",
 }
+# поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
+RUNNER_FIELDS = {
+    "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
+    "turn_process",
+}
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
 TASK_KINDS = ("code", "research")
@@ -241,6 +246,9 @@ class Board:
             unknown = set(fields) - UPDATABLE_FIELDS
             if unknown:
                 raise ValueError("Недопустимые поля: %s" % ", ".join(sorted(map(str, unknown))))
+            owned = set(fields) & RUNNER_FIELDS
+            if owned and actor != "system":
+                raise PermissionError("Эти поля меняет только раннер: %s" % ", ".join(sorted(owned)))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)

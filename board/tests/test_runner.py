@@ -673,3 +673,61 @@ def test_failure_after_start_turn_terminates_started_process(make_project, start
     assert len(calls) == 1
     assert calls[0]["proc"].wait(timeout=TIMEOUT) != 0
     assert not events(store, "turn_started", "T-1")
+
+
+# --- поля раннера (P19) ---
+
+def test_forged_worktree_is_not_committed_on_approval(make_project, start_server, calls, git_repo, tmp_path):
+    # arrange
+    store = make_project()
+    forged = tmp_path / "forged"
+    forged.mkdir()
+    for args in (["init", "-q", "-b", "main"], ["config", "user.name", "T"], ["config", "user.email", "t@e"]):
+        run_git(forged, *args)
+    (forged / "f.txt").write_text("x")
+    run_git(forged, "add", "-A")
+    run_git(forged, "commit", "-qm", "init")
+    (forged / "f.txt").write_text("dirty")
+    head = run_git(forged, "rev-parse", "HEAD")
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.status, t.worktree, t.branch, t.base_branch, t.harness = Status.IN_REVIEW, str(forged), "T-1", "main", "fake"
+    store.save_task(t)
+    srv = start_server()
+    runner_sync(srv)
+    # act
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
+    wait_for(lambda: task(store, "T-1").status == Status.IN_REVIEW, what="задача вернулась на ревью")
+    runner_sync(srv)
+    # assert
+    assert run_git(forged, "rev-parse", "HEAD") == head
+    assert run_git(forged, "status", "--porcelain").strip() == "M f.txt"
+    assert not events(store, "task_committed", "T-1")
+    assert any("worktree" in text for text in thread_texts(store, "T-1"))
+
+
+def test_forged_worktree_is_not_rebased(make_project, start_server, calls, git_repo, tmp_path):
+    # arrange
+    store = make_project()
+    a_wt = ensure_worktree(git_repo, "A", "A", "main", [])
+    (a_wt / "a2.txt").write_text("A2\n")
+    forged = ensure_worktree(git_repo, "OTHER", "OTHER", "main", [])
+    (forged / "wip.txt").write_text("чужая работа\n")
+    head = run_git(forged, "rev-parse", "HEAD")
+    a = new_task_from_dict({"key": "A", "title": "A"})
+    a.status, a.worktree, a.branch = Status.IN_REVIEW, str(a_wt), "A"
+    store.save_task(a)
+    b = new_task_from_dict({"key": "B", "title": "B", "deps": ["A"]})
+    b.status, b.session_id, b.worktree, b.branch, b.base_branch, b.harness = (
+        Status.IN_PROGRESS, "s-b", str(forged), "B", "main", "fake")
+    store.save_task(b)
+    srv = start_server()
+    # act
+    srv.board_for("pay").transition("A", Status.APPROVED, "user")
+    wait_events(store, "task_committed", "A")
+    wait_for(lambda: any("worktree" in text for text in thread_texts(store, "B")), what="ошибка на карточке B")
+    runner_sync(srv)
+    # assert
+    assert run_git(forged, "rev-parse", "HEAD") == head
+    assert (forged / "wip.txt").read_text() == "чужая работа\n"
+    assert run_git(forged, "stash", "list").strip() == ""
+    assert not [c for c in calls if c["cwd"] == forged]

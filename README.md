@@ -26,7 +26,7 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 | `state` | снимок проекта целиком |
 | `show <key>` | одна задача |
 | `status <key> <status>` | сменить статус задачи |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--review-json ...] [--report ...] [--branch ...] [--worktree ...] [--session-id ...]` | обновить поля задачи |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--review-json ...] [--report ...]` | обновить поля задачи |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | задать вопрос пользователю |
 | `say <thread> --text T` | написать в тред задачи или в `_project` |
 | `thread <thread>` | прочитать тред |

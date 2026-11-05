@@ -141,10 +141,25 @@ def test_transition_unknown_actor_rejected(board):
 
 def test_update_task_whitelisted_fields(board):
     board.add_task(mk("A"), "user")
-    ev = flat(board.update_task("A", "agent", {"summary": "s", "branch": "b"}))
-    assert ev == [dict(type="task_updated", key="A", fields=["branch", "summary"])]
+    ev = flat(board.update_task("A", "agent", {"summary": "s", "report": "r.md"}))
+    assert ev == [dict(type="task_updated", key="A", fields=["report", "summary"])]
     t = board.snapshot()["tasks"][0]
-    assert t["summary"] == "s" and t["branch"] == "b"
+    assert t["summary"] == "s" and t["report"] == "r.md"
+
+
+@pytest.mark.parametrize("actor", ["agent", "user", "tracker", "project_agent"])
+@pytest.mark.parametrize("field", ["worktree", "branch", "base_branch", "session_id", "agent_state",
+                                   "turn_error", "last_turn_at", "harness", "turn_process"])
+def test_update_task_runner_fields_only_by_system(board, actor, field):
+    # arrange
+    board.add_task(mk("A"), "user")
+    before = board.store.last_seq()
+    # act
+    with pytest.raises(PermissionError):
+        board.update_task("A", actor, {"summary": "s", field: "/tmp/forged"})
+    # assert
+    assert board.store.load_tasks()["A"].summary == ""
+    assert board.store.read_events(before) == []
 
 
 def test_update_task_rejects_unknown_field(board):
@@ -442,7 +457,7 @@ def test_manual_start_with_session_or_by_agent_does_not_wake(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B"), "user")
-    board.update_task("A", "agent", {"session_id": "s1"})
+    board.update_task("A", "system", {"session_id": "s1"})
 
     # act
     ev_session = board.transition("A", Status.IN_PROGRESS, "user")
@@ -541,7 +556,7 @@ def test_reapproving_dep_wakes_dependent_with_session_as_rebase(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
-    board.update_task("B", "agent", {"session_id": "s1"})
+    board.update_task("B", "system", {"session_id": "s1"})
     board.transition("A", Status.APPROVED, "user")
     board.transition("A", Status.IN_PROGRESS, "user")
     # act
@@ -554,7 +569,7 @@ def test_dep_done_wakes_dependent_with_session_as_rebase(board_strict):
     # arrange
     board_strict.add_task(mk("A"), "user")
     board_strict.add_task(mk("B", deps=["A"]), "user")
-    board_strict.update_task("B", "agent", {"session_id": "s1"})
+    board_strict.update_task("B", "system", {"session_id": "s1"})
     # act
     ev = flat(board_strict.transition("A", Status.DONE, "user"))
     # assert
@@ -571,8 +586,8 @@ def test_rebase_not_sent_without_session_or_for_closed_dependent(board):
     board.add_task(mk("B", deps=["A"]), "user")
     board.add_task(mk("C", deps=["A"]), "user")
     board.add_task(mk("D", deps=["A"]), "user")
-    board.update_task("C", "agent", {"session_id": "s1"})
-    board.update_task("D", "agent", {"session_id": "s2"})
+    board.update_task("C", "system", {"session_id": "s1"})
+    board.update_task("D", "system", {"session_id": "s2"})
     board.transition("C", Status.CANCELLED, "user")
     # act
     ev = flat(board.transition("A", Status.APPROVED, "user"))
@@ -585,7 +600,7 @@ def test_rebase_not_sent_for_system_actor(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
-    board.update_task("B", "agent", {"session_id": "s1"})
+    board.update_task("B", "system", {"session_id": "s1"})
     # act
     by_system = flat(board.transition("A", Status.APPROVED, "system"))
     board.transition("A", Status.IN_PROGRESS, "user")
@@ -599,7 +614,7 @@ def test_rebase_sent_for_tracker_actor(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
-    board.update_task("B", "agent", {"session_id": "s1"})
+    board.update_task("B", "system", {"session_id": "s1"})
     # act
     ev = flat(board.transition("A", Status.APPROVED, "tracker"))
     # assert
@@ -611,8 +626,8 @@ def test_rebase_not_sent_to_transitive_dependent(board):
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
     board.add_task(mk("C", deps=["B"]), "user")
-    board.update_task("B", "agent", {"session_id": "s1"})
-    board.update_task("C", "agent", {"session_id": "s2"})
+    board.update_task("B", "system", {"session_id": "s1"})
+    board.update_task("C", "system", {"session_id": "s2"})
     # act
     ev = flat(board.transition("A", Status.APPROVED, "user"))
     # assert
@@ -640,7 +655,7 @@ def test_snapshot_terminal_command_via_hook_only_for_tasks_with_session(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B"), "user")
-    board.update_task("B", "agent", {"session_id": "s1"})
+    board.update_task("B", "system", {"session_id": "s1"})
     assert all(t["terminal_command"] is None for t in board.snapshot()["tasks"])
     board.terminal_command_for = lambda t: "claude --resume %s" % t.session_id
     # act
@@ -653,7 +668,7 @@ def test_snapshot_terminal_command_via_hook_only_for_tasks_with_session(board):
 def test_snapshot_survives_raising_terminal_command_hook(board, capsys):
     # arrange
     board.add_task(mk("A"), "user")
-    board.update_task("A", "agent", {"session_id": "s1"})
+    board.update_task("A", "system", {"session_id": "s1"})
     board.terminal_command_for = lambda t: 1 / 0
     # act
     tasks = board.snapshot()["tasks"]

@@ -154,6 +154,16 @@ def test_agent_approve_is_403(server):
     assert r.status == 403
 
 
+def test_agent_update_of_worktree_is_403(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"worktree": "/tmp/elsewhere"}})
+    # assert
+    assert r.status == 403
+    assert get(server, "/api/p/pay/state").json()["tasks"][0]["worktree"] is None
+
+
 def test_unknown_task_is_404(server):
     r = post(server, "/api/p/pay/tasks/NOPE/transition", {"to": "in_progress", "actor": "agent"})
     assert r.status == 404

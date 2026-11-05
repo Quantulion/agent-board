@@ -123,9 +123,6 @@ UPDATE_OPTIONS = [
     ("changed_files", "changed_files_json", True),
     ("review", "review_json", True),
     ("report", "report", False),
-    ("branch", "branch", False),
-    ("worktree", "worktree", False),
-    ("session_id", "session_id", False),
 ]
 
 

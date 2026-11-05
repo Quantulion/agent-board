@@ -72,6 +72,10 @@ class _PrepareError(Exception):
     pass
 
 
+class _ForeignWorktree(GitError):
+    """worktree в карточке не совпадает с тем, что раннер создаёт для задачи: git там не трогаем."""
+
+
 class _Turn:
     def __init__(self, proc, reasons: List[dict], fresh: bool, session_id: Optional[str]):
         self.proc = proc
@@ -301,13 +305,24 @@ class Runner:
                 self._reset_failures((slug, key))
             self._wake(slug, key, reason)
 
+    def _own_worktree(self, config, task: Task) -> Path:
+        try:
+            repo, _ = self._repo(config, task)
+        except _PrepareError as e:
+            raise _ForeignWorktree("не удалось проверить worktree %s: %s" % (task.worktree, e))
+        expected = worktree_path(repo, task.key)
+        if not task.worktree or Path(task.worktree).resolve() != expected.resolve():
+            raise _ForeignWorktree("worktree %s не совпадает с ожидаемым %s" % (task.worktree, expected))
+        return Path(task.worktree)
+
     def _commit(self, slug: str, key: str) -> None:
         board = self._board(slug)
         task = board.store.load_tasks().get(key)
         if task is None or not task.worktree:
             return
         try:
-            sha = commit_all(Path(task.worktree), "%s %s" % (key, task.title))
+            path = self._own_worktree(board.store.load_config(), task)
+            sha = commit_all(path, "%s %s" % (key, task.title))
         except GitError as e:
             # без коммита зависимые стартовали бы без кода задачи: возвращаем её на ревью до следующих событий
             board.transition_if(key, Status.APPROVED, Status.IN_REVIEW, "system")
@@ -500,7 +515,10 @@ class Runner:
                     lambda: board.update_task(key, "system", {"session_id": session_id}))
 
     def _resume_task(self, k: Key, board: Board, task: Task, tasks, config, deliver: List[dict]) -> None:
-        path = Path(task.worktree)
+        try:
+            path = self._own_worktree(config, task)
+        except _ForeignWorktree as e:
+            raise _PrepareError(str(e))
         reasons = deliver
         rebases = [r for r in deliver if r.get("reason") == "rebase"]
         if rebases:
@@ -522,7 +540,7 @@ class Runner:
             reason.update(base=base, rebase_ok=False, merge_branches=list(merges))
             return reason
         try:
-            ok, files = rebase_carrying_changes(Path(task.worktree), base)
+            ok, files = rebase_carrying_changes(self._own_worktree(config, task), base)
         except GitError:
             ok, files = False, []
         reason.update(base=base, rebase_ok=ok, conflict_files=files)
