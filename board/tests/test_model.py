@@ -40,3 +40,18 @@ def test_config_execution_defaults():
     assert c.harness == {"type": "claude", "permission_mode": "auto"}
     assert c.branch_template == "{key}" and c.global_max_agents == 6
     assert c.project_brief == "" and c.project_session_id is None
+
+
+def test_config_links_keep_only_http_and_plain_paths():
+    # arrange
+    from agent_board.config import ProjectConfig
+    links = [
+        {"title": "a", "href": "https://x.example/a"}, {"title": "b", "href": "/tmp/doc.md"},
+        {"title": "c", "href": "docs/plan.html"}, {"title": "d", "href": "javascript:alert(1)"},
+        {"title": "e", "href": "data:text/html,x"}, {"title": "f", "href": "file:///etc/passwd"},
+        {"title": 1, "href": "https://ok"}, "junk",
+    ]
+    # act
+    config = ProjectConfig.from_dict({"slug": "p", "title": "P", "links": links})
+    # assert
+    assert [l["title"] for l in config.links] == ["a", "b", "c"]

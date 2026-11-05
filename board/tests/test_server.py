@@ -723,7 +723,7 @@ def test_diff_without_worktree_is_empty(ui_server):
     # act
     r = get(ui_server, "/api/p/pay/tasks/T-2/diff")
     # assert
-    assert r.json() == {"files": [], "diff": "", "base": None}
+    assert r.json() == {"files": [], "diff": "", "base": None, "truncated": False}
 
 
 def test_diff_unknown_task_is_404(ui_server):
@@ -739,7 +739,7 @@ def test_diff_ignores_foreign_worktree_path(ui_server, tmp_path):
     # act
     r = get(ui_server, "/api/p/pay/tasks/T-1/diff")
     # assert
-    assert r.json() == {"files": [], "diff": "", "base": None}
+    assert r.json() == {"files": [], "diff": "", "base": None, "truncated": False}
 
 
 def test_diff_truncated_on_line_boundary(ui_server):
@@ -772,7 +772,7 @@ def test_file_html_served_with_sandbox_csp(ui_server):
     # act
     r = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(path)))
     # assert
-    assert r.status == 200 and r.headers["Content-Type"] == "text/html"
+    assert r.status == 200 and r.headers["Content-Type"] == "text/html; charset=utf-8"
     assert r.headers["Content-Security-Policy"] == "sandbox"
     assert r.headers["X-Content-Type-Options"] == "nosniff"
 
@@ -835,3 +835,66 @@ def test_state_exposes_links_and_rule_violations(server):
     # assert
     assert state["config"]["links"] == []
     assert state["tasks"][0]["rule_violations"] == value
+
+
+# --- fix round 1 ---
+
+def test_file_does_not_trust_self_declared_worktree(ui_server, tmp_path):
+    # arrange
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "key.txt").write_text("private")
+    store = ProjectStore("pay")
+    t = store.load_tasks()["T-2"]
+    t.worktree = str(outside)
+    store.save_task(t)
+    # act
+    r = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(outside / "key.txt")))
+    # assert
+    assert r.status == 403
+
+
+def test_file_denies_git_dir_and_logs(ui_server):
+    # arrange
+    store = ProjectStore("pay")
+    (store.root / "logs").mkdir()
+    (store.root / "logs" / "T-1.jsonl").write_text("{}")
+    # act
+    git_config = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.repo / ".git" / "config")))
+    wt_git = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.worktree / ".git")))
+    logs = get(ui_server, "/api/p/pay/file?path=logs/T-1.jsonl")
+    # assert
+    assert git_config.status == wt_git.status == logs.status == 403
+
+
+def test_file_html_content_type_has_charset(ui_server):
+    # arrange
+    (ui_server.worktree / "p.html").write_text("<p>привет</p>", encoding="utf-8")
+    # act
+    r = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.worktree / "p.html")))
+    # assert
+    assert r.headers["Content-Type"] == "text/html; charset=utf-8"
+
+
+def test_diff_without_newlines_is_cut_by_bytes_not_emptied(ui_server):
+    # arrange
+    (ui_server.worktree / "one.txt").write_text("я" * (server_mod.MAX_DIFF_BYTES))
+    # act
+    body = get(ui_server, "/api/p/pay/tasks/T-1/diff").json()
+    # assert
+    assert body["truncated"] is True and body["diff"] != ""
+    assert len(body["diff"].encode()) <= server_mod.MAX_DIFF_BYTES
+
+
+def test_empty_diff_reports_truncated_false(ui_server):
+    assert get(ui_server, "/api/p/pay/tasks/T-2/diff").json() == {"files": [], "diff": "", "base": None, "truncated": False}
+
+
+def test_diff_cut_by_bytes_when_no_line_break_fits(ui_server, monkeypatch):
+    # arrange
+    (ui_server.worktree / "one.txt").write_text("x\n")
+    monkeypatch.setattr(server_mod, "MAX_DIFF_BYTES", 10)
+    # act
+    body = get(ui_server, "/api/p/pay/tasks/T-1/diff").json()
+    # assert
+    assert body["truncated"] is True and body["diff"] == "diff --git"

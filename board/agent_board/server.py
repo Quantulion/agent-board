@@ -347,7 +347,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _task_diff(self, board: Board, key: str) -> dict:
         """Изменения задачи относительно её базовой ветки; git запускается только в собственном worktree задачи."""
-        empty = {"base": None, "files": [], "diff": ""}
+        empty = {"base": None, "files": [], "diff": "", "truncated": False}
         task = board.store.load_tasks().get(key)
         if task is None:
             raise KeyError("Неизвестная задача: %s" % key)
@@ -368,8 +368,8 @@ class _Handler(BaseHTTPRequestHandler):
         truncated = len(raw) > MAX_DIFF_BYTES
         if truncated:
             raw = raw[:MAX_DIFF_BYTES]
-            # режем по границе строки, чтобы не оставить обрывок
-            raw = raw[:raw.rfind(b"\n") + 1]
+            # режем по границе строки, чтобы не оставить обрывок; если перевода строки нет — по байтам
+            raw = raw[:raw.rfind(b"\n") + 1] or raw
             text = raw.decode("utf-8", "ignore")
         return {"base": task.base_branch, "files": files, "diff": text, "truncated": truncated}
 
@@ -383,16 +383,20 @@ class _Handler(BaseHTTPRequestHandler):
         config = board.store.load_config()
         allowed = [root]
         allowed += [Path(r["path"]).resolve() for r in config.repos if isinstance(r, dict) and r.get("path")]
-        allowed += [Path(t.worktree).resolve() for t in board.store.load_tasks().values() if t.worktree]
-        if not any(target == base or base in target.parents for base in allowed):
+        base = next((b for b in allowed if target == b or b in target.parents), None)
+        if base is None:
             raise PermissionError("Путь вне каталогов проекта")
+        rel = target.relative_to(base).parts
+        # внутренности git и логи агентов не отдаются
+        if ".git" in rel or (base == root and rel[:1] == ("logs",)):
+            raise PermissionError("Путь недоступен")
         if not target.is_file():
             raise KeyError("Файл не найден")
         if target.stat().st_size > MAX_FILE_BYTES:
             return self._send_json(413, {"error": "Файл больше %d МБ" % (MAX_FILE_BYTES // (1024 * 1024))})
         body = target.read_bytes()
         if target.suffix.lower() in (".html", ".htm"):
-            return self._send_bytes(200, body, "text/html", [
+            return self._send_bytes(200, body, "text/html; charset=utf-8", [
                 ("Content-Security-Policy", "sandbox"), ("X-Content-Type-Options", "nosniff")])
         self._send_bytes(200, body, "text/plain; charset=utf-8", [("X-Content-Type-Options", "nosniff")])
 

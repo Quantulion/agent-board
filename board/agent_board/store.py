@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from .config import ProjectConfig
+from .config import ProjectConfig, clean_links
 from .model import Event, Message, Proposal, Task
 
 PROJECT_THREAD = "_project"
@@ -102,6 +102,7 @@ class ProjectStore:
         return ProjectConfig.from_dict(self._read_json("project.json"))
 
     def save_config(self, c: ProjectConfig) -> None:
+        c.links = clean_links(c.links)
         atomic_write_json(self.root / "project.json", c.to_dict())
 
     def load_tasks(self) -> Dict[str, Task]:

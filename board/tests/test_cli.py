@@ -361,3 +361,13 @@ def test_stage_changed_by_user_but_not_by_agent(srv, capsys, monkeypatch):
     assert code == 1 and err.strip()
     monkeypatch.delenv("AGENT_BOARD_ACTOR")
     assert run_json(capsys, "state")["config"]["stage"] == "work"
+
+
+def test_update_rule_violations_json_by_project_agent(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    # act
+    run_json(capsys, "update", "T-1", "--rule-violations-json", '[{"rule": "r", "text": "t"}]')
+    # assert
+    assert run_json(capsys, "show", "T-1")["rule_violations"] == [{"rule": "r", "text": "t"}]

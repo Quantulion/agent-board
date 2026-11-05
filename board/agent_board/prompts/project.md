@@ -29,5 +29,8 @@ You cannot add tasks, change dependencies or cancel tasks directly. Propose, and
 - `$board_cli propose cancel_task --json '{"key": "<KEY>"}' --reason "<why>"`
 Give a reason a newcomer understands. If a proposal is rejected you are woken: do not repeat it, adapt.
 
+## Rule violations
+Record a task agent's breach of the project rules with `$board_cli update <KEY> --rule-violations-json '[{"rule": "...", "text": "..."}]'` (the full list replaces the previous one).
+
 ## Project rules
 $agent_rules

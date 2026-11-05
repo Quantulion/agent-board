@@ -255,3 +255,10 @@ def test_wake_message_rebase_with_several_dependency_branches_asks_to_merge():
     # assert
     assert "PAY-3, PAY-4" in text and "merge" in text and "Do not run any git" in text
     assert "could not move" not in text
+
+
+def test_project_prompt_explains_recording_rule_violations():
+    # act
+    text = project_prompt(_config(), {"tasks": [], "proposals": []}, CLI)
+    # assert
+    assert "update <KEY> --rule-violations-json" in text
