@@ -7,9 +7,12 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
-import { createEnv, out, sleep, script, until, withTimeout } from './lib.mjs';
+import { cleanupAll, createEnv, out, sleep, script, until, withTimeout } from './lib.mjs';
 
 const VIEW = { width: 1440, height: 900 };
+// пороги нагрузочной проверки (мс); значения по умолчанию — из плана
+const LONGTASK_LIMIT_MS = Number(process.env.SMOKE_LONGTASK_MS || 200);
+const SEND_LIMIT_MS = Number(process.env.SMOKE_SEND_LIMIT_MS || 7000);
 const checks = [];
 const check = (name, ok, detail) => {
   checks.push({ name, ok: Boolean(ok), detail });
@@ -35,6 +38,8 @@ async function drop(page, key, st) {
   }, key, st);
 }
 const columnOf = (page, key) => page.$eval(`.card[data-key="${key}"]`, el => el.closest('.col').dataset.st);
+// true, если условие в странице выполнилось в срок
+const waits = (page, fn, ms) => page.waitForFunction(fn, { timeout: ms }).then(() => true, () => false);
 const shot = async (page, name) => {
   const file = path.join(out, `smoke-${name}.png`);
   await page.screenshot({ path: file });
@@ -63,10 +68,10 @@ async function main(browser) {
     { cli: ['say', 'PAY-1', '--text', XSS_TEXT] },
     { cli: ['ask', 'PAY-1', '--text', QUESTION, '--option', 'Пропускать', '--option', 'Складывать в outbox', '--recommended', 'Складывать в outbox'] },
   ];
-  await env.start();
   const errors = [];
   let page;
   try {
+    await env.start();
     env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-1', title: 'Теневая запись платежей в PostgreSQL', repo: 'payments-api', estimate: 2, description: 'Дублировать запись в PG.\n\n' + script(steps) }));
     env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-2', title: 'Переключить чтение на PG', repo: 'payments-api', estimate: 1, deps: ['PAY-1'] }));
     env.cli('stage', 'tracker');
@@ -111,8 +116,8 @@ async function main(browser) {
     await page.waitForFunction(() => !document.querySelector('.drawer .question'), { timeout: 15000 });
     await until(async () => (await env.task('PAY-1')).open_questions === 0, 15000, 'вопрос закрыт');
     await page.click('.tabs [data-tab="thread"]');
-    await page.waitForFunction(() => [...document.querySelectorAll('.drawer .thread .msg')].some(m => m.textContent.includes('Продолжаю по вашему ответу')), { timeout: 30000 });
-    check('ответ закрыл вопрос, агент продолжил', true);
+    const continued = await waits(page, () => [...document.querySelectorAll('.drawer .thread .msg')].some(m => m.textContent.includes('Продолжаю по вашему ответу')), 30000);
+    check('ответ закрыл вопрос, агент продолжил', continued && (await env.task('PAY-1')).open_questions === 0);
     check('вопрос ушёл из «Ждут вас»', await page.evaluate(() => !document.querySelector('.attn .it.q')));
     await shot(page, 'card');
 
@@ -123,8 +128,7 @@ async function main(browser) {
     await page.keyboard.down('Control');
     await page.keyboard.press('Enter');
     await page.keyboard.up('Control');
-    await page.waitForFunction(() => [...document.querySelectorAll('.drawer .thread .msg.user')].some(m => m.textContent.includes('Спасибо, проверь функтесты')), { timeout: 10000 });
-    check('сообщение пользователя появилось в треде', true);
+    check('сообщение пользователя появилось в треде и поле очищено', await waits(page, () => [...document.querySelectorAll('.drawer .thread .msg.user')].some(m => m.textContent.includes('Спасибо, проверь функтесты')) && document.querySelector('.drawer .composer textarea').value === '', 10000));
     for (const tab of ['changes', 'overview', 'thread']) await page.click(`.tabs [data-tab="${tab}"]`);
     check('вкладки не пересоздают панель', await page.evaluate(() => window.__drawer === document.querySelector('.drawer') && window.__drawer.isConnected && window.__body === document.querySelector('.drawer .dbody')));
 
@@ -187,9 +191,9 @@ async function main(browser) {
     await page.click('[data-view="graph"]');
     await page.waitForFunction(() => document.querySelectorAll('.graph-wrap g.node').length === 2, { timeout: 10000 });
     await shot(page, 'graph');
-    await page.click('[data-view="board"]').catch(() => {});
+    await page.click('[data-view="board"]');
     await page.goto(env.url + '#/p/pay/decomposition', { waitUntil: 'domcontentloaded' });
-    await sleep(800);
+    await page.waitForFunction(() => document.querySelectorAll('.decomp .task').length === 2 && document.querySelectorAll('.decomp g.node').length === 2, { timeout: 10000 });
     await shot(page, 'decomposition');
     await page.goto(env.url + '#/p/pay', { waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => document.querySelectorAll('.card[data-key]').length === 2, { timeout: 10000 });
@@ -199,17 +203,16 @@ async function main(browser) {
     await env.stop();
     const down = await page.waitForFunction(() => {
       const t = document.querySelector('.sync')?.textContent || '';
-      return /Переподключение|Ошибка загрузки/.test(t) ? t : false;
+      return t !== 'В сети' ? t : false;
     }, { timeout: 20000 }).then(h => h.jsonValue()).catch(() => null);
-    check('индикатор вышел из «В сети» при остановке сервера', down, down);
+    check('индикатор показывает «Переподключение…» при остановке сервера', down === 'Переподключение…', down);
     // вкладка «офлайн» на время запуска сервера: изменение случается, пока она отключена
     await page.setOfflineMode(true);
     await env.start();
     env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-3', title: 'Добавлена, пока вкладка была отключена', repo: 'payments-api' }));
     check('пока вкладка отключена, новой карточки нет', await page.evaluate(() => !document.querySelector('.card[data-key="PAY-3"]')));
     await page.setOfflineMode(false);
-    await page.waitForFunction(() => /В сети/.test(document.querySelector('.sync')?.textContent || ''), { timeout: 40000 });
-    check('индикатор вернулся в «В сети»', true);
+    check('индикатор вернулся в «В сети»', await waits(page, () => /^В сети$/.test(document.querySelector('.sync')?.textContent || ''), 40000));
     await page.waitForFunction(() => document.querySelector('.card[data-key="PAY-3"]'), { timeout: 15000 });
     check('пропущенная задача появилась без перезагрузки', await page.evaluate(() => window.__noReload === 1));
     env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-4', title: 'Живое обновление после переподключения', repo: 'payments-api' }));
@@ -224,10 +227,10 @@ async function main(browser) {
 // ---------- сценарий 2: нагрузка ----------
 async function load(browser) {
   const env = createEnv({ prefix: 'ab-load-', slug: 'load', title: 'Нагрузка', config: { max_agents: 1 } });
-  await env.start({ runner: false });
   const errors = [];
   let page;
   try {
+    await env.start({ runner: false });
     for (let i = 1; i <= 60; i++) env.cli('add-task', '--json', JSON.stringify({ key: 'L-' + i, title: 'Задача нагрузочного прогона ' + i, estimate: 1 + (i % 3) }));
     page = await browser.newPage();
     attach(page, errors);
@@ -261,9 +264,9 @@ async function load(browser) {
     await page.waitForFunction(() => document.querySelector('.card[data-key="L-20"]')?.textContent.includes('ФИНАЛ'), { timeout: 15000 });
     const stat = await page.evaluate(() => ({ unsupported: Boolean(window.__longUnsupported), long: window.__long.slice(), cards: document.querySelectorAll('.card[data-key]').length }));
     const worst = Math.max(0, ...stat.long);
-    check('нагрузка: 200 событий за 5 с доставлены', sent === 200 && elapsed < 7000, { sent, elapsed });
+    check('нагрузка: 200 событий за 5 с доставлены', sent === 200 && elapsed < SEND_LIMIT_MS, { sent, elapsed });
     check('нагрузка: все 60 карточек на месте', stat.cards === 60, stat);
-    check('нагрузка: нет долгих задач > 200 мс', !stat.unsupported && worst <= 200, { worst, count: stat.long.length, unsupported: stat.unsupported });
+    check('нагрузка: нет долгих задач > ' + LONGTASK_LIMIT_MS + ' мс', !stat.unsupported && worst <= LONGTASK_LIMIT_MS, { worst, count: stat.long.length, unsupported: stat.unsupported });
     check('нет ошибок страницы (сценарий 2)', errors.length === 0, errors);
   } finally {
     if (page) await page.close();
@@ -273,6 +276,13 @@ async function load(browser) {
 
 fs.mkdirSync(out, { recursive: true });
 let browser;
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  process.on(sig, async () => {
+    await Promise.race([browser ? browser.close().catch(() => {}) : null, sleep(3000)]);
+    await cleanupAll();
+    process.exit(130);
+  });
+}
 let crashed = null;
 try {
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
@@ -282,7 +292,8 @@ try {
   crashed = e;
   console.error('FAIL сценарий прерван: ' + (e && e.stack || e));
 } finally {
-  if (browser) await browser.close();
+  if (browser) await browser.close().catch(() => {});
+  await cleanupAll();
 }
 const failed = checks.filter(c => !c.ok);
 console.log(JSON.stringify({ passed: checks.length - failed.length, failed: failed.length, shots }, null, 2));

@@ -10,6 +10,13 @@ export const repo = path.resolve(here, '..');
 export const out = path.join(here, 'out');
 const python = path.join(repo, '.venv', 'bin', 'python');
 
+const envs = [];
+
+/** Останавливает все серверы и удаляет временные каталоги всех созданных окружений. */
+export async function cleanupAll() {
+  await Promise.all(envs.splice(0).map(e => e.cleanup().catch(() => {})));
+}
+
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 export const script = steps => 'FAKE-SCRIPT: ' + JSON.stringify(steps);
 
@@ -46,13 +53,13 @@ export function createEnv({ prefix, slug, title, config = {} }) {
     if (!runner) args.push('--no-runner');
     const proc = spawn(python, args, { env, cwd: repo });
     proc.stderr.on('data', d => process.stderr.write(d));
+    self.proc = proc;
+    self.port = port;
     self.url = await withTimeout(new Promise((resolve, reject) => {
       let buf = '';
       proc.stdout.on('data', d => { buf += d; const m = buf.match(/http:\/\/\S+/); if (m) resolve(m[0]); });
       proc.on('exit', code => reject(new Error('сервер завершился: ' + code)));
     }), 15000, 'старт сервера');
-    self.proc = proc;
-    self.port = port;
     self.origin = new URL(self.url).origin;
     self.token = new URL(self.url).searchParams.get('token');
     return self;
@@ -82,5 +89,6 @@ export function createEnv({ prefix, slug, title, config = {} }) {
     await self.stop();
     fs.rmSync(home, { recursive: true, force: true });
   };
+  envs.push(self);
   return self;
 }

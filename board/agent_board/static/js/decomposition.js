@@ -1,6 +1,6 @@
 // Согласование разбивки: задачи с нарушениями правил и комментариями, граф по шагам, общий тред с агентом проекта
 // и утверждение, которое переводит проект на следующую стадию. После утверждения страница только для чтения.
-import { paintStepper } from './board.js';
+import { connectionIndicator, paintStepper } from './board.js';
 import { h, icon, patchList, safeMarkdown } from './dom.js';
 import { criticalPath, layoutGraph, laneLabels, mountGraph } from './graph.js';
 import { T } from './i18n.js';
@@ -409,12 +409,12 @@ export function mountDecomposition(root, store, ctx) {
   // --- отрисовка ---
 
   function paintConnection(state) {
-    const failed = Boolean(state.error);
-    syncText.textContent = failed ? T.syncError : T.connection[state.connection] || state.connection;
-    sync.classList.toggle('err', failed);
-    sync.classList.toggle('busy', !failed && state.connection !== 'live');
-    banner.hidden = !failed;
-    banner.replaceChildren(...(failed ? [ctx.errorNotice(state.error)] : []));
+    const ind = connectionIndicator(state);
+    syncText.textContent = ind.text;
+    sync.classList.toggle('err', ind.failed);
+    sync.classList.toggle('busy', ind.busy);
+    banner.hidden = !ind.failed;
+    banner.replaceChildren(...(ind.failed ? [ctx.errorNotice(state.error)] : []));
   }
 
   let painted = false;

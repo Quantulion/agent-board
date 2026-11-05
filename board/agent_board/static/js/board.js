@@ -6,6 +6,17 @@ import { openNewTaskDialog } from './newtask.js';
 import { openModal, toast } from './ui.js';
 import { mountProjectPanel, proposalsTouching } from './project.js';
 
+// Индикатор соединения: пока поток отключён, он важнее ошибки перечитывания снимка.
+export function connectionIndicator(state) {
+  const reconnecting = state.connection === 'reconnecting';
+  const failed = Boolean(state.error) && !reconnecting;
+  return {
+    failed,
+    busy: !failed && state.connection !== 'live',
+    text: failed ? T.syncError : T.connection[state.connection] || state.connection,
+  };
+}
+
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
 const DEFAULT_BASE = 'main';
@@ -720,12 +731,12 @@ export function mountBoard(root, store, ctx) {
   }
 
   function paintConnection(state) {
-    const failed = Boolean(state.error);
-    syncText.textContent = failed ? T.syncError : T.connection[state.connection] || state.connection;
-    sync.classList.toggle('err', failed);
-    sync.classList.toggle('busy', !failed && state.connection !== 'live');
-    banner.hidden = !failed;
-    banner.replaceChildren(...(failed ? [ctx.errorNotice(state.error)] : []));
+    const ind = connectionIndicator(state);
+    syncText.textContent = ind.text;
+    sync.classList.toggle('err', ind.failed);
+    sync.classList.toggle('busy', ind.busy);
+    banner.hidden = !ind.failed;
+    banner.replaceChildren(...(ind.failed ? [ctx.errorNotice(state.error)] : []));
   }
 
   function paint(state, changes) {

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, columnsOf, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { cardModel, columnsOf, connectionIndicator, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -195,4 +195,19 @@ test('stepperModel: пройденные стадии, текущая и про�
   assert.equal(states('done', 'none'), 'decomposition:done tracker:skipped work:done done:done');
   assert.equal(states('work', undefined), 'decomposition:done tracker:skipped work:cur done:todo', 'без трекера в конфиге — тоже пропуск');
   assert.equal(states('tracker', 'none'), 'decomposition:done tracker:cur work:todo done:todo', 'текущая стадия не пропущена');
+});
+
+test('connectionIndicator: при отключённом потоке «Переподключение…» важнее ошибки снимка', () => {
+  const down = connectionIndicator({ connection: 'reconnecting', error: new Error('нет связи') });
+  assert.equal(down.text, 'Переподключение…');
+  assert.equal(down.failed, false);
+  assert.equal(down.busy, true);
+});
+
+test('connectionIndicator: ошибка снимка при живом потоке и обычные состояния', () => {
+  assert.deepEqual(connectionIndicator({ connection: 'live', error: null }), { failed: false, busy: false, text: 'В сети' });
+  const err = connectionIndicator({ connection: 'live', error: new Error('x') });
+  assert.equal(err.text, 'Ошибка загрузки');
+  assert.equal(err.failed, true);
+  assert.equal(connectionIndicator({ connection: 'offline', error: new Error('x') }).failed, true);
 });
