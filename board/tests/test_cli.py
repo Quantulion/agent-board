@@ -133,7 +133,7 @@ def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
 
     # assert
     wakes = [e["data"] for e in out["events"] if e["type"] == "agent_wake"]
-    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1"}]
+    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1", "by": "agent"}]
 
 
 def test_say_without_task_env_does_not_escalate(srv, capsys, monkeypatch):

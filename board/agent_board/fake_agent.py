@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -39,6 +40,12 @@ def run(session_id: str, text: str) -> int:
         if "cli" in step or "lock-run" in step:
             argv = step["cli"] if "cli" in step else ["lock-run"] + step["lock-run"]
             error = _run_cli(list(argv))
+            if error:
+                return _fail(session_id, error)
+        elif "pingpong" in step:
+            # переписка агентов: агент задачи пишет агенту проекта, тот — обратно в задачу, тем же сценарием
+            peer = step["pingpong"] if os.environ.get("AGENT_BOARD_ACTOR") == "project_agent" else "_project"
+            error = _run_cli(["say", peer, "--text", MARKER + " " + json.dumps(steps, ensure_ascii=False)])
             if error:
                 return _fail(session_id, error)
         elif "write" in step:

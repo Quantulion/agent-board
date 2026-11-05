@@ -386,7 +386,7 @@ def test_message_with_from_task_escalates_to_project_agent(server):
     # assert
     assert r.status == 200
     wakes = [e["data"] for e in r.json()["events"] if e["type"] == "agent_wake"]
-    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1"}]
+    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1", "by": "agent"}]
 
 
 def test_message_with_non_string_from_task_is_400(server):

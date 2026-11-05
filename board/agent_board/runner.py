@@ -55,6 +55,10 @@ PROJECT_SYSTEM_PROMPT = (
     "Ты агент проекта доски agent-board. Не пиши код и не меняй репозитории. "
     "Читай доску и общайся командой agent-board."
 )
+# сколько подряд пробуждений одного агента могут вызвать другие агенты без участия пользователя
+MAX_AGENT_WAKES = 5
+AGENT_AUTHORS = ("agent", "project_agent")
+AGENTS_LOOP_TEXT = "Агенты переписываются без участия пользователя — остановлено; ответьте в треде, чтобы продолжить"
 # причины, которые не добавляют ничего к стартовому промпту задачи
 _START_ONLY = {"ready", "unblocked", "manual", "interrupted", "rebase"}
 
@@ -120,6 +124,8 @@ class Runner:
         self._waiting: Deque[Key] = deque()
         self._failures: Dict[Key, int] = {}
         self._backoff: Dict[Key, object] = {}
+        self._agent_wakes: Dict[Key, int] = {}
+        self._parked: set = set()
 
     # --- жизненный цикл ---
 
@@ -314,6 +320,7 @@ class Runner:
             k = (slug, str(d.get("key")))
             if d.get("actor") == "user":
                 self._reset_failures(k)
+                self._unpark(k)
                 if d.get("to") == Status.APPROVED.value:
                     # коммитится только законченная работа: идущий ход останавливаем до коммита
                     self._interrupt_turn(k)
@@ -328,7 +335,33 @@ class Runner:
             key = str(d.get("key"))
             if reason.get("reason") == "answer" or (reason.get("reason") == "message" and reason.get("author") == "user"):
                 self._reset_failures((slug, key))
+            if self._park_agent_loop((slug, key), reason):
+                return
             self._wake(slug, key, reason)
+
+    @staticmethod
+    def _by_agent(reason: dict) -> bool:
+        return reason.get("reason") in ("message", "escalation") and reason.get("by") in AGENT_AUTHORS
+
+    def _unpark(self, k: Key) -> None:
+        self._agent_wakes.pop(k, None)
+        self._parked.discard(k)
+
+    def _park_agent_loop(self, k: Key, reason: dict) -> bool:
+        """Защита от переписки агентов по кругу: True — пробуждение отложено до действия пользователя."""
+        if not self._by_agent(reason):
+            self._unpark(k)
+            return False
+        # несколько сообщений до начала хода дают один ход и считаются одним пробуждением
+        if not any(self._by_agent(r) for r in self._pending.get(k, [])):
+            self._agent_wakes[k] = self._agent_wakes.get(k, 0) + 1
+        if self._agent_wakes.get(k, 0) <= MAX_AGENT_WAKES and k not in self._parked:
+            return False
+        self._pending.setdefault(k, []).append(reason)
+        if k not in self._parked:
+            self._parked.add(k)
+            self._board(k[0]).post_message(k[1], "system", AGENTS_LOOP_TEXT)
+        return True
 
     def _own_worktree(self, config, task: Task) -> Path:
         try:
@@ -393,7 +426,7 @@ class Runner:
     # --- очередь, лимиты, повторы ---
 
     def _schedule(self, k: Key) -> None:
-        if self._failures.get(k, 0) >= MAX_FAILURES:
+        if self._failures.get(k, 0) >= MAX_FAILURES or k in self._parked:
             return
         if self._has_capacity(k):
             self._run(k)
@@ -413,7 +446,10 @@ class Runner:
 
     def _drain(self) -> None:
         for k in list(self._waiting):
-            if k in self._waiting and self._has_capacity(k):
+            if k in self._parked:
+                self._waiting.remove(k)
+                self._set_state(k, "idle")
+            elif k in self._waiting and self._has_capacity(k):
                 self._waiting.remove(k)
                 self._run(k)
 

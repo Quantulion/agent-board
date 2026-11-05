@@ -218,11 +218,11 @@ def test_user_message_wakes_task_agent_and_project_message_wakes_project_agent(b
     board.add_task(mk("A"), "user")
     ev = flat(board.post_message("A", "user", "привет"))
     assert ev[0]["type"] == "message_posted" and ev[0]["thread"] == "A"
-    assert wake("A", "message", message_id=ev[0]["message_id"]) in ev
+    assert wake("A", "message", message_id=ev[0]["message_id"], by="user") in ev
     ev = flat(board.post_message("_project", "user", "план?"))
-    assert wake("_project", "message", message_id=ev[0]["message_id"]) in ev
+    assert wake("_project", "message", message_id=ev[0]["message_id"], by="user") in ev
     ev = flat(board.post_message("A", "project_agent", "совет"))
-    assert wake("A", "message", message_id=ev[0]["message_id"]) in ev
+    assert wake("A", "message", message_id=ev[0]["message_id"], by="project_agent") in ev
     ev = flat(board.post_message("A", "agent", "готово"))
     assert not [e for e in ev if e["type"] == "agent_wake"]
 
@@ -353,7 +353,7 @@ def test_agent_message_to_project_with_from_task_wakes_project_agent(board):
 
     # assert
     assert ev[0]["type"] == "message_posted"
-    assert wake("_project", "escalation", **{"from": "A"}) in ev
+    assert wake("_project", "escalation", by="agent", **{"from": "A"}) in ev
 
 
 def test_agent_message_to_project_without_from_task_does_not_wake(board):
@@ -389,7 +389,7 @@ def test_user_message_wake_carries_message_id(board):
     ev = flat(board.post_message("A", "user", "привет"))
 
     # assert
-    assert ev[1] == wake("A", "message", message_id=ev[0]["message_id"])
+    assert ev[1] == wake("A", "message", message_id=ev[0]["message_id"], by="user")
 
 
 def test_answer_stores_time_and_emits_message_posted(board):

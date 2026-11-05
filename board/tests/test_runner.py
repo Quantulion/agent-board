@@ -825,3 +825,30 @@ def test_forged_worktree_is_not_rebased(make_project, start_server, calls, git_r
     assert (forged / "wip.txt").read_text() == "чужая работа\n"
     assert run_git(forged, "stash", "list").strip() == ""
     assert not [c for c in calls if c["cwd"] == forged]
+
+
+# --- переписка агентов без пользователя (P18) ---
+
+def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    project_turns = lambda: len(events(store, "turn_started", "_project"))
+    # act
+    add(srv, "T-1", script({"pingpong": "T-1"}))
+    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    runner_sync(srv)
+    wait_for(lambda: not srv.runner._turns, what="ходы закончились")
+    runner_sync(srv)
+    parked_turns = project_turns()
+    # assert
+    assert parked_turns == runner_mod.MAX_AGENT_WAKES
+    assert len(events(store, "turn_started", "T-1")) == runner_mod.MAX_AGENT_WAKES + 1
+    assert thread_texts(store, "_project").count(runner_mod.AGENTS_LOOP_TEXT) == 1
+    # act: пользователь отвечает в треде — агент проекта снова работает
+    srv.board_for("pay").post_message("_project", "user", "продолжайте")
+    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: not srv.runner._turns, what="ходы закончились")
+    # assert
+    assert project_turns() == parked_turns + 1
+    assert "продолжайте" in [c for c in calls if c["env"]["AGENT_BOARD_ACTOR"] == "project_agent"][-1]["text"]

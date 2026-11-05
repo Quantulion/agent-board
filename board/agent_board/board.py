@@ -59,9 +59,9 @@ WAKE_REASONS: Dict[str, str] = {
     "unblocked": "закрылись зависимости или снят внешний блокер",
     "returned": "from — пользователь вернул задачу в работу с этого статуса",
     "answer": "пользователь ответил на вопрос агента",
-    "message": "message_id — новое сообщение для агента",
+    "message": "message_id, by (автор: user или project_agent) — новое сообщение для агента",
     "proposal_rejected": "агенту проекта отклонили предложение",
-    "escalation": "from — агент задачи написал в тред проекта",
+    "escalation": "from, by (agent) — агент задачи написал в тред проекта",
     "manual": "пользователь сам запустил задачу без сессии агента",
     "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
     "interrupted": "ход агента был прерван, нужно продолжить",
@@ -337,9 +337,11 @@ class Board:
             events = [self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})]
             wakes_agent = author == "user" or (author == "project_agent" and task is not None)
             if wakes_agent:
-                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": msg.id}))
+                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": msg.id,
+                                                        "by": author}))
             elif author == "agent" and from_task:
-                events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task}))
+                events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task,
+                                                        "by": author}))
             return events
 
     def mark_read(self, thread: str) -> List[Event]:
