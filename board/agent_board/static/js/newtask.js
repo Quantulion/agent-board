@@ -82,6 +82,27 @@ export function blocksUpdates(tasks, picked, newKey) {
     .map(t => ({ key: t.key, deps: [...(t.deps || []), newKey] }));
 }
 
+// Добавляет новую задачу в зависимости выбранных. Зависимости берутся из свежего снимка с сервера, а не из окна:
+// пока оно было открыто, их могли поменять. Возвращает задачи, которые обновить не удалось, с текстом ошибки.
+export async function applyBlocks(client, newKey, picked) {
+  let tasks;
+  try {
+    tasks = ((await client.get('/state')) || {}).tasks || [];
+  } catch (e) {
+    const error = (e && e.message) || String(e);
+    return [...new Set(picked)].sort(KEYS.compare).map(key => ({ key, error }));
+  }
+  const failed = [];
+  for (const u of blocksUpdates(tasks, picked, newKey)) {
+    try {
+      await client.post('/tasks/' + encodeURIComponent(u.key) + '/deps', { deps: u.deps, actor: 'user' });
+    } catch (e) {
+      failed.push({ key: u.key, error: (e && e.message) || String(e) });
+    }
+  }
+  return failed;
+}
+
 // Под каким полем показать ошибку сервера; null — общая ошибка формы.
 export function errorField(message) {
   const m = String(message || '');
@@ -258,9 +279,10 @@ export function openNewTaskDialog(ctx) {
         close();
         toast(T.nt.created(key));
         // задача уже создана: ошибка одной связи не откатывает её и не мешает остальным
-        for (const u of blocksUpdates(tasks, form.blocks, key)) {
-          ctx.client.post('/tasks/' + encodeURIComponent(u.key) + '/deps', { deps: u.deps, actor: 'user' })
-            .catch(e => toast(T.nt.blockFailed(u.key, key, (e && e.message) || String(e)), { error: true }));
+        if (form.blocks.length) {
+          applyBlocks(ctx.client, key, form.blocks).then(failed => {
+            for (const f of failed) toast(T.nt.blockFailed(f.key, key, f.error), { error: true });
+          });
         }
         // карточка открывается, когда задача появится в снимке: иначе она сочла бы задачу несуществующей;
         // если пользователь уже ушёл на другой адрес, его не уводим

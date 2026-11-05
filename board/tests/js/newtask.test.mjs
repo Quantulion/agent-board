@@ -75,3 +75,35 @@ test('validateNewTask: одна задача не может быть и зав�
   // assert
   assert.deepEqual(errors, { blocks: 'B и зависимость, и блокируется новой задачей — получится цикл' });
 });
+
+test('applyBlocks: зависимости берутся из свежего снимка, ошибка одной задачи не мешает остальным', async () => {
+  // arrange: пока окно было открыто, у B появилась зависимость Y
+  const { applyBlocks } = await import('../../agent_board/static/js/newtask.js');
+  const posted = [];
+  const client = {
+    get: async path => (path === '/state' ? { tasks: [{ key: 'A', deps: ['X'] }, { key: 'B', deps: ['Y'] }, { key: 'C', deps: [] }] } : null),
+    post: async (path, body) => {
+      posted.push([path, body]);
+      if (path === '/tasks/A/deps') throw new Error('цикл');
+    },
+  };
+  // act
+  const failed = await applyBlocks(client, 'N', ['A', 'B', 'C']);
+  // assert
+  assert.deepEqual(posted, [
+    ['/tasks/A/deps', { deps: ['X', 'N'], actor: 'user' }],
+    ['/tasks/B/deps', { deps: ['Y', 'N'], actor: 'user' }],
+    ['/tasks/C/deps', { deps: ['N'], actor: 'user' }],
+  ]);
+  assert.deepEqual(failed, [{ key: 'A', error: 'цикл' }]);
+});
+
+test('applyBlocks: снимок не прочитался — ошибка у каждой выбранной задачи', async () => {
+  // arrange
+  const { applyBlocks } = await import('../../agent_board/static/js/newtask.js');
+  const client = { get: async () => { throw new Error('нет связи'); }, post: async () => assert.fail('не должно отправляться') };
+  // act
+  const failed = await applyBlocks(client, 'N', ['B', 'A']);
+  // assert
+  assert.deepEqual(failed, [{ key: 'A', error: 'нет связи' }, { key: 'B', error: 'нет связи' }]);
+});

@@ -112,6 +112,9 @@ button { font: inherit; color: inherit; }
 .stepper .st.done i { background: var(--s-done); border-color: var(--s-done); color: #fff; }
 .stepper .st.cur { background: var(--surface); color: var(--fg); font-weight: 600; box-shadow: var(--shadow-1); border: 1px solid var(--line); }
 .stepper .st.cur i { border-color: var(--s-progress); color: var(--s-progress); }
+.stepper .st.skipped { color: var(--faint); }
+.stepper .st.skipped i { border-style: dashed; color: var(--faint); }
+.stepper .st .skp { font-size: 11px; font-weight: 400; }
 .stepper .sep { width: 14px; height: 1.5px; background: var(--line-strong); }
 
 /* Модалки, тосты */

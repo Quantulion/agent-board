@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseRoute, withTask } from '../../agent_board/static/js/router.js';
+import { decompositionHref, parseRoute, withTask } from '../../agent_board/static/js/router.js';
 
 test('parseRoute разбирает маршруты', () => {
   assert.deepEqual(parseRoute(''), { name: 'projects' });
@@ -27,4 +27,11 @@ test('withTask добавляет и убирает карточку в адре
   assert.equal(withTask('#/p/pay?task=PAY-1', 'PAY-2'), '#/p/pay?task=PAY-2');
   assert.equal(withTask('#/p/pay/decomposition?task=PAY-1', null), '#/p/pay/decomposition');
   assert.equal(withTask('#/p/pay', 'A B'), '#/p/pay?task=A%20B');
+});
+
+test('decompositionHref ведёт на разбивку к задаче, parseRoute читает её из ?focus=', () => {
+  assert.equal(decompositionHref('pay', 'T-4'), '#/p/pay/decomposition?focus=T-4');
+  assert.equal(decompositionHref('pay'), '#/p/pay/decomposition');
+  assert.deepEqual(parseRoute('#/p/pay/decomposition?focus=T-4'), { name: 'decomposition', slug: 'pay', focus: 'T-4' });
+  assert.deepEqual(parseRoute('#/p/pay?focus=T-4'), { name: 'board', slug: 'pay' }, 'на доске focus не используется');
 });

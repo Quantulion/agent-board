@@ -15,7 +15,7 @@ test('nextStage: с трекером разбивка уходит в tracker, �
   assert.equal(nextStage({ tracker: { type: 'jira' } }), 'tracker');
 });
 
-test('decompositionSummary: нарушения собраны по задачам и по правилам, отменённые задачи не считаются', () => {
+test('decompositionSummary: нарушения собраны по задачам, отменённые задачи не считаются', () => {
   // arrange
   const tasks = [
     t('T2', { rule_violations: [{ rule: 'Один деплой', text: 'два сервиса' }, { rule: 'Не больше 3 дней', text: '5 д' }] }),
@@ -32,7 +32,7 @@ test('decompositionSummary: нарушения собраны по задача�
     { key: 'T2', rule: 'Не больше 3 дней', text: '5 д' },
     { key: 'T10', rule: 'Один деплой', text: 'и тут' },
   ]);
-  assert.deepEqual(s.byRule, [{ rule: 'Один деплой', keys: ['T2', 'T10'] }, { rule: 'Не больше 3 дней', keys: ['T2'] }]);
+  assert.equal('byRule' in s, false, 'группировка по правилам странице не нужна');
 });
 
 test('decompositionSummary: оценка, критический путь, шаги и параллельность, задачи без критерия готовности', () => {

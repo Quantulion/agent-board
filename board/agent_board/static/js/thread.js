@@ -103,6 +103,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
   let reading = false;
   let firstShown = false;
   let locked = false;
+  let sending = false;
 
   const atBottom = () => scroller().scrollHeight - scroller().scrollTop - scroller().clientHeight < BOTTOM_SLACK;
   const toBottom = () => { scroller().scrollTop = scroller().scrollHeight; };
@@ -142,6 +143,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
     area.value = '';
     drafts.set(thread, '');
     send.disabled = true;
+    sending = true;
     sendError.hidden = true;
     client.post(path + '/messages', { author: 'user', text })
       .then(() => { if (alive()) toBottom(); })
@@ -151,7 +153,10 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
         sendError.textContent = (err && err.message) || String(err);
         sendError.hidden = false;
       })
-      .finally(() => { send.disabled = locked; });
+      .finally(() => {
+        sending = false;
+        send.disabled = locked;
+      });
   }
 
   return {
@@ -171,7 +176,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
     setLocked(on) {
       locked = Boolean(on);
       area.disabled = locked;
-      send.disabled = locked;
+      send.disabled = locked || sending;
     },
     shown() {
       if (!firstShown) {

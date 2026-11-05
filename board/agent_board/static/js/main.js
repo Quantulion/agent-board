@@ -4,7 +4,7 @@ import { closeCard, openCard } from './card.js';
 import { mountDecomposition } from './decomposition.js';
 import { h, icon, patchList } from './dom.js';
 import { STAGES, T, tasksCount } from './i18n.js';
-import { boardHref, parseRoute, withTask } from './router.js';
+import { boardHref, decompositionHref, parseRoute, withTask } from './router.js';
 import { createStore } from './store.js';
 
 const THEME_KEY = 'ab-theme';
@@ -63,6 +63,7 @@ function route() {
   if (view && view.slug && view.slug === r.slug) {
     view.setMode(r.name);
     view.setTask(r.task || null);
+    view.setFocus(r.focus || null);
     return;
   }
   if (view) view.destroy();
@@ -71,6 +72,7 @@ function route() {
   else if (r.name === 'board' || r.name === 'decomposition') {
     view = projectView(r.slug, r.name);
     view.setTask(r.task || null);
+    view.setFocus(r.focus || null);
   }
   else root.replaceChildren(notice(T.notFound, T.notFoundHint, false));
 }
@@ -149,6 +151,10 @@ function projectView(slug, mode) {
     openGraph: () => {},
     openNewTask: () => {},
     openProject: () => {},
+    // задача, к которой прокрутить страницу разбивки; её забирает смонтированная разбивка
+    pendingFocus: null,
+    applyFocus: () => {},
+    openDecomposition: key => { window.location.hash = decompositionHref(slug, key); },
   };
   let destroyMode = null;
   let current = null;
@@ -164,6 +170,10 @@ function projectView(slug, mode) {
     slug,
     setMode: mount,
     setTask: key => (key ? openCard(ctx, key) : closeCard()),
+    setFocus: key => {
+      ctx.pendingFocus = key;
+      if (key) ctx.applyFocus();
+    },
     destroy() { closeCard(false); destroyMode(); store.stop(); },
   };
 }

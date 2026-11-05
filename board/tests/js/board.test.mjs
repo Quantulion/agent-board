@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, columnsOf, reactionText, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { cardModel, columnsOf, reactionText, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -114,6 +114,7 @@ test('waitingForYou на стадии разбивки показывает на
     { config: { stage: 'decomposition' } });
   const items = waitingForYou(s);
   assert.deepEqual(items.map(i => [i.kind, i.key, i.count]), [['violation', 'P-5', 2]]);
+  assert.deepEqual(items[0].open, { type: 'decomposition', key: 'P-5' }, 'нарушение ведёт к задаче на странице разбивки');
   assert.deepEqual(waitingForYou(null), []);
 });
 
@@ -182,4 +183,16 @@ test('cardModel собирает очередь, агента, цепочку и
   assert.equal(e.error, 'boom');
   assert.equal(e.chain, null, 'ветка от базы репозитория — не цепочка');
   assert.equal(e.proposal, false);
+});
+
+test('stepperModel: пройденные стадии, текущая и пропущенный трекер', () => {
+  const states = (stage, tracker) => stepperModel(stage, tracker).map(s => s.id + ':' + s.state).join(' ');
+  assert.equal(states('decomposition', 'jira'), 'decomposition:cur tracker:todo work:todo done:todo');
+  assert.equal(states('tracker', 'jira'), 'decomposition:done tracker:cur work:todo done:todo');
+  assert.equal(states('work', 'jira'), 'decomposition:done tracker:done work:cur done:todo');
+  assert.equal(states('decomposition', 'none'), 'decomposition:cur tracker:skipped work:todo done:todo');
+  assert.equal(states('work', 'none'), 'decomposition:done tracker:skipped work:cur done:todo');
+  assert.equal(states('done', 'none'), 'decomposition:done tracker:skipped work:done done:done');
+  assert.equal(states('work', undefined), 'decomposition:done tracker:skipped work:cur done:todo', 'без трекера в конфиге — тоже пропуск');
+  assert.equal(states('tracker', 'none'), 'decomposition:done tracker:cur work:todo done:todo', 'текущая стадия не пропущена');
 });

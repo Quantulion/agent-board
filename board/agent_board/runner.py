@@ -377,10 +377,14 @@ class Runner:
     @staticmethod
     def _update_project_meta(board: Board, fields: dict) -> None:
         """Состояние агента проекта живёт в meta без событий: изменение отмечается в журнале, чтобы его увидел UI."""
+        def visible(meta: dict) -> dict:
+            return {"state": meta.get("project_agent_state") or "idle", "parked": bool(meta.get("project_agent_parked"))}
+
+        before = visible(board.store.load_meta())
         board.update_meta(fields)
-        meta = board.store.load_meta()
-        board.record("project_agent_changed", {"state": meta.get("project_agent_state") or "idle",
-                                               "parked": bool(meta.get("project_agent_parked"))})
+        after = visible(board.store.load_meta())
+        if after != before:
+            board.record("project_agent_changed", after)
 
     def _park_agent_loop(self, k: Key, reason: dict) -> bool:
         """Защита от переписки агентов по кругу: True — пробуждение отложено до действия пользователя."""

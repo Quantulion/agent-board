@@ -42,22 +42,12 @@ export function repoColors(repos, tasks) {
 export function decompositionSummary(snapshot) {
   const config = snapshot.config || {};
   const tasks = (snapshot.tasks || []).filter(t => statusOf(t) !== 'cancelled').sort((a, b) => KEYS.compare(a.key, b.key));
-  const violations = [];
-  const rules = new Map();
-  for (const t of tasks) {
-    for (const v of violationsOf(t)) {
-      violations.push({ key: t.key, rule: v.rule, text: v.text });
-      if (!rules.has(v.rule)) rules.set(v.rule, []);
-      const keys = rules.get(v.rule);
-      if (!keys.includes(t.key)) keys.push(t.key);
-    }
-  }
+  const violations = tasks.flatMap(t => violationsOf(t).map(v => ({ key: t.key, rule: v.rule, text: v.text })));
   const layout = layoutGraph(tasks);
   const lanes = laneLabels(layout);
   return {
     tasks,
     violations,
-    byRule: [...rules].map(([rule, keys]) => ({ rule, keys })),
     missingDod: tasks.filter(t => !text(t.done_when)).map(t => t.key),
     estimate: tasks.reduce((sum, t) => sum + (estimateOf(t) ?? 0), 0),
     critical: criticalPath(tasks),
@@ -123,6 +113,8 @@ export function mountDecomposition(root, store, ctx) {
     hint: T.dc.generalHint,
   });
   gScroll.append(...general.list, proposals);
+  // писать можно только после того, как снимок покажет, что разбивка ещё не утверждена
+  general.setLocked(true);
 
   const footState = h('div', { class: 'st' });
   const approveBtn = h('button', { class: 'btn primary', type: 'button', onclick: () => confirmApprove() });
@@ -358,7 +350,7 @@ export function mountDecomposition(root, store, ctx) {
         h('span', null, T.dc.readOnly(stageLabel)),
         h('a', { href: boardHref(slug) }, T.dc.toBoard));
     }
-    approveBtn.disabled = s.readOnly;
+    approveBtn.disabled = s.readOnly || approved;
     approveBtn.replaceChildren(icon('check'), s.readOnly ? T.dc.approvedShort : T.dc.approve);
     const pa = agentStateLine(snap.project_agent);
     const nv = s.violations.length;
@@ -373,8 +365,10 @@ export function mountDecomposition(root, store, ctx) {
   }
 
   let approving = false;
+  // утверждено этой страницей: кнопка гаснет сразу, не дожидаясь снимка с новой стадией
+  let approved = false;
   function confirmApprove() {
-    if (!summary || summary.readOnly || approving) return;
+    if (!summary || summary.readOnly || approving || approved) return;
     const s = summary;
     const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
     const okBtn = h('button', { class: 'btn primary', type: 'button', onclick: approve },
@@ -397,6 +391,8 @@ export function mountDecomposition(root, store, ctx) {
       error.hidden = true;
       ctx.client.post('/stage', { stage: s.next, actor: 'user' })
         .then(() => {
+          approved = true;
+          approveBtn.disabled = true;
           close();
           toast(T.dc.approvedToast(T.dc.stageName[s.next]));
           scroll.scrollTo({ top: 0, behavior: 'smooth' });
@@ -430,7 +426,7 @@ export function mountDecomposition(root, store, ctx) {
     const cfg = snap.config;
     document.title = cfg.title + ' — ' + T.dc.heading;
     title.textContent = cfg.title;
-    paintStepper(stepper, cfg.stage);
+    paintStepper(stepper, cfg);
     summary = decompositionSummary(snap);
     colors = repoColors((cfg.repos || []).map(r => r.name), summary.tasks);
     paintSources(cfg);
@@ -445,12 +441,22 @@ export function mountDecomposition(root, store, ctx) {
     patchList(proposals, open, p => proposalSignature(p, byKey), p => proposalCard(ctx, p, byKey));
     general.paint({ size: snap.project_thread_size, unread: snap.project_unread });
     paintApproval(snap, summary);
+    ctx.applyFocus();
   }
+
+  // переход сюда к задаче (например, из «Ждут вас»): раскрыть её, когда она появится в списке
+  ctx.applyFocus = () => {
+    const key = ctx.pendingFocus;
+    if (!key || !entries.has(key)) return;
+    ctx.pendingFocus = null;
+    focusTask(key);
+  };
 
   const unsubscribe = store.subscribe(paint);
   paint(store.get(), { tasks: new Set(), snapshot: true });
 
   return function destroy() {
+    ctx.applyFocus = () => {};
     alive = false;
     clearTimeout(highlightTimer);
     unsubscribe();

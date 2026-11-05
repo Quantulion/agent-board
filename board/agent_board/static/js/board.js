@@ -83,7 +83,7 @@ export function waitingForYou(snapshot) {
   if (snapshot.config && snapshot.config.stage === 'decomposition') {
     for (const t of tasks) {
       const n = (t.rule_violations || []).length;
-      if (n) items.push({ kind: 'violation', key: t.key, count: n, open: card(t.key) });
+      if (n) items.push({ kind: 'violation', key: t.key, count: n, open: { type: 'decomposition', key: t.key } });
     }
   }
   return items;
@@ -240,14 +240,25 @@ export function externalBlockerDialog(ctx, task) {
   return close;
 }
 
-export function paintStepper(stepper, stage) {
+// Стадии проекта для шкалы: пройдена, текущая, впереди или пропущена (трекер без подключённого трекера).
+export function stepperModel(stage, trackerType) {
   const cur = STAGES.findIndex(s => s.id === stage);
+  const noTracker = !trackerType || trackerType === 'none';
+  return STAGES.map((s, i) => {
+    let state = i < cur || (stage === 'done' && i === cur) ? 'done' : i === cur ? 'cur' : 'todo';
+    if (s.id === 'tracker' && noTracker && state !== 'cur') state = 'skipped';
+    return { id: s.id, label: s.label, state };
+  });
+}
+
+export function paintStepper(stepper, config) {
   const items = [];
-  STAGES.forEach((s, i) => {
+  stepperModel(config.stage, config.tracker && config.tracker.type).forEach((s, i) => {
     if (i) items.push(h('span', { class: 'sep' }));
-    const done = i < cur || (stage === 'done' && i === cur);
-    items.push(h('span', { class: done ? 'st done' : i === cur ? 'st cur' : 'st' },
-      h('i', null, done ? '✓' : String(i + 1)), s.label));
+    const skipped = s.state === 'skipped';
+    items.push(h('span', { class: 'st ' + s.state, title: skipped ? T.stageSkipped : null },
+      h('i', null, s.state === 'done' ? '✓' : skipped ? '–' : String(i + 1)), s.label,
+      skipped ? h('span', { class: 'skp' }, T.stageSkipped) : null));
   });
   stepper.replaceChildren(...items);
 }
@@ -612,7 +623,7 @@ export function mountBoard(root, store, ctx) {
     document.title = cfg.title + ' — ' + T.appName;
     title.textContent = cfg.title;
     sub.textContent = T.projectSub((cfg.repos || []).length, cfg.max_agents, cfg.chains);
-    paintStepper(stepper, cfg.stage);
+    paintStepper(stepper, cfg);
 
     const live = snap.tasks.filter(t => statusOf(t) !== 'cancelled');
     const count = id => live.filter(t => statusOf(t) === id).length;
@@ -700,6 +711,7 @@ export function mountBoard(root, store, ctx) {
       const node = h('button', { type: 'button', onclick: () => {
         const it = node._item;
         if (it.open.type === 'card') ctx.openCard(it.open.key);
+        else if (it.open.type === 'decomposition') ctx.openDecomposition(it.open.key);
         else ctx.openProject();
       } });
       paintAttnItem(node, item);

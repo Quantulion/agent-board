@@ -435,6 +435,22 @@ def test_project_agent_state_changes_are_journaled(make_project, start_server, c
     assert changes[-2:] == [{"state": "running", "parked": False}, {"state": "idle", "parked": False}]
 
 
+def test_project_agent_changed_only_when_state_or_parking_changes(board):
+    # arrange
+    write = runner_mod.Runner._update_project_meta
+    changes = lambda: [e.data for e in board.store.read_events() if e.type == "project_agent_changed"]
+
+    # act
+    write(board, {"project_agent_state": "idle"})
+    write(board, {"project_agent_state": "running", "project_turn_error": ""})
+    write(board, {"project_agent_state": "running", "project_turn_process": {"pid": 1}})
+    write(board, {"project_agent_parked": True})
+    write(board, {"project_agent_parked": True})
+
+    # assert
+    assert changes() == [{"state": "running", "parked": False}, {"state": "running", "parked": True}]
+
+
 def test_project_agent_parking_is_journaled(make_project, start_server):
     # arrange
     store = make_project(project_session_id="p-1")

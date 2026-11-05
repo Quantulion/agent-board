@@ -1,5 +1,5 @@
 // Маршруты по hash: #/ — проекты, #/p/<slug> — доска, #/p/<slug>/decomposition — разбивка;
-// ?task=<KEY> — открытая карточка задачи поверх вида.
+// ?task=<KEY> — открытая карточка задачи поверх вида; ?focus=<KEY> — задача, к которой прокрутить разбивку.
 
 function splitQuery(hash) {
   const raw = String(hash || '').replace(/^#/, '');
@@ -23,8 +23,16 @@ export function parseRoute(hash) {
   }
   const extra = task ? { task } : {};
   if (parts.length === 3) return { name: 'board', slug, ...extra };
-  if (parts[3] === 'decomposition') return { name: 'decomposition', slug, ...extra };
+  if (parts[3] === 'decomposition') {
+    const focus = new URLSearchParams(query).get('focus');
+    return { name: 'decomposition', slug, ...extra, ...(focus ? { focus } : {}) };
+  }
   return { name: 'not_found' };
+}
+
+// Страница разбивки; key — задача, к которой прокрутить и раскрыть её.
+export function decompositionHref(slug, key) {
+  return boardHref(slug) + '/decomposition' + (key ? '?focus=' + encodeURIComponent(key) : '');
 }
 
 export function boardHref(slug) {
