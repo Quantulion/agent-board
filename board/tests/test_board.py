@@ -149,7 +149,7 @@ def test_agent_cannot_mark_done(board):
 def test_transition_unknown_actor_rejected(board):
     board.add_task(mk("A"), "user")
     with pytest.raises(ValueError):
-        board.transition("A", Status.DONE, "project_agent")
+        board.transition("A", Status.DONE, "bogus")
 
 
 def test_update_task_whitelisted_fields(board):
@@ -254,3 +254,46 @@ def test_on_event_called_for_every_event_in_order(tmp_home):
     b = _board(True, on_event=seen.append)
     ev = b.add_task(mk("A"), "user")
     assert [e.seq for e in seen] == [e.seq for e in ev] == [1, 2]
+
+
+def test_clearing_external_blocker_unblocks_task(board):
+    ev = board.add_task(mk("A", external_blocker="ждём доступ"), "user")
+    assert [e.type for e in ev] == ["task_added"]
+    ev = flat(board.update_task("A", "user", external_blocker=None))
+    assert dict(type="task_unblocked", key="A") in ev
+    assert wake("A", "unblocked") in ev
+
+
+def test_setting_external_blocker_does_not_wake(board):
+    board.add_task(mk("A"), "user")
+    ev = board.update_task("A", "user", external_blocker="ждём")
+    assert [e.type for e in ev] == ["task_updated"]
+
+
+def test_transition_accepts_string_status(board):
+    board.add_task(mk("A"), "user")
+    ev = flat(board.transition("A", "done", "user"))
+    assert ev[0]["to"] == "done"
+
+
+def test_transition_invalid_status_leaves_state_unchanged(board):
+    board.add_task(mk("A"), "user")
+    last = board.snapshot()["last_seq"]
+    with pytest.raises(ValueError):
+        board.transition("A", "nope", "user")
+    snap = board.snapshot()
+    assert snap["tasks"][0]["status"] == "not_started" and snap["last_seq"] == last
+
+
+def test_project_agent_cannot_change_graph(board):
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    last = board.snapshot()["last_seq"]
+    with pytest.raises(PermissionError):
+        board.add_task(mk("C"), "project_agent")
+    with pytest.raises(PermissionError):
+        board.set_deps("B", ["A"], "project_agent")
+    with pytest.raises(PermissionError):
+        board.transition("A", Status.CANCELLED, "project_agent")
+    snap = board.snapshot()
+    assert [t["key"] for t in snap["tasks"]] == ["A", "B"] and snap["last_seq"] == last

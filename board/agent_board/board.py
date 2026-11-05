@@ -58,6 +58,7 @@ class Board:
 
     def add_task(self, task: Task, actor: str) -> List[Event]:
         with self._lock:
+            self._reject_project_agent(actor)
             tasks = self.store.load_tasks()
             if task.key in tasks:
                 raise ValueError("Задача уже существует: %s" % task.key)
@@ -71,8 +72,10 @@ class Board:
 
     def transition(self, key: str, to: Status, actor: str) -> List[Event]:
         with self._lock:
+            self._reject_project_agent(actor)
             if actor not in ACTORS:
                 raise ValueError("Неизвестный актор: %r" % actor)
+            to = Status(to)
             if actor == "agent" and to in AGENT_FORBIDDEN:
                 raise PermissionError("Агент не может ставить статус %s" % to.value)
             tasks = self.store.load_tasks()
@@ -104,15 +107,21 @@ class Board:
             unknown = set(fields) - UPDATABLE_FIELDS
             if unknown:
                 raise ValueError("Недопустимые поля: %s" % ", ".join(sorted(unknown)))
-            task = self._get(self.store.load_tasks(), key)
+            tasks = self.store.load_tasks()
+            task = self._get(tasks, key)
+            before = self._ready(tasks)
             for name, value in fields.items():
                 setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
-            return [self._emit("task_updated", {"key": key, "fields": sorted(fields)})]
+            events = [self._emit("task_updated", {"key": key, "fields": sorted(fields)})]
+            if "external_blocker" in fields:
+                events.extend(self._unblocked(before, [key]))
+            return events
 
     def set_deps(self, key: str, deps: List[str], actor: str) -> List[Event]:
         with self._lock:
+            self._reject_project_agent(actor)
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             validate_deps(key, deps, tasks)
@@ -192,6 +201,11 @@ class Board:
                 task.unread = 0
                 self.store.save_task(task)
             return [self._emit("thread_read", {"thread": thread})]
+
+    @staticmethod
+    def _reject_project_agent(actor: str) -> None:
+        if actor == "project_agent":
+            raise PermissionError("Агент проекта меняет граф только через предложения")
 
     def _emit(self, type: str, data: dict) -> Event:
         event = self.store.append_event(type, data)
