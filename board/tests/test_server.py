@@ -12,7 +12,8 @@ import pytest
 
 from agent_board.board import Board
 from agent_board.config import ProjectConfig
-from agent_board.server import BoardServer, read_discovery
+from agent_board import server as server_mod
+from agent_board.server import DEFAULT_PORTS, BoardServer, ServerAlreadyRunning, read_discovery
 from agent_board.store import ProjectStore
 
 from conftest import make_task
@@ -330,3 +331,227 @@ def test_discovery_file_written_and_removed(tmp_home):
 def test_discovery_ignores_dead_pid(tmp_home):
     (tmp_home / "server.json").write_text(json.dumps({"port": 1, "token": "t", "pid": 2 ** 22 + 12345}))
     assert read_discovery() is None
+
+
+# ---------- финальная волна правок ----------
+
+def test_update_with_key_field_is_400(server):
+    # arrange
+    add_task(server)
+
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"key": "x"}})
+
+    # assert
+    assert r.status == 400
+    assert get(server, "/api/p/pay/state").json()["tasks"][0]["key"] == "T-1"
+
+
+def test_add_task_with_non_creatable_field_is_400(server):
+    # act
+    r = add_task(server, status="done")
+
+    # assert
+    assert r.status == 400
+    assert get(server, "/api/p/pay/state").json()["tasks"] == []
+
+
+def test_message_with_from_task_escalates_to_project_agent(server):
+    # arrange
+    add_task(server)
+
+    # act
+    r = post(server, "/api/p/pay/threads/_project/messages", {"author": "agent", "text": "помогите", "from_task": "T-1"})
+
+    # assert
+    assert r.status == 200
+    wakes = [e["data"] for e in r.json()["events"] if e["type"] == "agent_wake"]
+    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1"}]
+
+
+def test_message_with_non_string_from_task_is_400(server):
+    # act
+    r = post(server, "/api/p/pay/threads/_project/messages", {"author": "agent", "text": "x", "from_task": 5})
+
+    # assert
+    assert r.status == 400
+
+
+def test_sse_uses_larger_of_since_and_last_event_id(server):
+    # arrange
+    add_task(server, "T-1")   # seq 1, 2
+    add_task(server, "T-2")   # seq 3, 4
+
+    # act
+    by_header = open_sse(server, path="/api/p/pay/stream?since=1", headers={"Last-Event-ID": "3"})
+    by_query = open_sse(server, path="/api/p/pay/stream?since=3", headers={"Last-Event-ID": "1"})
+    try:
+        out_header = read_until(by_header, "id: 4\n")
+        out_query = read_until(by_query, "id: 4\n")
+    finally:
+        by_header.close()
+        by_query.close()
+
+    # assert
+    for out in (out_header, out_query):
+        assert "id: 4\n" in out
+        assert "id: 2\n" not in out and "id: 3\n" not in out
+
+
+def test_second_start_on_same_home_fails_and_keeps_first_discovery(server):
+    # arrange
+    first = read_discovery()
+    other = BoardServer(port=0)
+
+    # act
+    with pytest.raises(ServerAlreadyRunning) as ei:
+        other.start()
+    other.stop()
+
+    # assert
+    assert "уже запущена" in str(ei.value)
+    assert read_discovery() == first
+    assert get(server, "/api/projects").status == 200
+
+
+def test_start_refuses_when_discovery_points_to_live_server(tmp_home):
+    # arrange
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    (tmp_home / "server.json").write_text(json.dumps(
+        {"port": listener.getsockname()[1], "token": "t", "pid": os.getppid()}))
+    srv = BoardServer(port=0)
+
+    # act / assert
+    try:
+        with pytest.raises(ServerAlreadyRunning):
+            srv.start()
+    finally:
+        srv.stop()
+        listener.close()
+    assert json.loads((tmp_home / "server.json").read_text())["token"] == "t"
+
+
+def test_stop_keeps_foreign_discovery_file(server, tmp_home):
+    # arrange
+    foreign = {"port": 1, "token": "чужой", "pid": os.getppid()}
+    (tmp_home / "server.json").write_text(json.dumps(foreign))
+
+    # act
+    server.stop()
+
+    # assert
+    assert json.loads((tmp_home / "server.json").read_text()) == foreign
+
+
+def test_token_persisted_with_private_mode(tmp_home):
+    # arrange
+    srv = BoardServer(port=0)
+
+    # act
+    srv.start()
+    srv.stop()
+
+    # assert
+    path = tmp_home / "token"
+    assert path.read_text().strip() == srv.token
+    assert (path.stat().st_mode & 0o777) == 0o600
+
+
+def test_restart_keeps_token_and_default_port(tmp_home):
+    # arrange
+    ProjectStore("pay").create(ProjectConfig(slug="pay", title="P", chains=True))
+    first = BoardServer()
+    first.start()
+    old_port, old_token = first.port, first.token
+    first.stop()
+
+    # act
+    second = BoardServer()
+    second.start()
+    try:
+        r = get(second, "/api/projects", token=None, headers={"Cookie": "board_token=%s" % old_token})
+        new_port = second.port
+    finally:
+        second.stop()
+
+    # assert
+    assert second.token == old_token
+    assert r.status == 200
+    if old_port not in DEFAULT_PORTS:
+        pytest.skip("все порты по умолчанию заняты")
+    assert new_port == old_port
+
+
+def test_busy_default_port_falls_back_to_next(tmp_home, monkeypatch):
+    # arrange
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen(1)
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    free = probe.getsockname()[1]
+    probe.close()
+    monkeypatch.setattr(server_mod, "DEFAULT_PORTS", [busy.getsockname()[1], free])
+    srv = BoardServer()
+
+    # act
+    try:
+        srv.start()
+        port = srv.port
+    finally:
+        srv.stop()
+        busy.close()
+
+    # assert
+    assert port == free
+
+
+def test_all_default_ports_busy_falls_back_to_random(tmp_home, monkeypatch):
+    # arrange
+    busy = socket.socket()
+    busy.bind(("127.0.0.1", 0))
+    busy.listen(1)
+    busy_port = busy.getsockname()[1]
+    monkeypatch.setattr(server_mod, "DEFAULT_PORTS", [busy_port])
+    srv = BoardServer()
+
+    # act
+    try:
+        srv.start()
+        port = srv.port
+    finally:
+        srv.stop()
+        busy.close()
+
+    # assert
+    assert port > 0 and port != busy_port
+
+
+def test_sse_reconnect_after_restart_replays_missed_events(tmp_home):
+    # arrange
+    ProjectStore("pay").create(ProjectConfig(slug="pay", title="P", chains=True))
+    first = BoardServer(port=0)
+    first.start()
+    old_token = first.token
+    add_task(first, "T-1")   # seq 1, 2 — клиент их видел
+    first.stop()
+    second = BoardServer(port=0)
+    second.start()
+    try:
+        add_task(second, "T-2")   # seq 3, 4 — пропущены за время рестарта
+
+        # act
+        sock = open_sse(second, headers={"Last-Event-ID": "2"})
+        try:
+            out = read_until(sock, "id: 4\n")
+        finally:
+            sock.close()
+    finally:
+        second.stop()
+
+    # assert
+    assert second.token == old_token
+    assert "id: 3\n" in out and "id: 4\n" in out
+    assert "id: 2\n" not in out

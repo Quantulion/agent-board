@@ -3,11 +3,11 @@ from __future__ import annotations
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Callable, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
-from .store import PROJECT_THREAD, ProjectStore
+from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
 AGENT_FORBIDDEN = {Status.DONE, Status.SENT, Status.CANCELLED}
@@ -17,6 +17,62 @@ UPDATABLE_FIELDS = {
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
 }
+CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
+TASK_KINDS = ("code", "research")
+
+# Словарь событий журнала: тип -> поля data. Клиенты (UI, оркестратор агентов) опираются на него.
+EVENT_TYPES: Dict[str, str] = {
+    "task_added": "key",
+    "status_changed": "key, from, to, actor",
+    "task_updated": "key, fields (список изменённых полей)",
+    "deps_changed": "key, deps",
+    "task_unblocked": "key — задача стала готова к работе",
+    "agent_stop": "key — агент задачи должен остановиться",
+    "agent_wake": "key (ключ задачи или _project), reason, доп. поля по reason",
+    "question_asked": "key, question_id",
+    "question_answered": "key, question_id",
+    "message_posted": "thread, message_id, author",
+    "thread_read": "thread",
+    "proposal_created": "id",
+    "proposal_applied": "id",
+    "proposal_rejected": "id",
+}
+
+# Причины agent_wake -> дополнительные поля события.
+WAKE_REASONS: Dict[str, str] = {
+    "ready": "задача добавлена или возвращена из отмены и сразу готова",
+    "unblocked": "закрылись зависимости или снят внешний блокер",
+    "returned": "from — пользователь вернул задачу в работу с этого статуса",
+    "answer": "пользователь ответил на вопрос агента",
+    "message": "message_id — новое сообщение для агента",
+    "proposal_rejected": "агенту проекта отклонили предложение",
+    "escalation": "from — агент задачи написал в тред проекта",
+    "manual": "пользователь сам запустил задачу без сессии агента",
+}
+
+
+def new_task_from_dict(d: Any) -> Task:
+    """Новая задача из пользовательского ввода: только поля, которые задаются при создании."""
+    if not isinstance(d, dict):
+        raise ValueError("Задача должна быть объектом")
+    extra = set(d) - set(CREATABLE_FIELDS)
+    if extra:
+        raise ValueError("Недопустимые поля задачи: %s" % ", ".join(sorted(map(str, extra))))
+    for name in ("key", "title"):
+        if not isinstance(d.get(name), str):
+            raise ValueError("Поле задачи %s должно быть строкой" % name)
+    for name in ("description", "done_when", "repo"):
+        if name in d and not isinstance(d[name], str):
+            raise ValueError("Поле задачи %s должно быть строкой" % name)
+    if "kind" in d and (not isinstance(d["kind"], str) or d["kind"] not in TASK_KINDS):
+        raise ValueError("Вид задачи должен быть одним из: %s" % ", ".join(TASK_KINDS))
+    estimate = d.get("estimate")
+    if estimate is not None and (isinstance(estimate, bool) or not isinstance(estimate, (int, float))):
+        raise ValueError("Оценка задачи должна быть числом")
+    deps = d.get("deps", [])
+    if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
+        raise ValueError("deps задачи должен быть списком строк")
+    return Task(**dict(d, deps=list(deps)))
 
 
 def _utc_now() -> str:
@@ -53,16 +109,16 @@ class Board:
                 "tasks": items,
                 "proposals": [p.to_dict() for p in self.store.load_proposals()],
                 "project_unread": self.store.load_meta()["project_unread"],
-                "last_seq": max((e.seq for e in self.store.read_events()), default=0),
+                "last_seq": self.store.last_seq(),
             }
 
     def add_task(self, task: Task, actor: str) -> List[Event]:
         with self._lock:
             self._reject_project_agent(actor)
             tasks = self.store.load_tasks()
-            if task.key in tasks:
-                raise ValueError("Задача уже существует: %s" % task.key)
+            self._check_new_key(task.key, tasks)
             validate_deps(task.key, task.deps, tasks)
+            task.status = Status.NOT_STARTED
             task.updated_at = self._clock()
             self.store.save_task(task)
             events: List[Event] = [self._emit("task_added", {"key": task.key})]
@@ -76,6 +132,8 @@ class Board:
             if actor not in ACTORS:
                 raise ValueError("Неизвестный актор: %r" % actor)
             to = Status(to)
+            if to == Status.BLOCKED:
+                raise ValueError("Статус blocked вычисляется по зависимостям; внешнюю блокировку задают полем external_blocker")
             if actor == "agent" and to in AGENT_FORBIDDEN:
                 raise PermissionError("Агент не может ставить статус %s" % to.value)
             tasks = self.store.load_tasks()
@@ -100,13 +158,25 @@ class Board:
             events.extend(self._unblocked(before, affected))
             if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
                 events.append(self._emit("agent_wake", {"key": key, "reason": "returned", "from": prev.value}))
+            if actor == "user":
+                events.extend(self._manual_wake(task, prev))
             return events
 
-    def update_task(self, key: str, actor: str, **fields) -> List[Event]:
+    def _manual_wake(self, task: Task, prev: Status) -> List[Event]:
+        to = task.status
+        if to == Status.IN_PROGRESS and prev in (Status.NOT_STARTED, Status.BLOCKED) and not task.session_id:
+            return [self._emit("agent_wake", {"key": task.key, "reason": "manual"})]
+        if prev == Status.CANCELLED and to == Status.NOT_STARTED and task.key in self._ready(self.store.load_tasks()):
+            return [self._emit("agent_wake", {"key": task.key, "reason": "ready"})]
+        return []
+
+    def update_task(self, key: str, actor: str, fields: dict) -> List[Event]:
         with self._lock:
+            if not isinstance(fields, dict):
+                raise ValueError("fields должен быть объектом")
             unknown = set(fields) - UPDATABLE_FIELDS
             if unknown:
-                raise ValueError("Недопустимые поля: %s" % ", ".join(sorted(unknown)))
+                raise ValueError("Недопустимые поля: %s" % ", ".join(sorted(map(str, unknown))))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
@@ -154,25 +224,33 @@ class Board:
                 raise KeyError("Неизвестный вопрос: %s" % qid)
             if question.answer is not None:
                 raise ValueError("На вопрос уже ответили: %s" % qid)
-            question.answer = {"choice": choice, "comment": comment}
             now = self._clock()
+            question.answer = {"choice": choice, "comment": comment, "at": now}
             task.updated_at = now
             self.store.save_task(task)
             text = "\n".join(p for p in (choice, comment) if p)
-            self.store.append_message(key, Message(id=uuid.uuid4().hex, author="user", text=text, at=now, question_id=qid))
+            msg = Message(id=uuid.uuid4().hex, author="user", text=text, at=now, question_id=qid)
+            self.store.append_message(key, msg)
             events = [
                 self._emit("question_answered", {"key": key, "question_id": qid}),
+                self._emit("message_posted", {"thread": key, "message_id": msg.id, "author": "user"}),
                 self._emit("agent_wake", {"key": key, "reason": "answer"}),
             ]
             if task.status == Status.WAITING_ANSWER and all(q.answer is not None for q in task.questions):
                 events.extend(self.transition(key, Status.IN_PROGRESS, "system"))
             return events
 
-    def post_message(self, thread: str, author: str, text: str) -> List[Event]:
+    def post_message(self, thread: str, author: str, text: str, from_task: Optional[str] = None) -> List[Event]:
+        """from_task — задача, из которой агент пишет в тред проекта; такое сообщение будит агента проекта."""
         with self._lock:
             task = None
             if thread != PROJECT_THREAD:
                 task = self._get(self.store.load_tasks(), thread)
+                from_task = None
+            elif from_task is not None:
+                if not isinstance(from_task, str):
+                    raise ValueError("from_task должен быть строкой")
+                self._get(self.store.load_tasks(), from_task)
             now = self._clock()
             msg = Message(id=uuid.uuid4().hex, author=author, text=text, at=now)
             self.store.append_message(thread, msg)
@@ -187,7 +265,9 @@ class Board:
             events = [self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})]
             wakes_agent = author == "user" or (author == "project_agent" and task is not None)
             if wakes_agent:
-                events.append(self._emit("agent_wake", {"key": thread, "reason": "message"}))
+                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": msg.id}))
+            elif author == "agent" and from_task:
+                events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task}))
             return events
 
     def mark_read(self, thread: str) -> List[Event]:
@@ -218,7 +298,7 @@ class Board:
             # граф мог измениться с момента создания предложения
             affected = self._check_proposal(proposal.kind, proposal.payload)
             if proposal.kind == "add_task":
-                events = self.add_task(Task.from_dict(proposal.payload["task"]), "user")
+                events = self.add_task(new_task_from_dict(proposal.payload["task"]), "user")
             elif proposal.kind == "set_deps":
                 events = self.set_deps(proposal.payload["key"], list(proposal.payload["deps"]), "user")
             else:
@@ -253,14 +333,8 @@ class Board:
             raw = payload.get("task")
             if not isinstance(raw, dict):
                 raise ValueError("В предложении add_task нужен объект task")
-            try:
-                task = Task.from_dict(raw)
-            except TypeError as e:
-                raise ValueError("Некорректная задача в предложении: %s" % e)
-            if not isinstance(task.key, str):
-                raise ValueError("Ключ задачи должен быть строкой")
-            if task.key in tasks:
-                raise ValueError("Задача уже существует: %s" % task.key)
+            task = new_task_from_dict(raw)
+            self._check_new_key(task.key, tasks)
             validate_deps(task.key, task.deps, tasks)
             return task.key
         key = payload.get("key")
@@ -294,12 +368,24 @@ class Board:
         return "отменена задача %s" % p["key"]
 
     @staticmethod
+    def _check_new_key(key: str, tasks) -> None:
+        if not isinstance(key, str):
+            raise ValueError("Ключ задачи должен быть строкой")
+        if key.startswith("_"):
+            raise ValueError("Ключ задачи не может начинаться с «_»: %s" % key)
+        _check_ident(key, "задача")
+        # файлы задач на регистронезависимой ФС перезаписали бы друг друга
+        clash = next((k for k in tasks if k.lower() == key.lower()), None)
+        if clash is not None:
+            raise ValueError("Задача уже существует: %s" % clash)
+
+    @staticmethod
     def _reject_project_agent(actor: str) -> None:
         if actor == "project_agent":
             raise PermissionError("Агент проекта меняет граф только через предложения")
 
     def _emit(self, type: str, data: dict) -> Event:
-        event = self.store.append_event(type, data)
+        event = self.store.append_event(type, data, self._clock())
         if self._on_event is not None:
             self._on_event(event)
         return event

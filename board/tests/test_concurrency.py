@@ -22,7 +22,7 @@ def test_parallel_post_and_update_keep_log_and_files_consistent(board):
             barrier.wait()
             for n in range(ITERATIONS):
                 board.post_message(key, "agent", "%s-%d" % (key, n))
-                board.update_task(key, "agent", summary="%s-%d" % (key, n))
+                board.update_task(key, "agent", {"summary": "%s-%d" % (key, n)})
         except Exception as e:  # noqa: BLE001
             errors.append(e)
 

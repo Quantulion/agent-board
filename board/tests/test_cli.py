@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from agent_board.cli import main
+from agent_board.cli import build_parser, main
 from agent_board.server import BoardServer
 
 
@@ -21,6 +21,7 @@ def srv(tmp_home):
 def _env(monkeypatch):
     monkeypatch.setenv("AGENT_BOARD_PROJECT", "pay")
     monkeypatch.delenv("AGENT_BOARD_ACTOR", raising=False)
+    monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)
 
 
 def run(capsys, *argv):
@@ -100,3 +101,46 @@ def test_missing_project_exits_1(srv, capsys, monkeypatch):
     monkeypatch.delenv("AGENT_BOARD_PROJECT")
     code, _, err = run(capsys, "state")
     assert code == 1 and "проект" in err
+
+
+def test_serve_when_already_running_exits_3(srv, capsys):
+    # act
+    code, out, err = run(capsys, "serve")
+
+    # assert
+    assert code == 3 and "уже запущена" in err and out == ""
+    assert run_json(capsys, "state")["config"]["slug"] == "pay"
+
+
+def test_serve_port_defaults_to_stable_selection():
+    # act
+    args = build_parser().parse_args(["serve"])
+    forced = build_parser().parse_args(["serve", "--port", "9000"])
+
+    # assert
+    assert args.port is None and forced.port == 9000
+
+
+def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+
+    # act
+    out = run_json(capsys, "say", "_project", "--text", "нужна помощь")
+
+    # assert
+    wakes = [e["data"] for e in out["events"] if e["type"] == "agent_wake"]
+    assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1"}]
+
+
+def test_say_without_task_env_does_not_escalate(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)
+
+    # act
+    out = run_json(capsys, "say", "_project", "--text", "просто так")
+
+    # assert
+    assert [e["type"] for e in out["events"]] == ["message_posted"]
+

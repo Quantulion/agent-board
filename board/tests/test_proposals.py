@@ -144,3 +144,42 @@ def test_reject_non_open_raises_value_error(board):
         board.reject_proposal("p1")
     with pytest.raises(ValueError):
         board.apply_proposal("p1")
+
+
+@pytest.mark.parametrize("task", [
+    {"key": "B", "title": "b", "status": "done"},
+    {"key": "B", "title": "b", "session_id": "s"},
+    {"key": "B", "title": "b", "questions": []},
+    {"key": "B", "title": "b", "deps": "A"},
+    {"key": "B", "title": "b", "deps": [1]},
+    {"key": "B", "title": "b", "estimate": "3"},
+    {"key": "B", "title": "b", "estimate": True},
+    {"key": "B", "title": "b", "kind": "deploy"},
+    {"key": "B", "title": 5},
+    {"key": "B"},
+    {"key": "_B", "title": "b"},
+    {"key": "a", "title": "dup"},
+])
+def test_propose_add_task_rejects_non_creatable_fields(board, task):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act / assert
+    with pytest.raises(ValueError):
+        board.propose("add_task", {"task": task}, "")
+    assert board.snapshot()["proposals"] == []
+
+
+def test_propose_add_task_accepts_all_creatable_fields(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    task = {"key": "B", "title": "b", "description": "d", "done_when": "w", "repo": "r",
+            "kind": "research", "estimate": 2, "deps": ["A"]}
+
+    # act
+    board.propose("add_task", {"task": task}, "")
+    board.apply_proposal("p1")
+
+    # assert
+    b = board.store.load_tasks()["B"]
+    assert (b.kind, b.estimate, b.deps, b.status) == ("research", 2, ["A"], Status.NOT_STARTED)

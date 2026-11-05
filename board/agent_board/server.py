@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import errno
+import fcntl
 import hmac
 import json
 import mimetypes
@@ -7,6 +9,7 @@ import os
 import secrets
 import socket
 import sys
+import tempfile
 import threading
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,7 +17,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from .board import Board
+from .board import Board, new_task_from_dict
 from .model import Event, Question, Status, Task
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
 
@@ -22,6 +25,8 @@ COOKIE_NAME = "board_token"
 KEEPALIVE_SECONDS = 15
 MAX_BODY = 4 * 1024 * 1024
 MESSAGE_AUTHORS = {"user", "agent", "project_agent"}
+# постоянный порт, чтобы ссылка на доску переживала рестарт
+DEFAULT_PORTS = list(range(8737, 8747))
 
 STUB_PAGE = (
     "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\"><title>Доска</title></head>"
@@ -31,6 +36,39 @@ STUB_PAGE = (
 
 def discovery_path() -> Path:
     return board_home() / "server.json"
+
+
+class ServerAlreadyRunning(RuntimeError):
+    pass
+
+
+def _port_open(port) -> bool:
+    try:
+        with socket.create_connection(("127.0.0.1", int(port)), timeout=1):
+            return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def _load_or_create_token(path: Path) -> str:
+    try:
+        token = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        token = ""
+    if token:
+        return token
+    token = secrets.token_urlsafe(24)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(token + "\n")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, str(path))
+    except BaseException:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+        raise
+    return token
 
 
 def read_discovery() -> Optional[dict]:
@@ -254,11 +292,14 @@ class _Handler(BaseHTTPRequestHandler):
         raise KeyError("Неизвестный маршрут")
 
     def _since(self, query: dict) -> int:
-        raw = (query.get("since") or [self.headers.get("Last-Event-ID") or "0"])[0]
-        try:
-            return int(raw)
-        except ValueError:
-            raise ValueError("Некорректный since: %r" % raw)
+        # браузер при переподключении шлёт Last-Event-ID, а since остаётся из исходного URL
+        result = 0
+        for raw in (query.get("since") or []) + [self.headers.get("Last-Event-ID") or "0"]:
+            try:
+                result = max(result, int(raw))
+            except ValueError:
+                raise ValueError("Некорректный since: %r" % raw)
+        return result
 
     def _api_post(self, board: Board, rest: List[str]) -> None:
         body = self._read_body()
@@ -269,16 +310,16 @@ class _Handler(BaseHTTPRequestHandler):
             author = _need(body, "author")
             if author not in MESSAGE_AUTHORS:
                 raise ValueError("Недопустимый автор: %r" % (author,))
-            events = board.post_message(rest[1], author, str(_need(body, "text")))
+            from_task = body.get("from_task")
+            if from_task is not None and not isinstance(from_task, str):
+                raise ValueError("from_task должен быть строкой")
+            events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None)
         elif rest == ["tasks"]:
             events = board.add_task(self._task(_need(body, "task")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "transition":
             events = board.transition(rest[1], Status(_need(body, "to")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "update":
-            fields = _need(body, "fields")
-            if not isinstance(fields, dict):
-                raise ValueError("fields должен быть объектом")
-            events = board.update_task(rest[1], _need(body, "actor"), **fields)
+            events = board.update_task(rest[1], _need(body, "actor"), _need(body, "fields"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "deps":
             deps = _need(body, "deps")
             if not isinstance(deps, list):
@@ -307,12 +348,7 @@ class _Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _task(d) -> Task:
-        if not isinstance(d, dict):
-            raise ValueError("task должен быть объектом")
-        try:
-            return Task.from_dict(d)
-        except TypeError as e:
-            raise ValueError("Некорректная задача: %s" % e)
+        return new_task_from_dict(d)
 
     @staticmethod
     def _question(d) -> Question:
@@ -362,30 +398,68 @@ class _HttpServer(ThreadingHTTPServer):
 
 
 class BoardServer:
-    def __init__(self, port: int = 0, static_dir: Optional[Path] = None):
+    """Сервер доски. port=None — постоянный порт из DEFAULT_PORTS (или случайный, если все заняты)."""
+
+    def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None):
         self.port = port
         self.static_dir = static_dir
-        self.token = secrets.token_urlsafe(24)
+        self.token: Optional[str] = None
         self.hub = _Hub()
         self._httpd: Optional[_HttpServer] = None
         self._thread: Optional[threading.Thread] = None
+        self._lock_fd: Optional[int] = None
 
     @property
     def url(self) -> str:
         return "http://127.0.0.1:%d/?token=%s" % (self.port, self.token)
 
     def start(self) -> None:
-        httpd = _HttpServer(("127.0.0.1", self.port), _Handler)
+        home = board_home()
+        home.mkdir(parents=True, exist_ok=True)
+        self._acquire_lock(home / "server.lock")
+        try:
+            running = read_discovery()
+            if running is not None and _port_open(running.get("port")):
+                raise ServerAlreadyRunning(
+                    "Доска уже запущена (pid %s, порт %s)" % (running.get("pid"), running.get("port")))
+            self.token = _load_or_create_token(home / "token")
+            httpd = self._bind()
+        except BaseException:
+            self._release_lock()
+            raise
         httpd.app = self  # type: ignore[attr-defined]
         self._httpd = httpd
         self.port = httpd.server_address[1]
         self._thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
         self._thread.start()
-        home = board_home()
-        home.mkdir(parents=True, exist_ok=True)
         path = discovery_path()
         atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
         os.chmod(str(path), 0o600)
+
+    def _bind(self) -> _HttpServer:
+        if self.port is not None:
+            return _HttpServer(("127.0.0.1", self.port), _Handler)
+        for port in DEFAULT_PORTS:
+            try:
+                return _HttpServer(("127.0.0.1", port), _Handler)
+            except OSError as e:
+                if e.errno != errno.EADDRINUSE:
+                    raise
+        return _HttpServer(("127.0.0.1", 0), _Handler)
+
+    def _acquire_lock(self, path: Path) -> None:
+        fd = os.open(str(path), os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise ServerAlreadyRunning("Доска уже запущена с этим каталогом: %s" % path.parent)
+        self._lock_fd = fd
+
+    def _release_lock(self) -> None:
+        if self._lock_fd is not None:
+            os.close(self._lock_fd)
+            self._lock_fd = None
 
     def stop(self) -> None:
         self.hub.wake_all()
@@ -396,7 +470,15 @@ class BoardServer:
         if self._thread is not None:
             self._thread.join(timeout=5)
             self._thread = None
+        if self._lock_fd is not None:
+            self._remove_own_discovery()
+        self._release_lock()
+
+    def _remove_own_discovery(self) -> None:
+        path = discovery_path()
         try:
-            discovery_path().unlink()
-        except FileNotFoundError:
-            pass
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if isinstance(data, dict) and data.get("pid") == os.getpid() and data.get("token") == self.token:
+            path.unlink()

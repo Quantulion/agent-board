@@ -127,7 +127,7 @@ def test_transition_unknown_actor_rejected(board):
 
 def test_update_task_whitelisted_fields(board):
     board.add_task(mk("A"), "user")
-    ev = flat(board.update_task("A", "agent", summary="s", branch="b"))
+    ev = flat(board.update_task("A", "agent", {"summary": "s", "branch": "b"}))
     assert ev == [dict(type="task_updated", key="A", fields=["branch", "summary"])]
     t = board.snapshot()["tasks"][0]
     assert t["summary"] == "s" and t["branch"] == "b"
@@ -136,9 +136,9 @@ def test_update_task_whitelisted_fields(board):
 def test_update_task_rejects_unknown_field(board):
     board.add_task(mk("A"), "user")
     with pytest.raises(ValueError):
-        board.update_task("A", "agent", status="done")
+        board.update_task("A", "agent", {"status": "done"})
     with pytest.raises(ValueError):
-        board.update_task("A", "agent", summary="x", deps=[])
+        board.update_task("A", "agent", {"summary": "x", "deps": []})
     assert board.snapshot()["tasks"][0]["summary"] == ""
 
 
@@ -176,7 +176,7 @@ def test_answer_last_question_returns_to_in_progress(board):
     assert wake("A", "returned", **{"from": "waiting_answer"}) not in ev
     thread = board.store.read_thread("A")
     assert [(m.author, m.question_id) for m in thread] == [("user", "q1"), ("user", "q2")]
-    assert board.snapshot()["tasks"][0]["questions"][0]["answer"] == {"choice": "x", "comment": "почему"}
+    assert board.snapshot()["tasks"][0]["questions"][0]["answer"] == {"choice": "x", "comment": "почему", "at": NOW}
 
 
 def test_answer_unknown_question_rejected(board):
@@ -189,11 +189,11 @@ def test_user_message_wakes_task_agent_and_project_message_wakes_project_agent(b
     board.add_task(mk("A"), "user")
     ev = flat(board.post_message("A", "user", "привет"))
     assert ev[0]["type"] == "message_posted" and ev[0]["thread"] == "A"
-    assert wake("A", "message") in ev
+    assert wake("A", "message", message_id=ev[0]["message_id"]) in ev
     ev = flat(board.post_message("_project", "user", "план?"))
-    assert wake("_project", "message") in ev
+    assert wake("_project", "message", message_id=ev[0]["message_id"]) in ev
     ev = flat(board.post_message("A", "project_agent", "совет"))
-    assert wake("A", "message") in ev
+    assert wake("A", "message", message_id=ev[0]["message_id"]) in ev
     ev = flat(board.post_message("A", "agent", "готово"))
     assert not [e for e in ev if e["type"] == "agent_wake"]
 
@@ -232,14 +232,14 @@ def test_on_event_called_for_every_event_in_order(tmp_home):
 def test_clearing_external_blocker_unblocks_task(board):
     ev = board.add_task(mk("A", external_blocker="ждём доступ"), "user")
     assert [e.type for e in ev] == ["task_added"]
-    ev = flat(board.update_task("A", "user", external_blocker=None))
+    ev = flat(board.update_task("A", "user", {"external_blocker": None}))
     assert dict(type="task_unblocked", key="A") in ev
     assert wake("A", "unblocked") in ev
 
 
 def test_setting_external_blocker_does_not_wake(board):
     board.add_task(mk("A"), "user")
-    ev = board.update_task("A", "user", external_blocker="ждём")
+    ev = board.update_task("A", "user", {"external_blocker": "ждём"})
     assert [e.type for e in ev] == ["task_updated"]
 
 
@@ -270,3 +270,243 @@ def test_project_agent_cannot_change_graph(board):
         board.transition("A", Status.CANCELLED, "project_agent")
     snap = board.snapshot()
     assert [t["key"] for t in snap["tasks"]] == ["A", "B"] and snap["last_seq"] == last
+
+
+# ---------- финальная волна правок ----------
+
+def test_add_task_key_differing_only_in_case_rejected(board):
+    # arrange
+    board.add_task(mk("PAY-1"), "user")
+
+    # act / assert
+    with pytest.raises(ValueError):
+        board.add_task(mk("pay-1"), "user")
+    assert list(board.store.load_tasks()) == ["PAY-1"]
+    assert board.store.load_tasks()["PAY-1"].title == "PAY-1"
+
+
+def test_add_task_key_starting_with_underscore_rejected(board):
+    # act / assert
+    with pytest.raises(ValueError):
+        board.add_task(mk("_project"), "user")
+    with pytest.raises(ValueError):
+        board.add_task(mk("_x"), "user")
+    assert board.store.load_tasks() == {}
+
+
+def test_add_task_forces_not_started_status(board):
+    # act
+    board.add_task(mk("A", status=Status.DONE), "user")
+
+    # assert
+    assert board.store.load_tasks()["A"].status == Status.NOT_STARTED
+
+
+def test_transition_to_stored_blocked_rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    last = board.snapshot()["last_seq"]
+
+    # act / assert
+    with pytest.raises(ValueError) as ei:
+        board.transition("A", Status.BLOCKED, "user")
+    assert "external_blocker" in str(ei.value)
+    snap = board.snapshot()
+    assert snap["tasks"][0]["status"] == "not_started" and snap["last_seq"] == last
+
+
+def test_agent_message_to_project_with_from_task_wakes_project_agent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    ev = flat(board.post_message("_project", "agent", "нужна помощь", from_task="A"))
+
+    # assert
+    assert ev[0]["type"] == "message_posted"
+    assert wake("_project", "escalation", **{"from": "A"}) in ev
+
+
+def test_agent_message_to_project_without_from_task_does_not_wake(board):
+    # act
+    ev = board.post_message("_project", "agent", "просто так")
+
+    # assert
+    assert [e.type for e in ev] == ["message_posted"]
+
+
+def test_escalation_from_unknown_task_rejected(board):
+    # act / assert
+    with pytest.raises(KeyError):
+        board.post_message("_project", "agent", "x", from_task="NOPE")
+
+
+def test_from_task_ignored_outside_project_thread(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    ev = board.post_message("A", "agent", "готово", from_task="A")
+
+    # assert
+    assert [e.type for e in ev] == ["message_posted"]
+
+
+def test_user_message_wake_carries_message_id(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    ev = flat(board.post_message("A", "user", "привет"))
+
+    # assert
+    assert ev[1] == wake("A", "message", message_id=ev[0]["message_id"])
+
+
+def test_answer_stores_time_and_emits_message_posted(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_PROGRESS, "agent")
+    board.ask("A", Question(id="", text="Как?"))
+
+    # act
+    ev = flat(board.answer("A", "q1", "x", "так"))
+
+    # assert
+    msg = board.store.read_thread("A")[0]
+    assert dict(type="message_posted", thread="A", message_id=msg.id, author="user") in ev
+    assert board.snapshot()["tasks"][0]["questions"][0]["answer"] == {"choice": "x", "comment": "так", "at": NOW}
+
+
+def test_update_task_takes_fields_dict_and_rejects_key_field(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act / assert
+    with pytest.raises(ValueError):
+        board.update_task("A", "agent", {"key": "B"})
+    with pytest.raises(ValueError):
+        board.update_task("A", "agent", {"actor": "x"})
+    with pytest.raises(ValueError):
+        board.update_task("A", "agent", "summary")
+    assert list(board.store.load_tasks()) == ["A"]
+
+
+def test_events_use_board_clock(board):
+    # act
+    ev = board.add_task(mk("A"), "user")
+
+    # assert
+    assert [e.at for e in ev] == [NOW, NOW]
+    assert {e.at for e in board.store.read_events()} == {NOW}
+
+
+def test_user_manual_start_wakes_agent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    ev = flat(board.transition("A", Status.IN_PROGRESS, "user"))
+
+    # assert
+    assert wake("A", "manual") in ev
+
+
+def test_user_manual_start_of_blocked_task_wakes_agent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+
+    # act
+    ev = flat(board.transition("B", Status.IN_PROGRESS, "user"))
+
+    # assert
+    assert wake("B", "manual") in ev
+
+
+def test_manual_start_with_session_or_by_agent_does_not_wake(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    board.update_task("A", "agent", {"session_id": "s1"})
+
+    # act
+    ev_session = board.transition("A", Status.IN_PROGRESS, "user")
+    ev_agent = board.transition("B", Status.IN_PROGRESS, "agent")
+
+    # assert
+    assert [e.type for e in ev_session] == ["status_changed"]
+    assert [e.type for e in ev_agent] == ["status_changed"]
+
+
+def test_uncancel_reenters_readiness(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    board.add_task(mk("C", deps=["B"]), "user")
+    board.transition("A", Status.CANCELLED, "user")
+    board.transition("C", Status.CANCELLED, "user")
+
+    # act
+    ready = flat(board.transition("A", Status.NOT_STARTED, "user"))
+    blocked = flat(board.transition("C", Status.NOT_STARTED, "user"))
+
+    # assert
+    assert wake("A", "ready") in ready
+    assert [e["type"] for e in blocked] == ["status_changed"]
+
+
+def test_snapshot_last_seq_does_not_reread_log(board, monkeypatch):
+    # arrange
+    board.add_task(mk("A"), "user")
+    monkeypatch.setattr(board.store, "read_events", lambda since=0: pytest.fail("журнал перечитан"))
+
+    # act / assert
+    assert board.snapshot()["last_seq"] == 2
+
+
+def test_event_vocabulary_covers_every_emitted_event():
+    # arrange
+    import re
+    from pathlib import Path
+    from agent_board import board as board_mod
+
+    source = Path(board_mod.__file__).read_text(encoding="utf-8")
+
+    # act
+    emitted = set(re.findall(r'_emit\("([a-z_]+)"', source))
+    reasons = set(re.findall(r'"reason": "([a-z_]+)"', source))
+
+    # assert
+    assert emitted and emitted <= set(board_mod.EVENT_TYPES)
+    assert reasons <= set(board_mod.WAKE_REASONS)
+    assert set(board_mod.WAKE_REASONS) == {
+        "ready", "unblocked", "returned", "answer", "message", "proposal_rejected", "escalation", "manual"}
+
+
+def test_new_task_from_dict_builds_task_from_creatable_fields():
+    # arrange
+    from agent_board.board import new_task_from_dict
+
+    # act
+    t = new_task_from_dict({"key": "A", "title": "a", "estimate": 1.5, "deps": [], "kind": "code"})
+
+    # assert
+    assert (t.key, t.title, t.estimate, t.status) == ("A", "a", 1.5, Status.NOT_STARTED)
+
+
+@pytest.mark.parametrize("raw", [
+    {"key": "A", "title": "a", "status": "in_progress"},
+    {"key": "A", "title": "a", "external_blocker": "x"},
+    {"key": "A", "title": "a", "estimate": None, "deps": None},
+    {"key": 1, "title": "a"},
+    {"title": "a"},
+    "A",
+])
+def test_new_task_from_dict_rejects_invalid_input(raw):
+    # arrange
+    from agent_board.board import new_task_from_dict
+
+    # act / assert
+    with pytest.raises(ValueError):
+        new_task_from_dict(raw)

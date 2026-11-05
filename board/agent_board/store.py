@@ -6,17 +6,17 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from .config import ProjectConfig
 from .model import Event, Message, Proposal, Task
 
 PROJECT_THREAD = "_project"
-_IDENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$")
+_IDENT_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
 
 
 def _check_ident(value: str, what: str) -> str:
-    if not isinstance(value, str) or not _IDENT_RE.match(value) or ".." in value:
+    if not isinstance(value, str) or not _IDENT_RE.fullmatch(value) or ".." in value:
         raise ValueError("Недопустимый идентификатор (%s): %r" % (what, value))
     return value
 
@@ -87,6 +87,10 @@ class ProjectStore:
         self._last_seq = None
 
     def create(self, config: ProjectConfig) -> None:
+        # на регистрозависимой ФС иначе появились бы два проекта, неразличимые для пользователя
+        clash = [p for p in list_projects() if p.lower() == self.slug.lower()]
+        if clash:
+            raise FileExistsError("Проект уже существует: %s" % clash[0])
         self.root.mkdir(parents=True, exist_ok=False)
         (self.root / "tasks").mkdir()
         (self.root / "threads").mkdir()
@@ -136,11 +140,15 @@ class ProjectStore:
     def save_meta(self, d: dict) -> None:
         atomic_write_json(self.root / "meta.json", d)
 
-    def append_event(self, type: str, data: dict) -> Event:
+    def last_seq(self) -> int:
         if self._last_seq is None:
             self._last_seq = max((e.seq for e in self.read_events()), default=0)
-        self._last_seq += 1
-        at = datetime.now(timezone.utc).isoformat()
+        return self._last_seq
+
+    def append_event(self, type: str, data: dict, at: Optional[str] = None) -> Event:
+        self._last_seq = self.last_seq() + 1
+        if at is None:
+            at = datetime.now(timezone.utc).isoformat()
         e = Event(seq=self._last_seq, type=type, at=at, data=data)
         _append_jsonl(self.root / "events.jsonl", e.to_dict())
         return e

@@ -142,3 +142,50 @@ def test_meta_merges_over_defaults(tmp_home):
     s = new_store()
     s.save_meta({"other": 1})
     assert s.load_meta() == {"project_unread": 0, "other": 1}
+
+
+def test_identifier_with_trailing_newline_rejected(tmp_home):
+    # arrange
+    s = new_store()
+
+    # act / assert
+    with pytest.raises(ValueError):
+        ProjectStore("abc\n")
+    with pytest.raises(ValueError):
+        s.read_thread("abc\n")
+    with pytest.raises(ValueError):
+        s.save_task(make_task("abc\n"))
+
+
+def test_create_rejects_slug_differing_only_in_case(tmp_home):
+    # arrange
+    new_store("pay")
+
+    # act / assert
+    with pytest.raises(FileExistsError):
+        ProjectStore("PAY").create(ProjectConfig(slug="PAY", title="X"))
+    assert list_projects() == ["pay"]
+
+
+def test_append_event_uses_given_time(tmp_home):
+    # arrange
+    s = new_store()
+
+    # act
+    e = s.append_event("a", {}, at="2030-01-01T00:00:00+00:00")
+
+    # assert
+    assert e.at == "2030-01-01T00:00:00+00:00"
+    assert s.read_events()[0].at == "2030-01-01T00:00:00+00:00"
+
+
+def test_last_seq_uses_cache_without_rereading_log(tmp_home, monkeypatch):
+    # arrange
+    s = new_store()
+    s.append_event("a", {})
+    s.append_event("b", {})
+    monkeypatch.setattr(s, "read_events", lambda since=0: pytest.fail("журнал перечитан"))
+
+    # act / assert
+    assert s.last_seq() == 2
+    assert ProjectStore("pay").last_seq() == 2

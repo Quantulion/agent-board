@@ -11,7 +11,7 @@ import urllib.request
 from typing import List, Optional
 
 from .config import ProjectConfig
-from .server import BoardServer, read_discovery
+from .server import BoardServer, ServerAlreadyRunning, read_discovery
 from .store import ProjectStore
 
 NOT_RUNNING = "доска не запущена: python3 -m agent_board serve"
@@ -72,7 +72,10 @@ def _p(args, suffix: str) -> str:
 
 def cmd_serve(args):
     server = BoardServer(port=args.port)
-    server.start()
+    try:
+        server.start()
+    except ServerAlreadyRunning as e:
+        raise CliError(str(e), 3)
     stop = threading.Event()
     signal.signal(signal.SIGINT, lambda *_: stop.set())
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
@@ -135,7 +138,11 @@ def cmd_ask(args):
 
 
 def cmd_say(args):
-    return _request("POST", _p(args, "threads/%s/messages" % args.thread), {"author": _actor(), "text": args.text})
+    body = {"author": _actor(), "text": args.text}
+    task = os.environ.get("AGENT_BOARD_TASK")
+    if task:
+        body["from_task"] = task
+    return _request("POST", _p(args, "threads/%s/messages" % args.thread), body)
 
 
 def cmd_thread(args):
@@ -167,7 +174,7 @@ def build_parser() -> argparse.ArgumentParser:
         return sp
 
     sp = add("serve", cmd_serve, help="запустить доску")
-    sp.add_argument("--port", type=int, default=0)
+    sp.add_argument("--port", type=int, default=None, help="по умолчанию постоянный 8737–8746")
     sp = add("init", cmd_init, help="создать проект")
     sp.add_argument("slug")
     sp.add_argument("--title", required=True)
