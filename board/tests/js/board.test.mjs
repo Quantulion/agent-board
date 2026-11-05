@@ -211,3 +211,8 @@ test('connectionIndicator: ошибка снимка при живом пото�
   assert.equal(err.failed, true);
   assert.equal(connectionIndicator({ connection: 'offline', error: new Error('x') }).failed, true);
 });
+
+test('connectionIndicator: потерянный доступ — «Нет доступа»', () => {
+  const ind = connectionIndicator({ connection: 'offline', error: Object.assign(new Error('x'), { status: 401 }) });
+  assert.deepEqual(ind, { failed: true, busy: false, text: 'Нет доступа' });
+});

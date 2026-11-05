@@ -11,8 +11,9 @@ export class ApiError extends Error {
 export function api(slug, fetchFn = (...args) => globalThis.fetch(...args)) {
   const base = slug ? '/api/p/' + encodeURIComponent(slug) : '/api';
 
-  async function request(method, path, body) {
+  async function request(method, path, body, signal) {
     const init = { method, credentials: 'same-origin', headers: {} };
+    if (signal) init.signal = signal;
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';
       init.body = JSON.stringify(body);
@@ -34,7 +35,7 @@ export function api(slug, fetchFn = (...args) => globalThis.fetch(...args)) {
   }
 
   return {
-    get: path => request('GET', path),
+    get: (path, opts = {}) => request('GET', path, undefined, opts.signal),
     post: (path, body) => request('POST', path, body || {}),
   };
 }

@@ -336,3 +336,76 @@ test('onEvent получает разобранные события поток�
   ]);
   store.stop();
 });
+
+test('неудачное чтение снимка повторяется по таймеру 1→8 с и без событий', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  let calls = 0;
+  const api = { get: async () => { calls++; if (calls < 7) throw Object.assign(new Error('boom'), { status: 500 }); return snap(5, []); } };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  // act
+  store.start();
+  await flush();
+  const seen = [calls];
+  for (const ms of [999, 1, 2000, 4000, 8000, 8000]) {
+    await timers.advance(ms);
+    seen.push(calls);
+  }
+  await timers.advance(60000);
+  // assert
+  assert.deepEqual(seen, [1, 1, 2, 3, 4, 5, 6]);
+  assert.equal(calls, 7);
+  assert.equal(store.get().error, null);
+  assert.equal(store.get().snapshot.last_seq, 5);
+  store.stop();
+});
+
+test('зависшее чтение снимка прерывается через 15 с и не блокирует следующие', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  const signals = [];
+  const api = {
+    get: (path, opts) => {
+      signals.push(opts && opts.signal);
+      return signals.length === 1 ? new Promise(() => {}) : Promise.resolve(snap(5, []));
+    },
+  };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  store.start();
+  await flush();
+  // act
+  await timers.advance(14999);
+  const beforeTimeout = signals[0].aborted;
+  await timers.advance(1);
+  // assert
+  assert.equal(beforeTimeout, false);
+  assert.equal(signals[0].aborted, true);
+  assert.equal(store.get().error.status, 0);
+  FakeEventSource.instances[0].emit('task_added', 6);
+  await timers.advance(150);
+  assert.equal(signals.length, 2);
+  assert.equal(store.get().snapshot.last_seq, 5);
+  store.stop();
+});
+
+test('поток не открылся, а снимок отвечает 401 — доступ потерян, переподключений нет', async () => {
+  // arrange
+  FakeEventSource.instances = [];
+  const timers = fakeTimers();
+  let calls = 0;
+  const api = { get: async () => { calls++; if (calls === 1) return snap(5, []); throw Object.assign(new Error('x'), { status: 401 }); } };
+  const store = createStore('pay', api, { EventSource: FakeEventSource, timers });
+  store.start();
+  await flush();
+  // act
+  FakeEventSource.instances[0].onerror();
+  await flush();
+  await timers.advance(60000);
+  // assert
+  assert.equal(calls, 2);
+  assert.equal(FakeEventSource.instances.length, 1);
+  assert.equal(store.get().connection, 'offline');
+  assert.equal(store.get().error.status, 401);
+});

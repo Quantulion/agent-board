@@ -10,10 +10,11 @@ import { mountProjectPanel, proposalsTouching } from './project.js';
 export function connectionIndicator(state) {
   const reconnecting = state.connection === 'reconnecting';
   const failed = Boolean(state.error) && !reconnecting;
+  const denied = failed && state.error.status === 401;
   return {
     failed,
     busy: !failed && state.connection !== 'live',
-    text: failed ? T.syncError : T.connection[state.connection] || state.connection,
+    text: denied ? T.unauthorized : failed ? T.syncError : T.connection[state.connection] || state.connection,
   };
 }
 

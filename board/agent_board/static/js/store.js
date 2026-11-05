@@ -1,5 +1,6 @@
 // Живое состояние проекта: снимок с сервера плюс поток событий SSE.
 // События лишь сигналят «что-то изменилось» — правдой остаётся перечитанный снимок.
+import { T } from './i18n.js';
 
 // Типы событий журнала (сервер шлёт именованные события, EventSource требует подписки на каждый).
 export const EVENT_TYPES = [
@@ -13,11 +14,18 @@ export const EVENT_TYPES = [
 export const COALESCE_MS = 150;
 // столько нужно провести в сети без событий, чтобы следующая ошибка снова начала с короткой задержки
 export const STABLE_MS = 5000;
+// дольше снимок не ждём: зависший запрос не должен навсегда занять очередь чтений
+export const SNAPSHOT_TIMEOUT_MS = 15000;
 // снимок с такой ошибкой не появится сам: поток закрывается до ручной перезагрузки
 const FATAL_STATUSES = new Set([401, 404]);
 
 export function nextBackoff(n) {
   return Math.min(8000, 500 * 2 ** Math.max(0, n));
+}
+
+// пауза перед повторным чтением снимка после ошибки: 1, 2, 4, 8 с
+export function retryDelay(n) {
+  return Math.min(8000, 1000 * 2 ** Math.max(0, n));
 }
 
 // Задача считается изменённой, если отличается любое поле снимка (статус, замки, тред и т. п.).
@@ -49,6 +57,8 @@ export function createStore(slug, client, options = {}) {
   let reconnectTimer = null;
   let stableTimer = null;
   let refreshTimer = null;
+  let retryTimer = null;
+  let failures = 0;
   let inFlight = false;
   let again = false;
 
@@ -83,20 +93,43 @@ export function createStore(slug, client, options = {}) {
     notify({ tasks: new Set([...d.added, ...d.removed, ...d.changed]), snapshot: true, connection: false });
   }
 
+  async function readSnapshot() {
+    const ctrl = new AbortController();
+    let timer = null;
+    const timeout = new Promise((resolve, reject) => {
+      timer = timers.setTimeout(() => {
+        timer = null;
+        ctrl.abort();
+        reject(Object.assign(new Error(T.snapshotTimeout), { status: 0 }));
+      }, SNAPSHOT_TIMEOUT_MS);
+    });
+    try {
+      return await Promise.race([client.get('/state', { signal: ctrl.signal }), timeout]);
+    } finally {
+      if (timer !== null) timers.clearTimeout(timer);
+    }
+  }
+
   // Чтения снимка не перекрываются: запрос во время чтения выполнится сразу после него.
+  // Неудачное чтение повторяется само, даже если новых событий нет.
   async function refresh() {
     if (inFlight) {
       again = true;
       return;
     }
     inFlight = true;
+    clearTimer('retry');
     try {
-      const snap = await client.get('/state');
-      if (running) apply(snap);
+      const snap = await readSnapshot();
+      if (running) {
+        failures = 0;
+        apply(snap);
+      }
     } catch (e) {
       if (running) {
         state = { ...state, error: e };
         if (e && FATAL_STATUSES.has(e.status)) halt();
+        else if (!again) retryTimer = timers.setTimeout(() => { retryTimer = null; refresh(); }, retryDelay(failures++));
         notify({ tasks: new Set(), snapshot: false, connection: true });
       }
     } finally {
@@ -117,17 +150,18 @@ export function createStore(slug, client, options = {}) {
   }
 
   function clearTimer(which) {
-    const t = which === 'stable' ? stableTimer : which === 'reconnect' ? reconnectTimer : refreshTimer;
+    const t = { stable: stableTimer, reconnect: reconnectTimer, refresh: refreshTimer, retry: retryTimer }[which];
     if (t !== null) timers.clearTimeout(t);
     if (which === 'stable') stableTimer = null;
     else if (which === 'reconnect') reconnectTimer = null;
+    else if (which === 'retry') retryTimer = null;
     else refreshTimer = null;
   }
 
   function closeAll() {
     if (es) es.close();
     es = null;
-    for (const which of ['stable', 'reconnect', 'refresh']) clearTimer(which);
+    for (const which of ['stable', 'reconnect', 'refresh', 'retry']) clearTimer(which);
   }
 
   // Неустранимая ошибка: поток и переподключения прекращаются, состояние остаётся видимым.
@@ -142,7 +176,9 @@ export function createStore(slug, client, options = {}) {
     if (!running) return;
     const source = new ES('/api/p/' + encodeURIComponent(slug) + '/stream?since=' + lastSeq);
     es = source;
+    let opened = false;
     source.onopen = () => {
+      opened = true;
       clearTimer('stable');
       stableTimer = timers.setTimeout(() => { stableTimer = null; attempt = 0; }, STABLE_MS);
       setConnection('live');
@@ -155,6 +191,8 @@ export function createStore(slug, client, options = {}) {
       clearTimer('stable');
       setConnection('reconnecting');
       reconnectTimer = timers.setTimeout(connect, nextBackoff(attempt++));
+      // поток так и не открылся: причину (например, потерянный доступ) покажет чтение снимка
+      if (!opened && retryTimer === null) refresh();
     };
     for (const type of EVENT_TYPES) {
       source.addEventListener(type, e => {

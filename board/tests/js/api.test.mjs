@@ -63,3 +63,13 @@ test('сетевой сбой — ApiError со статусом 0', async () =>
   assert.ok(err instanceof ApiError);
   assert.equal(err.status, 0);
 });
+
+test('get передаёт сигнал отмены в fetch', async () => {
+  // arrange
+  const fetch = fakeFetch(200, {});
+  const ctrl = new AbortController();
+  // act
+  await api('pay', fetch).get('/state', { signal: ctrl.signal });
+  // assert
+  assert.equal(fetch.calls[0].init.signal, ctrl.signal);
+});

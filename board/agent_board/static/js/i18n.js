@@ -45,6 +45,7 @@ export const T = {
     offline: 'Нет связи',
   },
   syncError: 'Ошибка загрузки',
+  snapshotTimeout: 'Сервер не ответил за 15 с',
   unauthorized: 'Нет доступа',
   unauthorizedHint: 'Откройте ссылку с токеном, которую печатает agent-board serve.',
   notFound: 'Страница не найдена',
