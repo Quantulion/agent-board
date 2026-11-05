@@ -207,21 +207,24 @@ def _snapshot(path: Path, message: str) -> str:
     return run_git(path, "commit-tree", work_tree, *parents, "-m", message).strip()
 
 
-def _restore(path: Path, snapshot: str) -> Tuple[bool, List[str]]:
+def _restore(path: Path, snapshot: str, ref: str) -> Tuple[bool, List[str]]:
     """Возвращает сохранённую работу в файлы: (вернулась ли, файлы с маркерами конфликта).
 
-    Если не вернулась, файлы остаются как в HEAD."""
+    Если не вернулась, файлы остаются как в HEAD. При сбое git ошибка называет ref, где лежит работа."""
     res = _git(path, "stash", "apply", snapshot)
     if res.returncode == 0:
         return True, []
-    conflicts = unmerged_files(path)
-    if not conflicts:
-        # работа могла вернуться частично: дерево возвращаем к HEAD, вся работа остаётся в снимке
-        run_git(path, "reset", "-q", "--hard")
-        run_git(path, "clean", "-fdq")
-        return False, []
-    # индекс без конфликтных записей: агент разрешает конфликт правкой файлов, коммитит раннер
-    run_git(path, "reset", "-q")
+    try:
+        conflicts = unmerged_files(path)
+        if not conflicts:
+            # работа могла вернуться частично: дерево возвращаем к HEAD, вся работа остаётся в снимке
+            run_git(path, "reset", "-q", "--hard")
+            run_git(path, "clean", "-fdq")
+            return False, []
+        # индекс без конфликтных записей: агент разрешает конфликт правкой файлов, коммитит раннер
+        run_git(path, "reset", "-q")
+    except GitError as e:
+        raise GitError("{}; uncommitted work is saved at {}".format(e, ref))
     return True, conflicts
 
 
@@ -243,12 +246,12 @@ def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcom
     try:
         ok = rebase_onto(path, new_base)
     except GitError as e:
-        restored, _ = _restore(path, snapshot)
+        restored, _ = _restore(path, snapshot, ref)
         if not restored:
             raise GitError("{}; uncommitted work is saved at {}".format(e, ref))
         run_git(path, "update-ref", "-d", ref)
         raise
-    restored, conflicts = _restore(path, snapshot)
+    restored, conflicts = _restore(path, snapshot, ref)
     if not restored:
         return RebaseOutcome(ok, [], carried_ref=ref)
     run_git(path, "update-ref", "-d", ref)

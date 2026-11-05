@@ -470,3 +470,34 @@ def test_rebase_refuses_when_rebase_already_in_progress(git_repo, call):
         call(p)
     assert any((p / ".." / ".." / ".git" / "worktrees" / "T-1" / name).resolve().exists()
                for name in ("rebase-merge", "rebase-apply"))
+
+
+def test_rebase_carrying_changes_reset_failure_after_restore_names_carry_ref(git_repo, monkeypatch):
+    # arrange: работа возвращается с конфликтом, а сброс индекса после этого падает
+    import agent_board.worktree as wt
+
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    commit_file(git_repo, "a.txt", "theirs\n")
+    applied = {"done": False}
+    real_git, real_run = wt._git, wt.run_git
+
+    def fake_git(cwd, *args):
+        res = real_git(cwd, *args)
+        if args[:2] == ("stash", "apply"):
+            applied["done"] = True
+        return res
+
+    def fake_run(repo, *args):
+        if applied["done"] and args[0] in ("reset", "clean"):
+            raise GitError("index.lock exists")
+        return real_run(repo, *args)
+
+    monkeypatch.setattr(wt, "_git", fake_git)
+    monkeypatch.setattr(wt, "run_git", fake_run)
+    # act
+    with pytest.raises(GitError) as err:
+        rebase_carrying_changes(p, "main", carry_ref("T-1"))
+    # assert
+    assert carry_ref("T-1") in str(err.value) and "index.lock exists" in str(err.value)
+    assert real_run(p, "rev-parse", "-q", "--verify", carry_ref("T-1")).strip()
