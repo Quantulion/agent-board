@@ -970,6 +970,41 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     assert "продолжайте" in [c for c in calls if c["env"]["AGENT_BOARD_ACTOR"] == "project_agent"][-1]["text"]
 
 
+def _park_task_agent(store, srv):
+    """Доводит переписку агентов до остановки у задачи T-1."""
+    add(srv, "T-1", script({"pingpong": "T-1"}))
+    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    srv.board_for("pay").post_message("_project", "user", "продолжайте")
+    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: not srv.runner._turns, what="ходы закончились")
+    runner_sync(srv)
+    assert store.load_tasks()["T-1"].agent_parked is True
+
+
+def test_user_message_clears_task_agent_parked(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    _park_task_agent(store, srv)
+    # act
+    srv.board_for("pay").post_message("T-1", "user", "смотри сюда")
+    runner_sync(srv)
+    # assert
+    wait_for(lambda: store.load_tasks()["T-1"].agent_parked is False, what="флаг остановки снят")
+
+
+def test_user_status_change_clears_task_agent_parked(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    _park_task_agent(store, srv)
+    # act
+    srv.board_for("pay").transition("T-1", Status.CANCELLED, "user")
+    runner_sync(srv)
+    # assert
+    wait_for(lambda: store.load_tasks()["T-1"].agent_parked is False, what="флаг остановки снят")
+
+
 def test_restart_clears_parked_flags(make_project, start_server):
     # arrange: счётчик переписки живёт в памяти, после перезапуска остановка снята
     store = make_project(project_session_id="p-1")
