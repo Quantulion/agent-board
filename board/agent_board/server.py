@@ -23,6 +23,7 @@ from .store import ProjectStore, atomic_write_json, board_home, list_projects
 from .worktree import GitError, changed_files, diff as worktree_diff, worktree_path
 
 COOKIE_NAME = "board_token"
+COOKIE_MAX_AGE = 30 * 24 * 3600
 KEEPALIVE_SECONDS = 15
 MAX_BODY = 4 * 1024 * 1024
 MAX_DIFF_BYTES = 400 * 1024
@@ -278,7 +279,8 @@ class _Handler(BaseHTTPRequestHandler):
         headers: List[Tuple[str, str]] = []
         if path == "/":
             if self._token_ok((query.get("token") or [None])[0]):
-                headers.append(("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Strict" % (COOKIE_NAME, self.app.token)))
+                headers.append(("Set-Cookie", "%s=%s; Path=/; Max-Age=%d; HttpOnly; SameSite=Strict" % (
+                    COOKIE_NAME, self.app.token, COOKIE_MAX_AGE)))
             rel = "index.html"
         elif path.startswith("/static/"):
             rel = unquote(path[len("/static/"):])

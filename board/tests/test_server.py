@@ -103,6 +103,7 @@ def test_cookie_set_from_query_token(server):
     cookie = r.headers["Set-Cookie"]
     assert "board_token=%s" % server.token in cookie
     assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    assert "Max-Age=%d" % (30 * 24 * 3600) in cookie
     assert '<script type="module" src="/static/js/main.js"></script>' in r.body.decode()
     # куки достаточно для API
     r2 = get(server, "/api/projects", token=None, headers={"Cookie": "board_token=%s" % server.token})
