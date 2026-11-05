@@ -185,6 +185,13 @@ class Board:
                 events.extend(self._manual_wake(task, prev))
             return events
 
+    def transition_if(self, key: str, expected: Status, to: Status, actor: str) -> List[Event]:
+        """Переводит задачу, только если она сейчас в статусе expected; иначе ничего не делает."""
+        with self._lock:
+            if self._get(self.store.load_tasks(), key).status != Status(expected):
+                return []
+            return self.transition(key, to, actor)
+
     def _terminal_command(self, task: Task) -> Optional[str]:
         hook = self.terminal_command_for
         if hook is None or not task.session_id:

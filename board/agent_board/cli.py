@@ -181,12 +181,15 @@ def cmd_lock_run(args):
     task = os.environ.get("AGENT_BOARD_TASK")
     if not task:
         raise CliError("Не задана переменная $AGENT_BOARD_TASK")
-    interval = float(os.environ.get("AGENT_BOARD_LOCK_POLL") or LOCK_POLL_SECONDS)
-    pid = os.getpid()
+    interval = _lock_interval()
+    body = {"task": task, "pid": os.getpid()}
     base = _p(args, "locks/%s/" % args.resource)
-    body = {"task": task, "pid": pid}
+    previous = _interrupt_on_termination()
+    queued = False
+    child = None
     try:
         position = _lock_call(base + "acquire", body)
+        queued = True
         shown = None
         while position > 0:
             if position != shown:
@@ -195,27 +198,68 @@ def cmd_lock_run(args):
             time.sleep(interval)
             position = _lock_call(base + "poll", body)
         try:
-            code = subprocess.call(cmd)
+            child = subprocess.Popen(cmd)
         except OSError as e:
             print("Не удалось запустить %s: %s" % (cmd[0], e), file=sys.stderr)
-            code = 127
-        raise ExitWith(code)
+            raise ExitWith(127)
+        raise ExitWith(child.wait())
+    except KeyboardInterrupt:
+        _stop_child(child)
+        raise ExitWith(130)
     finally:
-        try:
-            _request("POST", base + "release", body)
-        except CliError as e:
-            print("Не удалось освободить ресурс %s: %s" % (args.resource, e), file=sys.stderr)
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+        if queued:
+            try:
+                _request("POST", base + "release", body)
+            except CliError as e:
+                print("Не удалось освободить ресурс %s: %s" % (args.resource, e), file=sys.stderr)
+
+
+def _lock_interval() -> float:
+    return float(os.environ.get("AGENT_BOARD_LOCK_POLL") or LOCK_POLL_SECONDS)
+
+
+def _interrupt_on_termination() -> dict:
+    """SIGTERM/SIGHUP превращаются в KeyboardInterrupt, чтобы отработали очистка и освобождение ресурса."""
+    if threading.current_thread() is not threading.main_thread():
+        return {}
+
+    def handler(signum, frame):
+        raise KeyboardInterrupt
+
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        previous[sig] = signal.signal(sig, handler)
+    return previous
+
+
+def _stop_child(child) -> None:
+    if child is None:
+        return
+    try:
+        child.terminate()
+        child.wait(5)
+    except (subprocess.TimeoutExpired, KeyboardInterrupt):
+        child.kill()
+        child.wait()
+    except OSError:
+        pass
 
 
 def _lock_call(path: str, body: dict) -> int:
-    # при недоступном сервере (рестарт) ждём и повторяем; очередь сама восстановит запись
+    # при недоступной доске (рестарт) ждём и повторяем: очередь хранится на диске
+    warned = False
     while True:
         try:
             return _request("POST", path, body)["position"]
         except CliError as e:
             if e.code != 2:
                 raise
-            time.sleep(float(os.environ.get("AGENT_BOARD_LOCK_POLL") or LOCK_POLL_SECONDS))
+            if not warned:
+                print("доска недоступна, жду…", file=sys.stderr, flush=True)
+                warned = True
+            time.sleep(_lock_interval())
 
 
 def build_parser() -> argparse.ArgumentParser:

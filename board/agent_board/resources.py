@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 import threading
 from typing import Dict, List, Optional
 
 from .board import Board
 from .model import Status
+from .store import atomic_write_json
 
 
 def _pid_alive(pid: int) -> bool:
@@ -35,6 +37,9 @@ class ResourceQueue:
         self._board = board
         self._lock = threading.RLock()
         self._queues: Dict[str, List[_Entry]] = {}
+        self._path = board.store.root / "locks.json"
+        self._load()
+        self.reap()
 
     def acquire(self, resource: str, task: str, pid: int) -> int:
         with self._lock:
@@ -44,6 +49,7 @@ class ResourceQueue:
             if not any(e.task == task and e.pid == pid for e in queue):
                 queue.append(_Entry(task, pid))
             self._refresh(resource)
+            self._save()
             return self._find(resource, task, pid).position or 0
 
     def poll(self, resource: str, task: str, pid: int) -> int:
@@ -60,6 +66,7 @@ class ResourceQueue:
                 self._leave(resource, entry)
             self.reap()
             self._refresh(resource)
+            self._save()
 
     def reap(self) -> None:
         """Снимает держателей и ожидающих, чьи процессы умерли."""
@@ -71,6 +78,32 @@ class ResourceQueue:
                     self._leave(resource, entry)
                 if dead:
                     self._refresh(resource)
+                    self._save()
+
+    def _load(self) -> None:
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        for resource, items in raw.items():
+            queue = []
+            for index, item in enumerate(items):
+                entry = _Entry(item["task"], int(item["pid"]))
+                entry.acquired = bool(item.get("acquired"))
+                entry.restore = Status(item["restore"]) if item.get("restore") else None
+                entry.position = index
+                queue.append(entry)
+            self._queues[resource] = queue
+
+    def _save(self) -> None:
+        data = {
+            resource: [
+                {"task": e.task, "pid": e.pid, "acquired": e.acquired, "restore": e.restore.value if e.restore else None}
+                for e in queue
+            ]
+            for resource, queue in self._queues.items()
+        }
+        atomic_write_json(self._path, data)
 
     def _check(self, resource: str, task: str) -> None:
         declared = [r.get("name") for r in self._board.store.load_config().resources]
@@ -103,13 +136,25 @@ class ResourceQueue:
 
     def _mark_queued(self, entry: _Entry) -> None:
         task = self._board.store.load_tasks().get(entry.task)
-        if task is None or entry.restore is not None or task.status == Status.QUEUED:
+        if task is None or task.status == Status.QUEUED:
             return
-        entry.restore = task.status
-        self._board.transition(entry.task, Status.QUEUED, "system")
+        prev = task.status
+        if self._board.transition_if(entry.task, prev, Status.QUEUED, "system"):
+            entry.restore = prev
 
     def _restore_status(self, entry: _Entry) -> None:
-        restore, entry.restore = entry.restore, None
-        task = self._board.store.load_tasks().get(entry.task)
-        if restore is not None and task is not None and task.status == Status.QUEUED:
-            self._board.transition(entry.task, restore, "system")
+        """Возвращает прежний статус, когда задача больше не ждёт ни один ресурс проекта."""
+        siblings = [e for q in self._queues.values() for e in q if e.task == entry.task and e is not entry]
+        remembered = entry.restore
+        entry.restore = None
+        if any((e.position or 0) > 0 for e in siblings):
+            for e in siblings:
+                if remembered is not None and e.restore is None:
+                    e.restore = remembered
+                    break
+            return
+        for e in siblings:
+            remembered = remembered or e.restore
+            e.restore = None
+        if remembered is not None:
+            self._board.transition_if(entry.task, Status.QUEUED, remembered, "system")

@@ -131,6 +131,42 @@ def test_waiter_leaving_queue_restores_status(queue):
     assert events(queue, "lock_released") == []
 
 
+def test_queue_survives_restart_and_restores_status(queue):
+    # arrange
+    queue._board.transition("T2", Status.IN_PROGRESS, "user")
+    queue.acquire("tests", "T1", PID)
+    queue.acquire("tests", "T2", PID)
+    # act
+    reborn = ResourceQueue(queue._board)
+    position = reborn.acquire("tests", "T3", PID)
+    reborn.release("tests", "T1", PID)
+    # assert
+    assert position == 2
+    assert reborn.poll("tests", "T2", PID) == 0
+    assert status(queue, "T2") == Status.IN_PROGRESS
+    assert [e for e in events(queue, "lock_waiting") if e["key"] == "T2"] == [{"key": "T2", "resource": "tests", "position": 1}]
+
+
+def test_task_waiting_on_two_resources_stays_queued_until_both_free(queue):
+    # arrange
+    config = queue._board.store.load_config()
+    config.resources.append({"name": "stand", "description": ""})
+    queue._board.store.save_config(config)
+    queue.acquire("tests", "T1", PID)
+    queue.acquire("stand", "T3", PID)
+    queue.acquire("tests", "T2", PID)
+    queue.acquire("stand", "T2", PID)
+    # act
+    queue.release("tests", "T1", PID)
+    queue.poll("tests", "T2", PID)
+    after_first = status(queue, "T2")
+    queue.release("stand", "T3", PID)
+    queue.poll("stand", "T2", PID)
+    # assert
+    assert after_first == Status.QUEUED
+    assert status(queue, "T2") == Status.NOT_STARTED
+
+
 def test_undeclared_resource_raises_value_error_listing_declared(queue):
     # act / assert
     with pytest.raises(ValueError, match="tests"):

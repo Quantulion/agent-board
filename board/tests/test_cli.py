@@ -237,3 +237,104 @@ def test_lock_run_undeclared_resource_fails(srv, capsys, monkeypatch):
     code, _, err = run(capsys, "lock-run", "stand", "--", "true")
     # assert
     assert code == 1 and "stand" in err
+
+
+def test_lock_run_keyboard_interrupt_releases_lock(srv, capsys, monkeypatch):
+    # arrange
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+
+    class Interrupted:
+        calls = 0
+
+        def wait(self, timeout=None):
+            Interrupted.calls += 1
+            if Interrupted.calls == 1:
+                raise KeyboardInterrupt
+            return -15
+
+        def terminate(self):
+            pass
+
+        def kill(self):
+            pass
+
+    monkeypatch.setattr("agent_board.cli.subprocess.Popen", lambda *a, **k: Interrupted())
+    # act
+    code, _, _ = run(capsys, "lock-run", "tests", "--", "whatever")
+    # assert
+    assert code == 130
+    assert len(_lock_events("lock_released")) == 1
+
+
+@pytest.mark.parametrize("sig", ["SIGTERM", "SIGHUP"])
+def test_lock_run_signal_kills_child_and_releases(srv, capsys, monkeypatch, tmp_path, sig):
+    # arrange
+    import signal
+    import subprocess
+    import time
+    from pathlib import Path
+
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    pidfile = tmp_path / "child.pid"
+    env = dict(os.environ, AGENT_BOARD_TASK="T-1", PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    child = "import os, time; open(%r, 'w').write(str(os.getpid())); time.sleep(30)" % str(pidfile)
+    proc = subprocess.Popen([sys.executable, "-m", "agent_board", "lock-run", "tests", "--", sys.executable, "-c", child], env=env)
+    try:
+        deadline = time.time() + 10
+        while time.time() < deadline and not (pidfile.exists() and pidfile.read_text()):
+            time.sleep(0.02)
+        child_pid = int(pidfile.read_text())
+        # act
+        proc.send_signal(getattr(signal, sig))
+        proc.wait(10)
+        # assert
+        deadline = time.time() + 5
+        alive = True
+        while alive and time.time() < deadline:
+            try:
+                os.kill(child_pid, 0)
+                time.sleep(0.02)
+            except ProcessLookupError:
+                alive = False
+        assert not alive
+        assert len(_lock_events("lock_released")) == 1
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_lock_run_waits_quietly_for_unreachable_board_once(srv, capsys, monkeypatch):
+    # arrange
+    from agent_board import cli
+
+    _declare_resource(srv)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    monkeypatch.setenv("AGENT_BOARD_LOCK_POLL", "0.01")
+    real = cli._request
+    state = {"fails": 3}
+
+    def flaky(method, path, body=None):
+        if state["fails"] > 0 and path.endswith("/acquire"):
+            state["fails"] -= 1
+            raise cli.CliError(cli.NOT_RUNNING, 2)
+        return real(method, path, body)
+
+    monkeypatch.setattr(cli, "_request", flaky)
+    # act
+    code, _, err = run(capsys, "lock-run", "tests", "--", sys.executable, "-c", "pass")
+    # assert
+    assert code == 0 and err.count("доска недоступна") == 1
+
+
+def test_lock_run_undeclared_resource_prints_single_error(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    # act
+    code, _, err = run(capsys, "lock-run", "stand", "--", "true")
+    # assert
+    assert code == 1 and len(err.strip().splitlines()) == 1

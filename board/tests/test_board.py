@@ -646,3 +646,23 @@ def test_snapshot_survives_raising_terminal_command_hook(board, capsys):
     # assert
     assert tasks[0]["terminal_command"] is None
     assert "terminal_command_for" in capsys.readouterr().err
+
+
+def test_transition_if_skips_when_status_differs(board):
+    # arrange
+    board.add_task(mk("T1"), "user")
+    before = board.store.last_seq()
+    # act
+    events = board.transition_if("T1", Status.IN_PROGRESS, Status.QUEUED, "system")
+    # assert
+    assert events == [] and board.store.last_seq() == before
+    assert board.store.load_tasks()["T1"].status == Status.NOT_STARTED
+
+
+def test_transition_if_applies_when_status_matches(board):
+    # arrange
+    board.add_task(mk("T1"), "user")
+    # act
+    events = board.transition_if("T1", Status.NOT_STARTED, Status.QUEUED, "system")
+    # assert
+    assert events and board.store.load_tasks()["T1"].status == Status.QUEUED
