@@ -16,6 +16,9 @@ agent-board = "agent_board.cli:main"
 package-dir = {"" = "board"}
 packages = ["agent_board"]
 
+[tool.setuptools.package-data]
+agent_board = ["prompts/*.md"]
+
 [tool.pytest.ini_options]
 testpaths = ["board/tests"]
 pythonpath = ["board"]
