@@ -102,6 +102,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
   let loading = false;
   let reading = false;
   let firstShown = false;
+  let locked = false;
 
   const atBottom = () => scroller().scrollHeight - scroller().scrollTop - scroller().clientHeight < BOTTOM_SLACK;
   const toBottom = () => { scroller().scrollTop = scroller().scrollHeight; };
@@ -135,7 +136,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
 
   function submit() {
     const text = area.value.trim();
-    if (!text || send.disabled) return;
+    if (!text || send.disabled || locked) return;
     // поле сразу свободно для следующего сообщения; при ошибке отправленный текст возвращается в него
     const sent = area.value;
     area.value = '';
@@ -150,7 +151,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
         sendError.textContent = (err && err.message) || String(err);
         sendError.hidden = false;
       })
-      .finally(() => { send.disabled = false; });
+      .finally(() => { send.disabled = locked; });
   }
 
   return {
@@ -165,6 +166,12 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
       empty.hidden = messages.length > 0 || size > 0;
       if (size > messages.length) load();
       markRead();
+    },
+    // только чтение: история видна, писать нельзя
+    setLocked(on) {
+      locked = Boolean(on);
+      area.disabled = locked;
+      send.disabled = locked;
     },
     shown() {
       if (!firstShown) {

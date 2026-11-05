@@ -407,6 +407,47 @@ def test_first_project_wake_starts_session_with_project_prompt(make_project, sta
     assert store.load_meta()["project_agent_state"] == "idle"
 
 
+def test_user_comment_on_task_during_decomposition_goes_to_project_agent(make_project, start_server, calls):
+    # arrange
+    store = make_project(stage="decomposition", project_session_id="p-1")
+    srv = start_server()
+    add(srv, "T-1")
+    # act
+    srv.board_for("pay").post_message("T-1", "user", "раздели на две")
+    wait_events(store, "turn_finished", "_project")
+    runner_sync(srv)
+    # assert
+    assert [(c["kind"], c["env"]["AGENT_BOARD_ACTOR"]) for c in calls] == [("resume", "project_agent")]
+    assert "Comment from the user on task T-1" in calls[0]["text"] and "раздели на две" in calls[0]["text"]
+    assert not events(store, "turn_started", "T-1")
+
+
+def test_project_agent_state_changes_are_journaled(make_project, start_server, calls):
+    # arrange
+    store = make_project(stage="decomposition", project_session_id="p-1")
+    srv = start_server()
+    # act
+    srv.board_for("pay").post_message("_project", "user", "привет")
+    wait_events(store, "turn_finished", "_project")
+    runner_sync(srv)
+    # assert
+    changes = [e.data for e in events(store, "project_agent_changed")]
+    assert changes[-2:] == [{"state": "running", "parked": False}, {"state": "idle", "parked": False}]
+
+
+def test_project_agent_parking_is_journaled(make_project, start_server):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    meta = store.load_meta()
+    meta["project_agent_parked"] = True
+    store.save_meta(meta)
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    assert {"state": "idle", "parked": False} in [e.data for e in events(store, "project_agent_changed")]
+
+
 def test_work_stage_starts_project_agent_on_runner_start(make_project, start_server, calls):
     # arrange
     store = make_project(stage="work")

@@ -269,8 +269,8 @@ try {
   await page.type('#nt-description', 'Сравнить выгрузки из MSSQL и PG за месяц.');
   await page.type('#nt-estimate', '1,5');
   await page.type('.modal .pick-search', '109');
-  results.pickerVisible = await page.$$eval('.modal .picker label', els => els.filter(e => !e.hidden).map(e => e.querySelector('.k').textContent));
-  await page.click('.modal .picker label:not([hidden]) input');
+  results.pickerVisible = await page.$$eval('#nt-deps label', els => els.filter(e => !e.hidden).map(e => e.querySelector('.k').textContent));
+  await page.click('#nt-deps label:not([hidden]) input');
   results.preview = await page.$eval('.modal .preview', el => el.textContent);
   for (const theme of ['light', 'dark']) {
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);

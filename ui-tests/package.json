@@ -7,7 +7,8 @@
     "skeleton": "node skeleton.mjs",
     "board": "node board.mjs",
     "card": "node card.mjs",
-    "graph": "node graph.mjs"
+    "graph": "node graph.mjs",
+    "decomposition": "node decomposition.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"

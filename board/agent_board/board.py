@@ -62,6 +62,7 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_acquired": "key, resource",
     "lock_released": "key, resource",
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
+    "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -70,7 +71,8 @@ WAKE_REASONS: Dict[str, str] = {
     "unblocked": "закрылись зависимости или снят внешний блокер",
     "returned": "from — пользователь вернул задачу в работу с этого статуса",
     "answer": "пользователь ответил на вопрос агента",
-    "message": "message_id, by (автор: user или project_agent) — новое сообщение для агента",
+    "message": "message_id, by (автор: user или project_agent), task (у агента проекта: задача, к которой "
+               "пользователь оставил комментарий на стадии разбивки) — новое сообщение для агента",
     "proposal_rejected": "агенту проекта отклонили предложение",
     "escalation": "from, by (agent) — агент задачи написал в тред проекта",
     "manual": "пользователь сам запустил задачу без сессии агента",
@@ -402,7 +404,11 @@ class Board:
                     self.store.save_meta(meta)
             events = [self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})]
             wakes_agent = author == "user" or (author == "project_agent" and task is not None)
-            if wakes_agent:
+            if author == "user" and task is not None and self.store.load_config().stage == "decomposition":
+                # агентов задач до утверждения разбивки нет: комментарий к задаче читает агент проекта
+                events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "message", "task": thread,
+                                                        "message_id": msg.id, "by": author}))
+            elif wakes_agent:
                 events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": msg.id,
                                                         "by": author}))
             elif author == "agent" and from_task:

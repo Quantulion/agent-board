@@ -8,6 +8,8 @@ export const NODE_H = 72;
 const COL_GAP = 60;
 const ROW_GAP = 14;
 const PAD = 18;
+// место над узлами под подписи слоёв «Шаг N · параллельно: M»
+const LANE_TOP = 52;
 const SWEEPS = 4;
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
@@ -156,13 +158,14 @@ export function layoutGraph(tasks, options = {}) {
   best.forEach((l, i) => { layers[i] = l; });
   place();
 
+  const top = options.lanes ? LANE_TOP : PAD;
   const crit = longestPath(s, new Set(options.skipCritical || ['cancelled']));
   const onPath = new Set(crit.path);
   const nodes = s.keys.map(k => {
     const p = pos.get(k);
     return {
       key: k, layer: p.layer, order: p.order, w: NODE_W, h: NODE_H,
-      x: PAD + p.layer * (NODE_W + COL_GAP), y: PAD + p.order * (NODE_H + ROW_GAP),
+      x: PAD + p.layer * (NODE_W + COL_GAP), y: top + p.order * (NODE_H + ROW_GAP),
       cyclic: s.cyclic.has(k), critical: onPath.has(k),
     };
   });
@@ -177,8 +180,20 @@ export function layoutGraph(tasks, options = {}) {
   return {
     nodes, edges,
     width: PAD * 2 + cols * NODE_W + (cols - 1) * COL_GAP,
-    height: PAD * 2 + rows * NODE_H + (rows - 1) * ROW_GAP,
+    height: top + PAD + rows * NODE_H + (rows - 1) * ROW_GAP,
   };
+}
+
+// Слои раскладки слева направо: левый край и сколько задач в слое можно делать параллельно.
+export function laneLabels(layout) {
+  const lanes = new Map();
+  for (const n of layout.nodes) {
+    const lane = lanes.get(n.layer) || { layer: n.layer, x: n.x, count: 0 };
+    lane.x = Math.min(lane.x, n.x);
+    lane.count++;
+    lanes.set(n.layer, lane);
+  }
+  return [...lanes.values()].sort((a, b) => a.layer - b.layer);
 }
 
 // --- SVG-схема ---
@@ -210,9 +225,10 @@ function edgePath(a, b) {
 
 // Схема в контейнере host; узлы и рёбра по ключам переиспользуются, клик и Enter по узлу — onOpen(key).
 export function mountGraph(host, onOpen) {
+  const lanesLayer = svg('g', { class: 'lanes' });
   const edgesLayer = svg('g', { class: 'edges' });
   const nodesLayer = svg('g', { class: 'nodes' });
-  const root = svg('svg', { role: 'img', 'aria-label': T.graphAria }, edgesLayer, nodesLayer);
+  const root = svg('svg', { role: 'img', 'aria-label': T.graphAria }, lanesLayer, edgesLayer, nodesLayer);
   host.replaceChildren(root);
   const nodes = new Map();
   const edges = new Map();
@@ -248,26 +264,35 @@ export function mountGraph(host, onOpen) {
   }
 
   return {
-    // isOut(task) — задача не проходит фильтры и показывается приглушённой
+    // isOut(task) — задача не проходит фильтры и показывается приглушённой;
+    // lanes — подписи слоёв; critical: false — без критического пути;
+    // nodeColor(task) и nodeLabel(task) — цвет полосы и подпись справа вместо статуса
     paint(tasks, options = {}) {
       const layout = layoutGraph(tasks, options);
+      const showCritical = options.critical !== false;
       const byKey = new Map(tasks.map(t => [t.key, t]));
       const placed = new Map(layout.nodes.map(n => [n.key, n]));
       root.setAttribute('width', layout.width);
       root.setAttribute('height', layout.height);
       root.setAttribute('viewBox', '0 0 ' + layout.width + ' ' + layout.height);
+      lanesLayer.replaceChildren(...(options.lanes ? laneLabels(layout).map(l => svg('g', null,
+        svg('rect', { class: 'lane-bg', x: l.x - 8, y: 8, width: NODE_W + 16, height: layout.height - 16, rx: 10 }),
+        svg('text', { class: 'lane-lbl', x: l.x + 2, y: 28 }, T.graphStep(l.layer + 1)),
+        svg('text', { class: 'lane-sub', x: l.x + 2, y: 42 }, T.graphParallel(l.count)))) : []));
 
       for (const n of layout.nodes) {
         const t = byKey.get(n.key);
         const status = statusOf(t);
         const cls = ['node'];
-        if (n.critical) cls.push('crit');
+        if (n.critical && showCritical) cls.push('crit');
         if (n.cyclic) cls.push('cyc');
         if (DIM.has(status)) cls.push('dim');
         if ((t.rule_violations || []).length) cls.push('viol');
         if (options.isOut && options.isOut(t)) cls.push('f-out');
         const q = t.open_questions || 0;
-        const sig = JSON.stringify([cls, t.title, status, q, n.cyclic]);
+        const label = options.nodeLabel ? options.nodeLabel(t) : statusInfo(status).label;
+        const fill = options.nodeColor ? options.nodeColor(t) : color(status);
+        const sig = JSON.stringify([cls, t.title, status, q, n.cyclic, label, fill]);
         let entry = nodes.get(n.key);
         if (!entry) {
           entry = nodeEntry(n.key);
@@ -277,13 +302,12 @@ export function mountGraph(host, onOpen) {
         if (entry.sig === sig) continue;
         entry.sig = sig;
         entry.g.setAttribute('class', cls.join(' '));
-        const label = statusInfo(status).label;
         entry.g.setAttribute('aria-label', n.key + ' — ' + t.title + ' (' + label + ')');
         entry.tip.textContent = n.key + ' — ' + t.title + (n.cyclic ? ' · ' + T.graphCycle : '');
-        entry.bar.style.setProperty('fill', color(status));
+        entry.bar.style.setProperty('fill', fill);
         entry.gk.textContent = n.key + (q ? ' · ? ' + q : '');
         entry.gs.textContent = label;
-        entry.gs.style.setProperty('color', color(status));
+        entry.gs.style.setProperty('color', fill);
         entry.gt.textContent = t.title;
       }
       for (const [key, entry] of nodes) {
@@ -311,7 +335,7 @@ export function mountGraph(host, onOpen) {
         const geo = edgePath(placed.get(e.from), placed.get(e.to));
         const from = byKey.get(e.from);
         const cls = ['edge'];
-        if (e.critical) cls.push('crit');
+        if (e.critical && showCritical) cls.push('crit');
         else if (SATISFIED.has(statusOf(from))) cls.push('ok');
         if (e.cyclic) cls.push('cyc');
         if (entry.path.classList.contains('hl')) cls.push('hl');

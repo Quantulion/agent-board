@@ -284,7 +284,7 @@ class Runner:
             woken = set()
             # счётчик переписки агентов не переживает перезапуск — снимаем и остановки
             if meta.get("project_agent_parked"):
-                board.update_meta({"project_agent_parked": False})
+                self._update_project_meta(board, {"project_agent_parked": False})
             for key, task in sorted(tasks.items()):
                 if task.agent_parked:
                     board.update_task(key, "system", {"agent_parked": False})
@@ -301,7 +301,7 @@ class Runner:
                     woken.add(key)
             if meta.get("project_agent_state") == "running":
                 self._kill_leftover(board, PROJECT_THREAD, meta.get("project_turn_process"))
-                board.update_meta({"project_agent_state": "idle", "project_turn_process": None})
+                self._update_project_meta(board, {"project_agent_state": "idle", "project_turn_process": None})
                 board.post_message(PROJECT_THREAD, "system", INTERRUPTED_TEXT)
                 board.record("agent_wake", {"key": PROJECT_THREAD, "reason": "interrupted"})
                 woken.add(PROJECT_THREAD)
@@ -370,9 +370,17 @@ class Runner:
         """Флаг остановки переписки на карточке — по нему интерфейс показывает, что агент ждёт пользователя."""
         board = self._board(k[0])
         if k[1] == PROJECT_THREAD:
-            board.update_meta({"project_agent_parked": parked})
+            self._update_project_meta(board, {"project_agent_parked": parked})
         elif k[1] in board.store.load_tasks():
             board.update_task(k[1], "system", {"agent_parked": parked})
+
+    @staticmethod
+    def _update_project_meta(board: Board, fields: dict) -> None:
+        """Состояние агента проекта живёт в meta без событий: изменение отмечается в журнале, чтобы его увидел UI."""
+        board.update_meta(fields)
+        meta = board.store.load_meta()
+        board.record("project_agent_changed", {"state": meta.get("project_agent_state") or "idle",
+                                               "parked": bool(meta.get("project_agent_parked"))})
 
     def _park_agent_loop(self, k: Key, reason: dict) -> bool:
         """Защита от переписки агентов по кругу: True — пробуждение отложено до действия пользователя."""
@@ -535,7 +543,7 @@ class Runner:
             fields = {"project_agent_state": state}
             if error is not None:
                 fields["project_turn_error"] = error
-            board.update_meta(fields)
+            self._update_project_meta(board, fields)
             return
         if k[1] not in board.store.load_tasks():
             return
@@ -746,7 +754,8 @@ class Runner:
         self._pending[k] = [r for r in self._pending.get(k, []) if not any(r is x for x in delivered)]
         record = turn_process_record(proc, turn.session_id)
         if k[1] == PROJECT_THREAD:
-            board.update_meta({"project_agent_state": "running", "project_turn_error": "", "project_turn_process": record})
+            self._update_project_meta(board, {"project_agent_state": "running", "project_turn_error": "",
+                                              "project_turn_process": record})
         else:
             board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "turn_process": record})
         board.record("turn_started", {"key": k[1]})
@@ -791,7 +800,8 @@ class Runner:
             self._pending[k] = turn.reasons + self._pending.get(k, [])
         if project:
             board.update_config({"project_session_id": session_id})
-            board.update_meta({"project_agent_state": state, "project_turn_error": error, "project_turn_process": None})
+            self._update_project_meta(board, {"project_agent_state": state, "project_turn_error": error,
+                                              "project_turn_process": None})
         elif k[1] in board.store.load_tasks():
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])

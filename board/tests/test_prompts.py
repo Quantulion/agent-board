@@ -182,6 +182,29 @@ def test_wake_message_escalation_quotes_text_when_present():
     assert "PAY-9" in text and "which DB?" in text
 
 
+def test_wake_message__user_comment_on_task__should_name_the_task_and_quote_the_comment():
+    # arrange
+    reasons = [{"reason": "message", "key": "_project", "task": "PAY-7", "message_id": "m1", "text": "раздели `T4`"}]
+
+    # act
+    text = wake_message(reasons, "", "ab")
+
+    # assert
+    assert "Comment from the user on task PAY-7" in text and "раздели `T4`" in text and "m1" in text
+    assert "ab say PAY-7" in text
+
+
+def test_wake_message__user_comment_on_task_without_text__should_point_to_the_task_thread():
+    # arrange
+    reasons = [{"reason": "message", "key": "_project", "task": "PAY-7"}]
+
+    # act
+    text = wake_message(reasons, "", "ab")
+
+    # assert
+    assert "PAY-7" in text and "ab thread PAY-7" in text and "ab thread _project" not in text
+
+
 def test_wake_message_simple_reasons_render_without_fields():
     # arrange
     reasons = [{"reason": r} for r in ("interrupted", "unblocked", "ready", "manual", "proposal_rejected")]

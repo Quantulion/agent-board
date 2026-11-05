@@ -58,3 +58,20 @@ test('suggestKey: номер растёт, пока ключ совпадает 
   assert.equal(suggestKey(['PAY-1', 'PAY-2', 'pay-3'], 'pay'), 'PAY-4');
   assert.equal(suggestKey(['PAY-1', 'PAY-2', 'pay-3', 'Pay-4'], 'pay'), 'PAY-5');
 });
+
+test('blocksUpdates: выбранные задачи получают новую задачу в зависимости, повтор не дублируется', async () => {
+  // arrange
+  const { blocksUpdates } = await import('../../agent_board/static/js/newtask.js');
+  const tasks = [{ key: 'A', deps: ['X'] }, { key: 'B', deps: [] }, { key: 'C', deps: ['N'] }];
+  // act
+  const updates = blocksUpdates(tasks, ['B', 'A', 'C', 'Z'], 'N');
+  // assert
+  assert.deepEqual(updates, [{ key: 'A', deps: ['X', 'N'] }, { key: 'B', deps: ['N'] }]);
+});
+
+test('validateNewTask: одна задача не может быть и зависимостью, и блокируемой', () => {
+  // act
+  const errors = validateNewTask({ key: 'N', title: 'x', deps: ['A', 'B'], blocks: ['B'] }, ['A', 'B']);
+  // assert
+  assert.deepEqual(errors, { blocks: 'B и зависимость, и блокируется новой задачей — получится цикл' });
+});

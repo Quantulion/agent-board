@@ -250,6 +250,7 @@ def test_answer_unknown_question_rejected(board):
 
 def test_user_message_wakes_task_agent_and_project_message_wakes_project_agent(board):
     board.add_task(mk("A"), "user")
+    board.set_stage("work", "user")
     ev = flat(board.post_message("A", "user", "привет"))
     assert ev[0]["type"] == "message_posted" and ev[0]["thread"] == "A"
     assert wake("A", "message", message_id=ev[0]["message_id"], by="user") in ev
@@ -425,12 +426,54 @@ def test_from_task_ignored_outside_project_thread(board):
 def test_user_message_wake_carries_message_id(board):
     # arrange
     board.add_task(mk("A"), "user")
+    board.set_stage("work", "user")
 
     # act
     ev = flat(board.post_message("A", "user", "привет"))
 
     # assert
     assert ev[1] == wake("A", "message", message_id=ev[0]["message_id"], by="user")
+
+
+def test_post_message__user_comment_on_task_during_decomposition__should_wake_project_agent_not_task_agent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    ev = flat(board.post_message("A", "user", "разбей задачу"))
+
+    # assert
+    assert ev[0] == dict(type="message_posted", thread="A", message_id=ev[0]["message_id"], author="user")
+    assert [e for e in ev if e["type"] == "agent_wake"] == [
+        wake("_project", "message", task="A", message_id=ev[0]["message_id"], by="user")]
+    assert [m.text for m in board.store.read_thread("A")] == ["разбей задачу"]
+
+
+@pytest.mark.parametrize("stage", ["tracker", "work"])
+def test_post_message__user_comment_on_task_after_decomposition__should_wake_task_agent(board, stage):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.set_stage(stage, "user")
+
+    # act
+    ev = flat(board.post_message("A", "user", "привет"))
+
+    # assert
+    assert [e for e in ev if e["type"] == "agent_wake"] == [
+        wake("A", "message", message_id=ev[0]["message_id"], by="user")]
+
+
+def test_post_message__agent_messages_during_decomposition__should_keep_their_wakes(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+
+    # act
+    from_project = flat(board.post_message("A", "project_agent", "совет"))
+    to_project = flat(board.post_message("_project", "user", "план?"))
+
+    # assert
+    assert [e["key"] for e in from_project if e["type"] == "agent_wake"] == ["A"]
+    assert [(e["key"], "task" in e) for e in to_project if e["type"] == "agent_wake"] == [("_project", False)]
 
 
 def test_answer_stores_time_and_emits_message_posted(board):

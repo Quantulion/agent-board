@@ -107,6 +107,15 @@ def _wake_line(r: dict, cli: str) -> str:
     reason = r.get("reason", "")
     key = r.get("key") or "<KEY>"
     thread = "%s thread %s" % (cli, key)
+    if reason == "message" and r.get("task"):
+        task = r["task"]
+        reply = "Reply in that task's thread with `%s say %s --text ...`; change the graph only through proposals." % (
+            cli, task)
+        if r.get("text"):
+            return "Comment from the user on task %s (id %s), verbatim:\n%s\n%s" % (
+                task, r.get("message_id", "?"), _quote(str(r["text"])), reply)
+        return "Comment from the user on task %s. %s %s" % (
+            task, _read_hint("%s thread %s" % (cli, task), "Its text"), reply)
     if reason == "message":
         if r.get("text"):
             return "New message from the user (id %s), verbatim:\n%s" % (r.get("message_id", "?"), _quote(str(r["text"])))
@@ -181,7 +190,7 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
     """Одно сообщение из накопленных пробуждений, в порядке поступления.
 
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
-      message -> message_id, text; answer -> question_id, question, choice, comment;
+      message -> message_id, text, task (комментарий пользователя к этой задаче для агента проекта); answer -> question_id, question, choice, comment;
       returned -> from; rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
       escalation -> from, text; proposal_rejected -> id;
       interrupted, queued_restart, unblocked, ready, manual -> без полей.

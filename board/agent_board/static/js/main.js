@@ -1,6 +1,7 @@
 import { api } from './api.js';
-import { mountBoard, paintStepper } from './board.js';
+import { mountBoard } from './board.js';
 import { closeCard, openCard } from './card.js';
+import { mountDecomposition } from './decomposition.js';
 import { h, icon, patchList } from './dom.js';
 import { STAGES, T, tasksCount } from './i18n.js';
 import { boardHref, parseRoute, withTask } from './router.js';
@@ -124,7 +125,7 @@ function projectCard({ slug, state }) {
     h('code', null, slug));
 }
 
-// --- Проект: доска и (пока) заготовка разбивки на одном живом состоянии ---
+// --- Проект: доска и согласование разбивки на одном живом состоянии ---
 
 function projectView(slug, mode) {
   const client = api(slug);
@@ -155,7 +156,7 @@ function projectView(slug, mode) {
     if (next === current) return;
     current = next;
     if (destroyMode) destroyMode();
-    destroyMode = next === 'board' ? mountBoard(root, store, ctx) : decompositionPlaceholder(slug, store);
+    destroyMode = next === 'board' ? mountBoard(root, store, ctx) : mountDecomposition(root, store, ctx);
   };
   mount(mode);
   store.start();
@@ -165,27 +166,4 @@ function projectView(slug, mode) {
     setTask: key => (key ? openCard(ctx, key) : closeCard()),
     destroy() { closeCard(false); destroyMode(); store.stop(); },
   };
-}
-
-function decompositionPlaceholder(slug, store) {
-  const title = h('h1', null, h('span', { class: 'skel title' }));
-  const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
-  const banner = h('div', { class: 'banner-slot', hidden: true });
-  const app = h('div', { class: 'app' },
-    h('header', { class: 'top' },
-      h('div', { class: 'row1' },
-        brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, title, h('span', { class: 'sub' }, h('a', { href: boardHref(slug) }, T.board))),
-        stepper, h('span', { class: 'spacer' }), themeButton())),
-    h('div', { class: 'placeholder' }, banner, h('p', { class: 'muted' }, T.decompositionSoon)));
-  root.replaceChildren(app);
-  const paint = state => {
-    banner.hidden = !state.error;
-    banner.replaceChildren(...(state.error ? [errorNotice(state.error)] : []));
-    if (!state.snapshot) return;
-    title.textContent = state.snapshot.config.title;
-    paintStepper(stepper, state.snapshot.config.stage);
-  };
-  paint(store.get());
-  return store.subscribe(paint);
 }

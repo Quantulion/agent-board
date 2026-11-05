@@ -29,7 +29,8 @@ class WakeContext:
         reason = r.get("reason")
         key = str(r.get("key"))
         if reason == "message":
-            self._add_message(r, store, key, r.get("message_id"))
+            # комментарий пользователя к задаче лежит в треде задачи, а будит агента проекта
+            self._add_message(r, store, str(r.get("task") or key), r.get("message_id"))
         elif reason == "escalation":
             self._add_message(r, store, PROJECT_THREAD, self._last.get((slug, "message", PROJECT_THREAD)))
         elif reason == "answer":

@@ -53,6 +53,9 @@ export function validateNewTask(form, existingKeys) {
   if (!String(form.title || '').trim()) errors.title = T.nt.needTitle;
   const est = String(form.estimate ?? '').trim();
   if (est && !(parseEstimate(est) >= 0)) errors.estimate = T.nt.badEstimate;
+  const deps = new Set(form.deps || []);
+  const both = (form.blocks || []).filter(k => deps.has(k)).sort(KEYS.compare);
+  if (both.length) errors.blocks = T.nt.depsBlocksClash(both);
   return errors;
 }
 
@@ -68,6 +71,15 @@ export function taskPayload(form) {
   if (String(form.estimate ?? '').trim()) task.estimate = parseEstimate(form.estimate);
   task.deps = [...(form.deps || [])];
   return task;
+}
+
+// Новые зависимости задач, которые новая задача newKey должна блокировать (неизвестные и уже ждущие пропускаются).
+export function blocksUpdates(tasks, picked, newKey) {
+  const byKey = new Map(tasks.map(t => [t.key, t]));
+  return [...new Set(picked)].sort(KEYS.compare)
+    .map(k => byKey.get(k))
+    .filter(t => t && !(t.deps || []).includes(newKey))
+    .map(t => ({ key: t.key, deps: [...(t.deps || []), newKey] }));
 }
 
 // Под каким полем показать ошибку сервера; null — общая ошибка формы.
@@ -104,6 +116,35 @@ const color = id => 'var(' + statusInfo(id).color + ')';
 const spill = id => h('span', { class: 'spill', style: { '--c': color(id) } },
   h('span', { class: 'sdot', style: { '--c': color(id) } }), statusInfo(id).label);
 
+// Список задач с галочками и поиском: отмеченные остаются отмеченными, поиск только прячет строки.
+function taskPicker(id, label, tasks, onChange) {
+  const picked = new Set();
+  const search = h('input', { type: 'text', class: 'pick-search', placeholder: T.nt.depsSearch, 'aria-label': label + ': ' + T.nt.depsSearch });
+  const nothing = h('div', { class: 'muted pick-none', hidden: true }, T.nt.depsNone);
+  const rows = tasks.map(t => {
+    const box = h('input', { type: 'checkbox', value: t.key });
+    box.addEventListener('change', () => {
+      if (box.checked) picked.add(t.key);
+      else picked.delete(t.key);
+      onChange();
+    });
+    return h('label', { 'data-q': (t.key + ' ' + t.title).toLowerCase() }, box,
+      h('span', { class: 'k' }, t.key), h('span', { class: 'pt', title: t.title }, t.title),
+      h('span', { class: 'ps' }, spill(statusOf(t))));
+  });
+  const picker = h('div', { class: 'picker', id, role: 'group', 'aria-label': label }, rows, nothing);
+  search.addEventListener('input', () => {
+    const q = search.value.trim().toLowerCase();
+    let shown = 0;
+    for (const r of rows) {
+      r.hidden = Boolean(q) && !r.dataset.q.includes(q);
+      if (!r.hidden) shown++;
+    }
+    nothing.hidden = shown > 0;
+  });
+  return { picked, search, picker };
+}
+
 export function openNewTaskDialog(ctx) {
   const snap = ctx.store.get().snapshot;
   if (!snap) return null;
@@ -137,32 +178,10 @@ export function openNewTaskDialog(ctx) {
     kindHint.textContent = id === 'code' ? T.nt.kindCodeHint : T.nt.kindResearchHint;
   }
 
-  // зависимости: отмеченные остаются отмеченными, поиск только прячет строки
-  const picked = new Set();
-  const search = h('input', { type: 'text', class: 'pick-search', placeholder: T.nt.depsSearch, 'aria-label': T.nt.depsSearch });
-  const nothing = h('div', { class: 'muted pick-none', hidden: true }, T.nt.depsNone);
-  const rows = tasks.filter(t => t.status !== 'cancelled').map(t => {
-    const box = h('input', { type: 'checkbox', value: t.key });
-    box.addEventListener('change', () => {
-      if (box.checked) picked.add(t.key);
-      else picked.delete(t.key);
-      preview();
-    });
-    const row = h('label', { 'data-q': (t.key + ' ' + t.title).toLowerCase() }, box,
-      h('span', { class: 'k' }, t.key), h('span', { class: 'pt', title: t.title }, t.title),
-      h('span', { class: 'ps' }, spill(statusOf(t))));
-    return row;
-  });
-  const picker = h('div', { class: 'picker', id: 'nt-deps', role: 'group', 'aria-label': T.nt.deps }, rows, nothing);
-  search.addEventListener('input', () => {
-    const q = search.value.trim().toLowerCase();
-    let shown = 0;
-    for (const r of rows) {
-      r.hidden = Boolean(q) && !r.dataset.q.includes(q);
-      if (!r.hidden) shown++;
-    }
-    nothing.hidden = shown > 0;
-  });
+  const live = tasks.filter(t => t.status !== 'cancelled');
+  const depsPick = taskPicker('nt-deps', T.nt.deps, live, () => preview());
+  const blocksPick = taskPicker('nt-blocks', T.nt.blocks, live, () => {});
+  const picked = depsPick.picked;
 
   const prev = h('div', { class: 'preview' });
   function preview() {
@@ -188,7 +207,9 @@ export function openNewTaskDialog(ctx) {
     h('div', { class: 'two' },
       field('nt-key', T.nt.key, keyInput, h('span', { class: 'hint' }, T.nt.keyHint)),
       field('nt-estimate', T.nt.estimate, estInput)),
-    h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.deps), search, picker, err('deps')),
+    h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.deps), depsPick.search, depsPick.picker, err('deps')),
+    h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.blocks), blocksPick.search, blocksPick.picker,
+      h('span', { class: 'hint' }, T.nt.blocksHint), err('blocks')),
     prev,
     general,
   ];
@@ -224,6 +245,7 @@ export function openNewTaskDialog(ctx) {
     const form = {
       key: keyInput.value, title: titleInput.value, description: descInput.value, done_when: doneInput.value,
       kind, repo: repoSelect.value, estimate: estInput.value, deps: [...picked].sort(KEYS.compare),
+      blocks: [...blocksPick.picked].sort(KEYS.compare),
     };
     const errors = validateNewTask(form, keys);
     showErrors(errors);
@@ -235,6 +257,11 @@ export function openNewTaskDialog(ctx) {
         const key = (res && res.key) || form.key.trim();
         close();
         toast(T.nt.created(key));
+        // задача уже создана: ошибка одной связи не откатывает её и не мешает остальным
+        for (const u of blocksUpdates(tasks, form.blocks, key)) {
+          ctx.client.post('/tasks/' + encodeURIComponent(u.key) + '/deps', { deps: u.deps, actor: 'user' })
+            .catch(e => toast(T.nt.blockFailed(u.key, key, (e && e.message) || String(e)), { error: true }));
+        }
         // карточка открывается, когда задача появится в снимке: иначе она сочла бы задачу несуществующей;
         // если пользователь уже ушёл на другой адрес, его не уводим
         const from = window.location.hash;

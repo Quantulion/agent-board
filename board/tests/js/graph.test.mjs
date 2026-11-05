@@ -137,3 +137,27 @@ test('layoutGraph: раскладка детерминирована и не з�
   const coords = l => l.nodes.map(n => [n.key, n.x, n.y]).sort();
   assert.deepEqual(coords(a), coords(b));
 });
+
+test('laneLabels: по слою — его левый край и число задач, слои по порядку', async () => {
+  // arrange
+  const { laneLabels } = await import('../../agent_board/static/js/graph.js');
+  const layout = layoutGraph([t('A'), t('B', ['A']), t('C', ['A']), t('D')], { lanes: true });
+  // act
+  const lanes = laneLabels(layout);
+  // assert
+  assert.deepEqual(lanes.map(l => [l.layer, l.count]), [[0, 2], [1, 2]]);
+  assert.equal(lanes[0].x, byKey(layout).get('A').x);
+  assert.ok(lanes[1].x > lanes[0].x);
+});
+
+test('layoutGraph: с подписями слоёв узлы опускаются ниже подписей, холст растёт', () => {
+  // arrange
+  const tasks = [t('A'), t('B', ['A'])];
+  // act
+  const plain = layoutGraph(tasks);
+  const laned = layoutGraph(tasks, { lanes: true });
+  // assert
+  const dy = byKey(laned).get('A').y - byKey(plain).get('A').y;
+  assert.ok(dy > 20, 'под подписи нужно место');
+  assert.equal(laned.height - plain.height, dy);
+});
