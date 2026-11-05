@@ -244,3 +244,13 @@ def test_wake_message_missing_from_and_id_point_to_the_board_without_placeholder
     assert "a task agent" not in text and "?" not in text
     assert "ab show PAY-7" in text and "ab thread _project" in text
     assert "ab events --since" in text and "ab say <KEY> --text" in text
+
+
+def test_wake_message_rebase_with_several_dependency_branches_asks_to_merge():
+    # arrange
+    reason = {"reason": "rebase", "from": "PAY-3", "base": "main", "rebase_ok": False, "merge_branches": ["PAY-3", "PAY-4"]}
+    # act
+    text = wake_message([reason], "")
+    # assert
+    assert "PAY-3, PAY-4" in text and "merge" in text and "Do not run any git" in text
+    assert "could not move" not in text

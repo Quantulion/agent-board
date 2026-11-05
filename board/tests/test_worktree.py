@@ -383,3 +383,15 @@ def test_rebase_carrying_changes_rebase_conflict_aborts_and_restores_changes(git
     assert run_git(p, "rev-parse", "HEAD").strip() == head
     assert (p / "wip.txt").read_text() == "w\n" and (p / "a.txt").read_text() == "mine more\n"
     assert run_git(p, "stash", "list").strip() == ""
+
+
+def test_commit_all_refuses_markers_left_by_stash_pop_conflict(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    commit_file(git_repo, "a.txt", "theirs\n")
+    ok, conflicts = rebase_carrying_changes(p, "main")
+    assert (ok, conflicts) == (True, ["a.txt"])
+    # act / assert
+    with pytest.raises(GitError, match="a.txt"):
+        commit_all(p, "T-1 title")

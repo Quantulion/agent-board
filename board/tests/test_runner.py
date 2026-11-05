@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 from agent_board import harness as harness_mod
+from agent_board import runner as runner_mod
 from agent_board.board import new_task_from_dict
 from agent_board.config import ProjectConfig
 from agent_board.harness import FakeHarness
@@ -63,6 +64,12 @@ def make_project(tmp_home, git_repo):
     return make
 
 
+@pytest.fixture(autouse=True)
+def fast_runner(monkeypatch):
+    monkeypatch.setattr(runner_mod, "RETRY_DELAYS", (0.0, 0.0))
+    monkeypatch.setattr(runner_mod, "STOP_GRACE_SECONDS", 2.0)
+
+
 @pytest.fixture
 def start_server(tmp_home):
     servers = []
@@ -70,12 +77,13 @@ def start_server(tmp_home):
     def start():
         srv = BoardServer(port=0, runner=True)
         srv.start()
-        servers.append(srv)
+        servers.append((srv, srv.runner))
         return srv
 
     yield start
-    for srv in servers:
+    for srv, runner in servers:
         srv.stop()
+        runner.kill_all_for_tests()
 
 
 @pytest.fixture
@@ -84,19 +92,28 @@ def calls(monkeypatch):
     recorded = []
     orig_start, orig_resume = FakeHarness.start_turn, FakeHarness.resume_turn
 
+    def record(kind, cwd, text, session_id, env, proc):
+        # какие из ранее запущенных групп процессов ещё живы в момент нового запуска
+        alive = [c["proc"].pid for c in recorded if harness_mod.group_alive(c["proc"].pid)]
+        recorded.append({"kind": kind, "cwd": Path(cwd), "text": text, "session": session_id, "env": env,
+                         "proc": proc, "alive_before": alive})
+
     def start_turn(self, cwd, prompt, session_id, log, env):
         proc = orig_start(self, cwd, prompt, session_id, log, env)
-        recorded.append({"kind": "start", "cwd": Path(cwd), "text": prompt, "session": session_id, "env": env, "proc": proc})
+        record("start", cwd, prompt, session_id, env, proc)
         return proc
 
     def resume_turn(self, cwd, session_id, message, log, env):
         proc = orig_resume(self, cwd, session_id, message, log, env)
-        recorded.append({"kind": "resume", "cwd": Path(cwd), "text": message, "session": session_id, "env": env, "proc": proc})
+        record("resume", cwd, message, session_id, env, proc)
         return proc
 
     monkeypatch.setattr(FakeHarness, "start_turn", start_turn)
     monkeypatch.setattr(FakeHarness, "resume_turn", resume_turn)
-    return recorded
+    yield recorded
+    for c in recorded:
+        if c["proc"].poll() is None:
+            harness_mod.terminate(c["proc"], 1.0)
 
 
 def add(srv, key, description="", **extra):
@@ -315,6 +332,7 @@ def test_escalation_wakes_project_agent_with_digest(make_project, start_server, 
     # act
     add(srv, "T-1", script({"cli": ["say", "_project", "--text", "нужна помощь"]}))
     wait_events(store, "turn_finished", "_project")
+    wait_events(store, "turn_finished", "T-1")
     # assert
     project_calls = [c for c in calls if c["env"]["AGENT_BOARD_ACTOR"] == "project_agent"]
     assert [(c["kind"], c["session"]) for c in project_calls] == [("resume", "p-1")]
@@ -418,3 +436,181 @@ def test_blocked_dependent_defers_rebase_until_unblocked(make_project, start_ser
     assert [(c["kind"], c["session"]) for c in calls] == [("resume", "s-b")]
     assert calls[0]["text"].count("the board moved your work onto A") == 1
     assert (b_wt / "a2.txt").read_text() == "A2\n"
+
+
+
+# --- перезапуск ---
+
+def restart(srv, start_server):
+    srv.stop()
+    return start_server()
+
+
+def test_message_during_turn_survives_restart_and_old_process_is_killed(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1", script({"sleep": 20}))
+    wait_events(store, "turn_started", "T-1")
+    srv.board_for("pay").post_message("T-1", "user", "не потеряй меня")
+    runner_sync(srv)
+    old = calls[0]["proc"]
+    # act
+    srv = restart(srv, start_server)
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    resume = [c for c in calls if c["kind"] == "resume"]
+    assert len(resume) == 1
+    assert "не потеряй меня" in resume[0]["text"] and "interrupted" in resume[0]["text"]
+    assert resume[0]["alive_before"] == []
+    assert old.wait(timeout=TIMEOUT) < 0
+    assert resume[0]["text"].count("не потеряй меня") == 1
+
+
+def test_queued_task_pending_message_survives_restart(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 20}))
+    wait_events(store, "turn_started", "A")
+    add(srv, "B")
+    wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
+    srv.board_for("pay").post_message("B", "user", "для B дословно")
+    runner_sync(srv)
+    # act
+    srv = restart(srv, start_server)
+    wait_events(store, "turn_finished", "B")
+    # assert
+    b_start = [c for c in calls if c["kind"] == "start" and c["env"]["AGENT_BOARD_TASK"] == "B"]
+    assert len(b_start) == 1 and "для B дословно" in b_start[0]["text"]
+    assert b_start[0]["alive_before"] == []
+
+
+# --- одобрение с маркерами конфликта ---
+
+def test_failed_approval_commit_returns_task_to_review_and_keeps_dependent_blocked(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "A", script({"write": {"path": "x.txt", "text": "<<<<<<< ours\nmine\n"}}, {"cli": ["status", "A", "in_review"]}))
+    add(srv, "B", deps=["A"])
+    wait_events(store, "turn_finished", "A")
+    # act
+    srv.board_for("pay").transition("A", Status.APPROVED, "user")
+    wait_for(lambda: task(store, "A").status == Status.IN_REVIEW, what="A вернулась на ревью")
+    runner_sync(srv)
+    # assert
+    assert not events(store, "task_committed", "A")
+    assert any("x.txt" in t and "ревью" in t for t in thread_texts(store, "A"))
+    assert not events(store, "turn_started", "B")
+
+
+# --- ошибки подготовки ---
+
+def test_prepare_error_keeps_reasons_until_config_fixed(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project(repos=[{"name": "one", "path": str(git_repo)}, {"name": "two", "path": str(git_repo)}])
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1")
+    wait_for(lambda: task(store, "T-1").agent_state == "error", what="ошибка репозитория")
+    board.post_message("T-1", "user", "важное уточнение")
+    runner_sync(srv)
+    assert task(store, "T-1").session_id is None
+    assert "важное уточнение" in json.dumps(store.load_meta()["runner_pending"], ensure_ascii=False)
+    # act
+    board.update_config({"repos": [{"name": "one", "path": str(git_repo)}]})
+    board.transition("T-1", Status.IN_PROGRESS, "user")
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    assert [c["kind"] for c in calls] == ["start"]
+    assert "важное уточнение" in calls[0]["text"]
+    assert store.load_meta()["runner_pending"] == {}
+
+
+def test_failure_after_turn_registered_still_completes_turn(make_project, start_server, calls, monkeypatch):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    orig = type(board).record
+    state = {"failed": False}
+
+    def record(self, type, data):
+        if type == "turn_started" and not state["failed"]:
+            state["failed"] = True
+            raise RuntimeError("сбой записи")
+        return orig(self, type, data)
+
+    monkeypatch.setattr(type(board), "record", record)
+    # act
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+    board.post_message("T-1", "user", "ещё")
+    wait_events(store, "turn_finished", "T-1", count=2)
+    # assert
+    assert [c["kind"] for c in calls] == ["start", "resume"]
+    assert task(store, "T-1").agent_state == "idle"
+
+
+def test_worker_exception_is_reported_on_the_card(make_project, start_server, calls, monkeypatch):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+
+    def boom(self, slug, key):
+        raise RuntimeError("сломался коммит")
+
+    monkeypatch.setattr(runner_mod.Runner, "_commit", boom)
+    # act
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
+    # assert
+    wait_for(lambda: any("сломался коммит" in t for t in thread_texts(store, "T-1")), what="сообщение об ошибке")
+
+
+# --- лимиты и повторы ---
+
+def test_project_agent_counts_in_global_limit(make_project, start_server, calls):
+    # arrange
+    store = make_project(global_max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 1}))
+    wait_events(store, "turn_started", "A")
+    # act
+    srv.board_for("pay").post_message("_project", "user", "привет")
+    wait_events(store, "turn_finished", "_project")
+    # assert
+    assert events(store, "turn_started", "_project")[0].seq > events(store, "turn_finished", "A")[0].seq
+
+
+def test_project_agent_not_counted_in_project_limit(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    srv.board_for("pay").post_message("_project", "user", script({"sleep": 2}))
+    wait_events(store, "turn_started", "_project")
+    # act
+    add(srv, "A")
+    wait_events(store, "turn_finished", "A")
+    wait_events(store, "turn_finished", "_project")
+    # assert
+    assert events(store, "turn_finished", "A")[0].seq < events(store, "turn_finished", "_project")[0].seq
+
+
+def test_failed_turn_is_retried_after_delay(make_project, start_server, calls, monkeypatch):
+    # arrange
+    monkeypatch.setattr(runner_mod, "RETRY_DELAYS", (1.0, 1.0))
+    store = make_project()
+    srv = start_server()
+    # act
+    add(srv, "T-1", script({"fail": "boom"}))
+    wait_events(store, "turn_failed", "T-1")
+    failed_at = time.monotonic()
+    runner_sync(srv)
+    early = len(events(store, "turn_started", "T-1"))
+    wait_events(store, "turn_started", "T-1", count=2)
+    # assert
+    assert early == 1
+    assert time.monotonic() - failed_at >= 0.8

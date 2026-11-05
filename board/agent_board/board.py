@@ -17,7 +17,7 @@ UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
-    "agent_state", "turn_error", "last_turn_at", "harness",
+    "agent_state", "turn_error", "last_turn_at", "harness", "turn_pgid",
 }
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")

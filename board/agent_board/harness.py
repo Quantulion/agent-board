@@ -8,6 +8,7 @@ import subprocess
 import signal
 import sys
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -147,6 +148,33 @@ def terminate(proc, grace: float) -> None:
         os.killpg(pid, signal.SIGKILL)
     except OSError:
         pass
+
+
+def group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def terminate_group(pgid: int, grace: float, poll: float = 0.05) -> bool:
+    """Останавливает чужую (не нашу дочернюю) группу процессов; True, если группы больше нет."""
+    for sig, wait in ((signal.SIGTERM, grace), (signal.SIGKILL, 5.0)):
+        try:
+            os.killpg(pgid, sig)
+        except ProcessLookupError:
+            return True
+        except OSError:
+            return False
+        deadline = time.monotonic() + wait
+        while time.monotonic() < deadline:
+            if not group_alive(pgid):
+                return True
+            time.sleep(poll)
+    return not group_alive(pgid)
 
 
 def _parse(line: str) -> Optional[dict]:

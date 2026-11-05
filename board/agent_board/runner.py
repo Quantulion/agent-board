@@ -14,7 +14,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 from . import prompts
 from .board import Board
 from .graph import base_for, open_deps
-from .harness import Harness, TurnResult, make_harness, terminate
+from .harness import Harness, TurnResult, make_harness, terminate, terminate_group
 from .model import Event, Status, Task
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
@@ -31,6 +31,8 @@ from .worktree import (
 BOARD_CLI = "agent-board"
 MAX_FAILURES = 3
 STOP_GRACE_SECONDS = 10.0
+# паузы перед повтором после 1-й и 2-й подряд неудачи
+RETRY_DELAYS = (5.0, 30.0)
 INTERRUPTED_TEXT = "Ход прерван перезапуском сервера, агент продолжит с сообщением о прерывании."
 FAILURES_TEXT = ("Агент упал %d раза подряд, автоматический перезапуск остановлен: %s. "
                  "Напишите сообщение или смените статус, чтобы запустить его снова.")
@@ -83,6 +85,7 @@ class Runner:
 
     Все реакции и все изменения доски выполняет один рабочий поток строго по порядку событий;
     ходы ждут свои процессы в отдельных потоках и возвращают результат в очередь рабочего потока.
+    Накопленные причины пробуждений сохраняются в meta.json и переживают перезапуск.
     """
 
     def __init__(self, server, clock: Optional[Callable[[], str]] = None):
@@ -94,8 +97,10 @@ class Runner:
         self._known: set = set()
         self._turns: Dict[Key, _Turn] = {}
         self._pending: Dict[Key, List[dict]] = {}
+        self._saved_pending: Dict[str, dict] = {}
         self._waiting: Deque[Key] = deque()
         self._failures: Dict[Key, int] = {}
+        self._backoff: Dict[Key, object] = {}
 
     # --- жизненный цикл ---
 
@@ -115,6 +120,11 @@ class Runner:
 
     stop = stop_leaving_agents_running
 
+    def kill_all_for_tests(self, grace: float = 1.0) -> None:
+        """Останавливает процессы всех идущих ходов (после stop, чтобы тесты не оставляли агентов)."""
+        for turn in list(self._turns.values()):
+            terminate(turn.proc, grace)
+
     def on_event(self, slug: str, event: Event) -> None:
         self._inbox.put(("event", slug, event))
 
@@ -131,6 +141,11 @@ class Runner:
                 return
             try:
                 self._dispatch(item)
+            except Exception as e:
+                traceback.print_exc(file=sys.stderr)
+                self._report_failure(item, e)
+            try:
+                self._persist_pending()
             except Exception:
                 traceback.print_exc(file=sys.stderr)
 
@@ -140,10 +155,36 @@ class Runner:
             self._on_board_event(item[1], item[2])
         elif kind == "done":
             self._on_turn_done(item[1], item[2], item[3])
+        elif kind == "retry":
+            self._on_retry(item[1], item[2])
         elif kind == "recover":
             self._recover()
         elif kind == "sync":
             item[1].set()
+
+    def _report_failure(self, item: tuple, error: Exception) -> None:
+        if item[0] == "event":
+            slug, key = item[1], item[2].data.get("key")
+        elif item[0] in ("done", "retry"):
+            slug, key = item[1]
+        else:
+            return
+        try:
+            board = self._board(slug)
+            if key == PROJECT_THREAD or key in board.store.load_tasks():
+                board.post_message(key, "system", "Ошибка раннера: %r" % error)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+
+    def _persist_pending(self) -> None:
+        by_slug: Dict[str, dict] = {slug: {} for slug in self._saved_pending}
+        for (slug, key), reasons in self._pending.items():
+            if reasons:
+                by_slug.setdefault(slug, {})[key] = reasons
+        for slug, data in by_slug.items():
+            if self._saved_pending.get(slug) != data:
+                self._board(slug).update_meta({"runner_pending": data})
+                self._saved_pending[slug] = {k: list(v) for k, v in data.items()}
 
     # --- проекты ---
 
@@ -177,32 +218,61 @@ class Runner:
             "PATH": str(board.store.root / "bin") + os.pathsep + os.environ.get("PATH", ""),
         }
 
+    @staticmethod
+    def _kill_leftover(pgid) -> None:
+        # процесс прерванного хода мог пережить сервер: две копии на одной сессии недопустимы
+        if isinstance(pgid, int) and pgid > 0:
+            terminate_group(pgid, STOP_GRACE_SECONDS)
+
     def _recover(self) -> None:
         for slug in list_projects():
             try:
                 board = self._board(slug)
             except (KeyError, ValueError):
                 continue
-            for key, task in sorted(board.store.load_tasks().items()):
+            meta = board.store.load_meta()
+            config = board.store.load_config()
+            tasks = board.store.load_tasks()
+            restored = {}
+            for key, reasons in (meta.get("runner_pending") or {}).items():
+                if (key == PROJECT_THREAD or key in tasks) and isinstance(reasons, list) and reasons:
+                    restored[key] = [r for r in reasons if isinstance(r, dict)]
+                    self._pending[(slug, key)] = list(restored[key])
+            self._saved_pending[slug] = restored
+            woken = set()
+            for key, task in sorted(tasks.items()):
                 if task.agent_state == "running":
-                    board.update_task(key, "system", {"agent_state": "idle"})
+                    self._kill_leftover(task.turn_pgid)
+                    board.update_task(key, "system", {"agent_state": "idle", "turn_pgid": None})
                     board.post_message(key, "system", INTERRUPTED_TEXT)
                     board.record("agent_wake", {"key": key, "reason": "interrupted"})
+                    woken.add(key)
                 elif task.agent_state == "waiting_turn":
-                    # очередь раннера живёт в памяти: возвращаем задачу в неё
                     board.update_task(key, "system", {"agent_state": "idle"})
                     reason = "interrupted" if task.session_id else "ready"
                     board.record("agent_wake", {"key": key, "reason": reason})
-            meta = board.store.load_meta()
-            config = board.store.load_config()
+                    woken.add(key)
             if meta.get("project_agent_state") == "running":
-                board.update_meta({"project_agent_state": "idle"})
+                self._kill_leftover(meta.get("project_turn_pgid"))
+                board.update_meta({"project_agent_state": "idle", "project_turn_pgid": None})
                 board.post_message(PROJECT_THREAD, "system", INTERRUPTED_TEXT)
                 board.record("agent_wake", {"key": PROJECT_THREAD, "reason": "interrupted"})
+                woken.add(PROJECT_THREAD)
             elif config.stage == "work" and not config.project_session_id:
                 self._wake(slug, PROJECT_THREAD, {"key": PROJECT_THREAD, "reason": "ready"})
+                woken.add(PROJECT_THREAD)
+            for key in restored:
+                state = meta.get("project_agent_state") if key == PROJECT_THREAD else tasks[key].agent_state
+                k = (slug, key)
+                # ошибочные ждут действия пользователя, как и до перезапуска
+                if key not in woken and state != "error" and k not in self._turns and k not in self._waiting:
+                    self._schedule(k)
 
     # --- реакции на события ---
+
+    def _reset_failures(self, k: Key) -> None:
+        self._failures.pop(k, None)
+        self._backoff.pop(k, None)
 
     def _on_board_event(self, slug: str, event: Event) -> None:
         self._ctx.observe(slug, event)
@@ -210,7 +280,7 @@ class Runner:
         if event.type == "status_changed":
             k = (slug, str(d.get("key")))
             if d.get("actor") == "user":
-                self._failures.pop(k, None)
+                self._reset_failures(k)
                 if d.get("to") == Status.APPROVED.value:
                     self._commit(slug, k[1])
                 if self._pending.get(k) and k not in self._turns and k not in self._waiting:
@@ -222,7 +292,7 @@ class Runner:
             reason = self._ctx.enrich(slug, board.store, event)
             key = str(d.get("key"))
             if reason.get("reason") == "answer" or (reason.get("reason") == "message" and reason.get("author") == "user"):
-                self._failures.pop((slug, key), None)
+                self._reset_failures((slug, key))
             self._wake(slug, key, reason)
 
     def _commit(self, slug: str, key: str) -> None:
@@ -233,7 +303,9 @@ class Runner:
         try:
             sha = commit_all(Path(task.worktree), "%s %s" % (key, task.title))
         except GitError as e:
-            board.post_message(key, "system", "Не удалось закоммитить одобренную работу: %s" % e)
+            # без коммита зависимые стартовали бы без кода задачи: возвращаем её на ревью до следующих событий
+            board.transition_if(key, Status.APPROVED, Status.IN_REVIEW, "system")
+            board.post_message(key, "system", "Не удалось закоммитить одобренную работу, задача возвращена на ревью: %s" % e)
             return
         if sha:
             board.record("task_committed", {"key": key, "sha": sha})
@@ -241,6 +313,7 @@ class Runner:
     def _stop(self, slug: str, key: str) -> None:
         k = (slug, key)
         self._pending.pop(k, None)
+        self._backoff.pop(k, None)
         if k in self._waiting:
             self._waiting.remove(k)
             self._set_state(k, "idle")
@@ -255,33 +328,57 @@ class Runner:
             task = self._board(slug).store.load_tasks().get(key)
             if task is None or task.status == Status.CANCELLED:
                 return
+        turn = self._turns.get(k)
+        # «начинай работу» во время стартового хода ничего не добавляет
+        if turn is not None and turn.fresh and reason.get("reason") in ("ready", "unblocked", "manual"):
+            return
         self._pending.setdefault(k, []).append(reason)
-        if k in self._turns or k in self._waiting:
+        if k in self._turns or k in self._waiting or k in self._backoff:
             return
         self._schedule(k)
 
-    # --- очередь и лимиты ---
+    # --- очередь, лимиты, повторы ---
 
     def _schedule(self, k: Key) -> None:
         if self._failures.get(k, 0) >= MAX_FAILURES:
             return
-        if k[1] == PROJECT_THREAD or self._has_capacity(k[0]):
+        if self._has_capacity(k):
             self._run(k)
         else:
             self._waiting.append(k)
             self._set_state(k, "waiting_turn")
 
-    def _has_capacity(self, slug: str) -> bool:
-        config = self._board(slug).store.load_config()
-        task_turns = [k for k in self._turns if k[1] != PROJECT_THREAD]
-        in_project = sum(1 for k in task_turns if k[0] == slug)
-        return in_project < config.max_agents and len(task_turns) < config.global_max_agents
+    def _has_capacity(self, k: Key) -> bool:
+        config = self._board(k[0]).store.load_config()
+        if len(self._turns) >= config.global_max_agents:
+            return False
+        # агент проекта учитывается только в общем лимите, чтобы эскалации не ждали задач проекта
+        if k[1] == PROJECT_THREAD:
+            return True
+        in_project = sum(1 for s, key in self._turns if s == k[0] and key != PROJECT_THREAD)
+        return in_project < config.max_agents
 
     def _drain(self) -> None:
         for k in list(self._waiting):
-            if k in self._waiting and self._has_capacity(k[0]):
+            if k in self._waiting and self._has_capacity(k):
                 self._waiting.remove(k)
                 self._run(k)
+
+    def _retry_later(self, k: Key) -> None:
+        delays = RETRY_DELAYS or (0.0,)
+        delay = delays[min(self._failures.get(k, 1), len(delays)) - 1]
+        token = object()
+        self._backoff[k] = token
+        timer = threading.Timer(delay, self._inbox.put, args=(("retry", k, token),))
+        timer.daemon = True
+        timer.start()
+
+    def _on_retry(self, k: Key, token: object) -> None:
+        if self._backoff.get(k) is not token:
+            return
+        del self._backoff[k]
+        if self._pending.get(k) and k not in self._turns and k not in self._waiting:
+            self._schedule(k)
 
     def _set_state(self, k: Key, state: str, error: Optional[str] = None) -> None:
         board = self._board(k[0])
@@ -340,7 +437,6 @@ class Runner:
             if task.agent_state == "waiting_turn":
                 self._set_state(k, "idle")
             return
-        self._pending[k] = [r for r in reasons if not any(r is x for x in deliver)]
         if task.session_id and task.worktree:
             self._resume_task(k, board, task, tasks, config, deliver)
         elif task.session_id:
@@ -360,7 +456,7 @@ class Runner:
             raise _PrepareError("у задачи не указан репозиторий, а в проекте их %d" % len(repos))
         return Path(repo["path"]), repo.get("base") or "main"
 
-    def _start_task(self, k: Key, board: Board, task: Task, tasks, config, reasons: List[dict]) -> None:
+    def _start_task(self, k: Key, board: Board, task: Task, tasks, config, deliver: List[dict]) -> None:
         key = task.key
         repo, default_base = self._repo(config, task)
         base, merges = base_for(task, tasks, config.chains, default_base)
@@ -375,13 +471,11 @@ class Runner:
             except GitError:
                 conflicts = []
             if not conflicts:
-                self._pending[k] = reasons + self._pending.get(k, [])
                 raise _PrepareError("не удалось подготовить worktree: %s" % e)
         harness = self._harness(board)
         session_id = harness.new_session_id()
         board.update_task(key, "system", {
-            "worktree": str(path), "branch": branch, "base_branch": base,
-            "harness": config.harness.get("type", "claude"), "session_id": session_id,
+            "worktree": str(path), "branch": branch, "base_branch": base, "harness": config.harness.get("type", "claude"),
         })
         system = prompts.task_system(config, BOARD_CLI)
         text = prompts.task_prompt(task, config, path, base, BOARD_CLI)
@@ -392,22 +486,24 @@ class Runner:
         if conflicts:
             text += ("\nMerging the dependency branches %s left conflict markers in: %s. "
                      "Resolve them by editing the files; do not commit.\n" % (", ".join(merges), ", ".join(conflicts)))
-        extra = [r for r in reasons if r.get("reason") not in _START_ONLY]
+        extra = [r for r in deliver if r.get("reason") not in _START_ONLY]
         if extra:
             text += "\n" + prompts.wake_message(extra, "", BOARD_CLI)
         proc = harness.start_turn(path, text, session_id, self._log(board, key), self._env(board, key))
-        self._begin(k, board, harness, proc, _Turn(proc, reasons, True, session_id))
+        board.update_task(key, "system", {"session_id": session_id})
+        self._begin(k, board, harness, proc, _Turn(proc, deliver, True, session_id), deliver)
 
-    def _resume_task(self, k: Key, board: Board, task: Task, tasks, config, reasons: List[dict]) -> None:
+    def _resume_task(self, k: Key, board: Board, task: Task, tasks, config, deliver: List[dict]) -> None:
         path = Path(task.worktree)
-        rebases = [r for r in reasons if r.get("reason") == "rebase"]
+        reasons = deliver
+        rebases = [r for r in deliver if r.get("reason") == "rebase"]
         if rebases:
             # несколько ребейзов подряд сводятся к одному — на актуальную базу
-            reasons = [r for r in reasons if r.get("reason") != "rebase"] + [self._rebase(board, task, tasks, config, rebases[-1])]
+            reasons = [r for r in deliver if r.get("reason") != "rebase"] + [self._rebase(board, task, tasks, config, rebases[-1])]
         harness = self._harness(board, task)
         message = prompts.wake_message(reasons, "", BOARD_CLI)
         proc = harness.resume_turn(path, task.session_id, message, self._log(board, task.key), self._env(board, task.key))
-        self._begin(k, board, harness, proc, _Turn(proc, reasons, False, task.session_id))
+        self._begin(k, board, harness, proc, _Turn(proc, reasons, False, task.session_id), deliver)
 
     def _rebase(self, board: Board, task: Task, tasks, config, reason: dict) -> dict:
         reason = dict(reason)
@@ -417,7 +513,7 @@ class Runner:
             default_base = task.base_branch or "main"
         base, merges = base_for(task, tasks, config.chains, default_base)
         if merges:
-            reason.update(base=", ".join(merges), rebase_ok=False)
+            reason.update(base=base, rebase_ok=False, merge_branches=list(merges))
             return reason
         try:
             ok, files = rebase_carrying_changes(Path(task.worktree), base)
@@ -431,7 +527,7 @@ class Runner:
     def _run_project(self, k: Key) -> None:
         board = self._board(k[0])
         config = board.store.load_config()
-        reasons = self._pending.pop(k, [])
+        reasons = list(self._pending.get(k, []))
         cwd = board.store.root / "project-agent"
         cwd.mkdir(parents=True, exist_ok=True)
         harness = self._harness(board)
@@ -446,24 +542,21 @@ class Runner:
             turn = _Turn(proc, reasons, False, config.project_session_id)
         else:
             session_id = harness.new_session_id()
-            board.update_config({"project_session_id": session_id})
             text = prompts.project_prompt(config, board.snapshot(), BOARD_CLI)
             extra = [r for r in reasons if r.get("reason") not in _START_ONLY]
             if extra:
                 text += "\n" + prompts.wake_message(extra, "", BOARD_CLI)
             proc = harness.start_turn(cwd, text, session_id, log, env)
+            board.update_config({"project_session_id": session_id})
             turn = _Turn(proc, reasons, True, session_id)
         board.update_meta({"project_last_seen": last_seq})
-        self._begin(k, board, harness, proc, turn)
+        self._begin(k, board, harness, proc, turn, reasons)
 
     @staticmethod
     def _log(board: Board, key: str) -> Path:
         return board.store.root / "logs" / (key + ".jsonl")
 
-    def _begin(self, k: Key, board: Board, harness: Harness, proc, turn: _Turn) -> None:
-        self._turns[k] = turn
-        self._set_state(k, "running", "")
-        board.record("turn_started", {"key": k[1]})
+    def _begin(self, k: Key, board: Board, harness: Harness, proc, turn: _Turn, delivered: List[dict]) -> None:
         log = self._log(board, k[1])
 
         def wait() -> None:
@@ -473,7 +566,20 @@ class Runner:
                 result = TurnResult(session_id=turn.session_id, ok=False, error="ошибка раннера: %r" % e, exit_code=-1)
             self._inbox.put(("done", k, turn, result))
 
-        threading.Thread(target=wait, name="board-turn-%s" % k[1], daemon=True).start()
+        # ожидание хода запускается первым: после этого ход обязательно вернётся в рабочий поток
+        try:
+            threading.Thread(target=wait, name="board-turn-%s" % k[1], daemon=True).start()
+        except BaseException:
+            terminate(proc, 0)
+            raise
+        self._turns[k] = turn
+        self._pending[k] = [r for r in self._pending.get(k, []) if not any(r is x for x in delivered)]
+        pgid = getattr(proc, "pid", None)
+        if k[1] == PROJECT_THREAD:
+            board.update_meta({"project_agent_state": "running", "project_turn_error": "", "project_turn_pgid": pgid})
+        else:
+            board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "turn_pgid": pgid})
+        board.record("turn_started", {"key": k[1]})
 
     def _on_turn_done(self, k: Key, turn: _Turn, result: TurnResult) -> None:
         if self._turns.get(k) is not turn:
@@ -482,8 +588,12 @@ class Runner:
         try:
             self._record_result(k, turn, result)
         finally:
-            if self._pending.get(k) and k not in self._waiting:
-                self._schedule(k)
+            if self._pending.get(k) and k not in self._waiting and k not in self._backoff:
+                if self._failures.get(k) and not turn.stopped and not result.ok:
+                    if self._failures[k] < MAX_FAILURES:
+                        self._retry_later(k)
+                else:
+                    self._schedule(k)
             self._drain()
 
     def _record_result(self, k: Key, turn: _Turn, result: TurnResult) -> None:
@@ -497,16 +607,15 @@ class Runner:
             state, error, event = "idle", "", ("turn_finished", {"key": k[1]})
             session_id = result.session_id or turn.session_id
         else:
-            failures = self._failures.get(k, 0) + 1
-            self._failures[k] = failures
+            self._failures[k] = self._failures.get(k, 0) + 1
             error = result.error or "ход завершился с ошибкой"
             state, event = "error", ("turn_failed", {"key": k[1], "error": error})
-            # неудачный первый ход начнётся заново новой сессией, остальные причины вернутся в следующий ход
+            # неудачный первый ход начнётся заново новой сессией, причины вернутся в следующий ход
             session_id = None if turn.fresh else (result.session_id or turn.session_id)
             self._pending[k] = turn.reasons + self._pending.get(k, [])
         if project:
             board.update_config({"project_session_id": session_id})
-            board.update_meta({"project_agent_state": state, "project_turn_error": error})
+            board.update_meta({"project_agent_state": state, "project_turn_error": error, "project_turn_pgid": None})
         elif k[1] in board.store.load_tasks():
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])
@@ -515,7 +624,8 @@ class Runner:
 
     def _update_task_after_turn(self, board: Board, key: str, state: str, error: str, session_id: Optional[str]) -> None:
         task = board.store.load_tasks()[key]
-        fields = {"agent_state": state, "turn_error": error, "last_turn_at": self._clock(), "session_id": session_id}
+        fields = {"agent_state": state, "turn_error": error, "last_turn_at": self._clock(),
+                  "session_id": session_id, "turn_pgid": None}
         if task.worktree and task.base_branch:
             try:
                 fields["changed_files"] = changed_files(Path(task.worktree), task.base_branch)

@@ -101,11 +101,7 @@ def _files_with_markers(path: Path, names: List[str]) -> List[str]:
     return found
 
 
-def _conclude_merge_check(path: Path) -> None:
-    # вливание с конфликтом агент разрешает правкой файлов: завершаем его, если следов конфликта не осталось
-    unmerged = unmerged_files(path)
-    if unmerged:
-        raise GitError("unmerged paths in {}: {}".format(path, ", ".join(unmerged)))
+def _check_no_markers(path: Path) -> None:
     staged = [p for p in run_git(path, "diff", "--cached", "--name-only", "--no-renames", "-z", "HEAD").split("\0") if p]
     marked = _files_with_markers(path, staged)
     if marked:
@@ -118,9 +114,13 @@ def commit_all(path: Path, message: str) -> Optional[str]:
         _check_no_merge_state(path)
     run_git(path, "add", "-A")
     if merging:
-        _conclude_merge_check(path)
+        # вливание с конфликтом агент разрешает правкой файлов: завершаем его, если следов конфликта не осталось
+        unmerged = unmerged_files(path)
+        if unmerged:
+            raise GitError("unmerged paths in {}: {}".format(path, ", ".join(unmerged)))
     elif not run_git(path, "status", "--porcelain").strip():
         return None
+    _check_no_markers(path)
     res = _git(path, "commit", "-m", message)
     if res.returncode != 0:
         out = (res.stdout + res.stderr).strip()
