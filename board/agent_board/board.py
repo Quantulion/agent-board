@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from typing import Callable, List, Optional, Set
 
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
-from .model import Event, Message, Question, Status, Task
+from .model import Event, Message, Proposal, Question, Status, Task
 from .store import PROJECT_THREAD, ProjectStore
 
 ACTORS = {"user", "agent", "tracker", "system"}
@@ -201,6 +201,81 @@ class Board:
                 task.unread = 0
                 self.store.save_task(task)
             return [self._emit("thread_read", {"thread": thread})]
+
+    def propose(self, kind: str, payload: dict, reason: str) -> List[Event]:
+        with self._lock:
+            self._check_proposal(kind, payload)
+            proposals = self.store.load_proposals()
+            pid = "p%d" % (len(proposals) + 1)
+            proposals.append(Proposal(id=pid, kind=kind, payload=payload, reason=reason, at=self._clock()))
+            self.store.save_proposals(proposals)
+            return [self._emit("proposal_created", {"id": pid})]
+
+    def apply_proposal(self, pid: str) -> List[Event]:
+        with self._lock:
+            proposals = self.store.load_proposals()
+            proposal = self._open_proposal(proposals, pid)
+            # граф мог измениться с момента создания предложения
+            affected = self._check_proposal(proposal.kind, proposal.payload)
+            if proposal.kind == "add_task":
+                events = self.add_task(Task.from_dict(proposal.payload["task"]), "user")
+            elif proposal.kind == "set_deps":
+                events = self.set_deps(proposal.payload["key"], list(proposal.payload["deps"]), "user")
+            else:
+                events = self.transition(proposal.payload["key"], Status.CANCELLED, "user")
+            proposal.status = "applied"
+            self.store.save_proposals(proposals)
+            events.append(self._emit("proposal_applied", {"id": pid}))
+            text = "Применено предложение %s: %s" % (pid, self._describe_proposal(proposal))
+            for thread in (PROJECT_THREAD, affected):
+                events.extend(self.post_message(thread, "system", text))
+            return events
+
+    def reject_proposal(self, pid: str) -> List[Event]:
+        with self._lock:
+            proposals = self.store.load_proposals()
+            proposal = self._open_proposal(proposals, pid)
+            proposal.status = "rejected"
+            self.store.save_proposals(proposals)
+            return [
+                self._emit("proposal_rejected", {"id": pid}),
+                self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "proposal_rejected"}),
+            ]
+
+    def _check_proposal(self, kind: str, payload: dict) -> str:
+        """Проверяет предложение на текущем состоянии графа, возвращает ключ затронутой задачи."""
+        tasks = self.store.load_tasks()
+        if kind == "add_task":
+            task = Task.from_dict(payload["task"])
+            if task.key in tasks:
+                raise ValueError("Задача уже существует: %s" % task.key)
+            validate_deps(task.key, task.deps, tasks)
+            return task.key
+        if kind == "set_deps":
+            key = self._get(tasks, payload["key"]).key
+            validate_deps(key, list(payload["deps"]), tasks)
+            return key
+        if kind == "cancel_task":
+            return self._get(tasks, payload["key"]).key
+        raise ValueError("Неизвестный вид предложения: %r" % kind)
+
+    @staticmethod
+    def _open_proposal(proposals: List[Proposal], pid: str) -> Proposal:
+        proposal = next((p for p in proposals if p.id == pid), None)
+        if proposal is None:
+            raise KeyError("Неизвестное предложение: %s" % pid)
+        if proposal.status != "open":
+            raise ValueError("Предложение уже обработано: %s (%s)" % (pid, proposal.status))
+        return proposal
+
+    @staticmethod
+    def _describe_proposal(proposal: Proposal) -> str:
+        p = proposal.payload
+        if proposal.kind == "add_task":
+            return "добавлена задача %s" % p["task"]["key"]
+        if proposal.kind == "set_deps":
+            return "зависимости задачи %s: %s" % (p["key"], ", ".join(p["deps"]) or "нет")
+        return "отменена задача %s" % p["key"]
 
     @staticmethod
     def _reject_project_agent(actor: str) -> None:
