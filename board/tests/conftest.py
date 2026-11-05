@@ -43,3 +43,22 @@ def flat(events):
 
 def wake(key, reason, **extra):
     return dict(type="agent_wake", key=key, reason=reason, **extra)
+
+
+@pytest.fixture
+def git_repo(tmp_path):
+    import subprocess
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
+
+    git("init", "-b", "main")
+    git("config", "user.name", "Tester")
+    git("config", "user.email", "tester@example.com")
+    (repo / "a.txt").write_text("base\n")
+    git("add", "-A")
+    git("commit", "-m", "init")
+    return repo
