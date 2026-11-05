@@ -144,9 +144,9 @@ def _wake_line(r: dict, cli: str) -> str:
                 "worktree and the card, then continue.")
     if reason == "escalation":
         if r.get("from"):
-            src, ref, who = r["from"], r["from"], "task agent %s" % r["from"]
+            ref, who = r["from"], "task agent %s" % r["from"]
         else:
-            src, ref, who = None, "<KEY>", "an unknown task (find it with `%s events --since <n>` or `%s thread _project`)" % (cli, cli)
+            ref, who = "<KEY>", "an unknown task (find it with `%s events --since <n>` or `%s thread _project`)" % (cli, cli)
         answer = " Answer it with `%s say %s --text ...`." % (cli, ref)
         if r.get("text"):
             return "Escalation from %s, verbatim:\n%s\n%s" % (who, _quote(str(r["text"])), answer.strip())
