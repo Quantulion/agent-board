@@ -244,20 +244,36 @@ class Board:
 
     def _check_proposal(self, kind: str, payload: dict) -> str:
         """Проверяет предложение на текущем состоянии графа, возвращает ключ затронутой задачи."""
+        if kind not in ("add_task", "set_deps", "cancel_task"):
+            raise ValueError("Неизвестный вид предложения: %r" % kind)
+        if not isinstance(payload, dict):
+            raise ValueError("payload предложения должен быть объектом")
         tasks = self.store.load_tasks()
         if kind == "add_task":
-            task = Task.from_dict(payload["task"])
+            raw = payload.get("task")
+            if not isinstance(raw, dict):
+                raise ValueError("В предложении add_task нужен объект task")
+            try:
+                task = Task.from_dict(raw)
+            except TypeError as e:
+                raise ValueError("Некорректная задача в предложении: %s" % e)
+            if not isinstance(task.key, str):
+                raise ValueError("Ключ задачи должен быть строкой")
             if task.key in tasks:
                 raise ValueError("Задача уже существует: %s" % task.key)
             validate_deps(task.key, task.deps, tasks)
             return task.key
+        key = payload.get("key")
+        if not isinstance(key, str):
+            raise ValueError("В предложении нужен строковый key")
         if kind == "set_deps":
-            key = self._get(tasks, payload["key"]).key
-            validate_deps(key, list(payload["deps"]), tasks)
+            deps = payload.get("deps")
+            if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
+                raise ValueError("В предложении set_deps deps должен быть списком строк")
+            key = self._get(tasks, key).key
+            validate_deps(key, list(deps), tasks)
             return key
-        if kind == "cancel_task":
-            return self._get(tasks, payload["key"]).key
-        raise ValueError("Неизвестный вид предложения: %r" % kind)
+        return self._get(tasks, key).key
 
     @staticmethod
     def _open_proposal(proposals: List[Proposal], pid: str) -> Proposal:

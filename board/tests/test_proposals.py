@@ -36,6 +36,24 @@ def test_propose_unknown_kind_raises_value_error(board):
         board.propose("drop_db", {}, "")
 
 
+@pytest.mark.parametrize("kind, payload", [
+    ("add_task", {}),
+    ("add_task", {"task": "x"}),
+    ("add_task", {"task": {"title": "no key"}}),
+    ("set_deps", {}),
+    ("set_deps", {"key": "X"}),
+    ("set_deps", {"key": "X", "deps": "T-1"}),
+    ("cancel_task", {}),
+    ("cancel_task", {"key": 5}),
+    ("add_task", None),
+    ("set_deps", [1]),
+])
+def test_propose_malformed_payload_raises_value_error(board, kind, payload):
+    with pytest.raises(ValueError):
+        board.propose(kind, payload, "")
+    assert board.snapshot()["proposals"] == []
+
+
 @pytest.mark.parametrize("kind", ["set_deps", "cancel_task"])
 def test_propose_unknown_task_raises_key_error(board, kind):
     with pytest.raises(KeyError):

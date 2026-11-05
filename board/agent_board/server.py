@@ -215,7 +215,7 @@ class _Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
             raise ValueError("Некорректный Content-Length")
-        if length > MAX_BODY:
+        if length < 0 or length > MAX_BODY:
             raise ValueError("Слишком большое тело запроса")
         raw = self.rfile.read(length) if length else b""
         if not raw.strip():
@@ -290,7 +290,10 @@ class _Handler(BaseHTTPRequestHandler):
         elif len(rest) == 5 and rest[0] == "tasks" and rest[2] == "questions" and rest[4] == "answer":
             events = board.answer(rest[1], rest[3], body.get("choice"), str(body.get("comment") or ""))
         elif rest == ["proposals"]:
-            events = board.propose(_need(body, "kind"), _need(body, "payload"), str(body.get("reason") or ""))
+            payload = _need(body, "payload")
+            if not isinstance(payload, dict):
+                raise ValueError("payload должен быть объектом")
+            events = board.propose(_need(body, "kind"), payload, str(body.get("reason") or ""))
             extra["proposal_id"] = _event_ids(events, "proposal_created", "id")
         elif len(rest) == 3 and rest[0] == "proposals" and rest[2] == "apply":
             events = board.apply_proposal(rest[1])

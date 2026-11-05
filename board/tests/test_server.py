@@ -212,6 +212,28 @@ def test_proposals_apply_and_reject(server):
     assert post(server, "/api/p/pay/proposals/nope/reject").status == 404
 
 
+@pytest.mark.parametrize("body", [
+    {"kind": "add_task", "payload": {}},
+    {"kind": "add_task", "payload": {"task": "x"}},
+    {"kind": "set_deps", "payload": {"deps": []}},
+    {"kind": "cancel_task", "payload": {}},
+    {"kind": "add_task", "payload": "str"},
+    {"kind": "add_task"},
+])
+def test_malformed_proposal_is_400(server, body):
+    assert post(server, "/api/p/pay/proposals", body).status == 400
+
+
+def test_negative_content_length_is_400(server):
+    s = socket.create_connection(("127.0.0.1", server.port), timeout=5)
+    try:
+        s.sendall(("POST /api/p/pay/tasks HTTP/1.1\r\nHost: 127.0.0.1:%d\r\nX-Board-Token: %s\r\n"
+                   "Content-Length: -5\r\n\r\n" % (server.port, server.token)).encode())
+        assert " 400 " in read_until(s, "\r\n")
+    finally:
+        s.close()
+
+
 def test_events_since(server):
     add_task(server)
     all_events = get(server, "/api/p/pay/events?since=0").json()["events"]
@@ -285,6 +307,8 @@ def test_stop_returns_promptly_with_open_sse_client(tmp_home):
     t0 = time.time()
     srv.stop()
     assert time.time() - t0 < 3
+    # сервер закрыл поток: клиент доходит до EOF
+    assert sock.recv(4096) == b""
     sock.close()
 
 
