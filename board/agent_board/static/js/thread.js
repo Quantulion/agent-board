@@ -76,18 +76,19 @@ export function renderMessage(m, agentName) {
 }
 
 // Тред thread. scroller — прокручиваемый контейнер списка; visible() — тред сейчас на экране;
-// alive() — владелец ещё открыт (ответы сервера после закрытия игнорируются).
-export function createThread({ client, thread, drafts, scroller, visible, alive, placeholder, hint, agentName }) {
+// alive() — владелец ещё открыт (ответы сервера после закрытия игнорируются);
+// draftKey — под каким ключом хранить черновик, если у того же треда есть другое поле ввода.
+export function createThread({ client, thread, drafts, scroller, visible, alive, placeholder, hint, agentName, draftKey = thread }) {
   const list = h('div', { class: 'thread' });
   const empty = h('p', { class: 'muted', hidden: true }, T.card.noMessages);
   const loadError = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const sendError = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const area = h('textarea', { placeholder, 'aria-label': placeholder });
-  area.value = drafts.get(thread);
+  area.value = drafts.get(draftKey);
   const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.send);
   const composer = h('div', { class: 'composer' }, area,
     h('div', { class: 'row' }, h('span', { class: 'faint hint' }, hint || T.card.composerHint), send));
-  area.addEventListener('input', () => drafts.set(thread, area.value));
+  area.addEventListener('input', () => drafts.set(draftKey, area.value));
   area.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
       e.preventDefault();
@@ -141,7 +142,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
     // поле сразу свободно для следующего сообщения; при ошибке отправленный текст возвращается в него
     const sent = area.value;
     area.value = '';
-    drafts.set(thread, '');
+    drafts.set(draftKey, '');
     send.disabled = true;
     sending = true;
     sendError.hidden = true;
@@ -149,7 +150,7 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
       .then(() => { if (alive()) toBottom(); })
       .catch(err => {
         area.value = area.value ? sent + '\n\n' + area.value : sent;
-        drafts.set(thread, area.value);
+        drafts.set(draftKey, area.value);
         sendError.textContent = (err && err.message) || String(err);
         sendError.hidden = false;
       })

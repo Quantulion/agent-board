@@ -23,6 +23,9 @@ const violationsOf = t => (Array.isArray(t.rule_violations) ? t.rule_violations 
 // --- Чистые функции ---
 
 // Стадия после утверждения: заведение задач в трекере, если он подключён, иначе сразу работа агентов.
+// Черновик комментария к задаче разбивки — свой, не общий с полем ввода в карточке задачи.
+export const commentDraftKey = key => 'decomp:' + key;
+
 export function nextStage(config) {
   const type = config && config.tracker && config.tracker.type;
   return type && type !== 'none' ? 'tracker' : 'work';
@@ -182,7 +185,7 @@ export function mountDecomposition(root, store, ctx) {
       // тред задачи создаётся при первом раскрытии и живёт, пока задача на странице
       const cscroll = h('div', { class: 'cscroll' });
       entry.thread = createThread({
-        client: ctx.client, thread: key, drafts,
+        client: ctx.client, thread: key, drafts, draftKey: commentDraftKey(key),
         scroller: () => cscroll,
         visible: () => alive && expanded.has(key),
         alive: () => alive && entries.get(key) === entry,
