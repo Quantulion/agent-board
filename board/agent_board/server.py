@@ -383,15 +383,18 @@ class _Handler(BaseHTTPRequestHandler):
         return {"base": task.base_branch, "files": files, "diff": text, "truncated": truncated}
 
     def _send_file(self, board: Board, query: dict) -> None:
-        """Отдаёт локальный файл, если он лежит в каталоге проекта, его репозиториев или worktree задач."""
+        """Отдаёт локальный файл, если он лежит в каталоге проекта, его репозиториев или worktree задач.
+
+        Относительный путь считается от первого репозитория проекта, а без репозиториев — от каталога проекта.
+        """
         raw = (query.get("path") or [""])[0]
         if not raw:
             raise ValueError("Не указан path")
         root = board.store.root.resolve()
-        target = (root / raw).resolve()
         config = board.store.load_config()
-        allowed = [root]
-        allowed += [Path(r["path"]).resolve() for r in config.repos if isinstance(r, dict) and r.get("path")]
+        repos = [Path(r["path"]).resolve() for r in config.repos if isinstance(r, dict) and r.get("path")]
+        target = ((repos[0] if repos else root) / raw).resolve()
+        allowed = [root] + repos
         base = next((b for b in allowed if target == b or b in target.parents), None)
         if base is None:
             raise PermissionError("Путь вне каталогов проекта")

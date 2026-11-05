@@ -774,10 +774,31 @@ def test_file_serves_project_file_as_plain_text(ui_server):
     store = ProjectStore("pay")
     (store.root / "notes.md").write_text("# привет\n", encoding="utf-8")
     # act
-    r = get(ui_server, "/api/p/pay/file?path=notes.md")
+    r = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(store.root / "notes.md")))
     # assert
     assert r.status == 200 and r.body.decode() == "# привет\n"
     assert r.headers["Content-Type"] == "text/plain; charset=utf-8"
+
+
+def test_file_relative_path_resolves_against_first_repo(ui_server):
+    # arrange
+    (ui_server.repo / "docs").mkdir()
+    (ui_server.repo / "docs" / "plan.md").write_text("план", encoding="utf-8")
+    (ProjectStore("pay").root / "docs").mkdir()
+    (ProjectStore("pay").root / "docs" / "plan.md").write_text("не тот", encoding="utf-8")
+    # act
+    r = get(ui_server, "/api/p/pay/file?path=docs/plan.md")
+    # assert
+    assert r.status == 200 and r.body.decode() == "план"
+
+
+def test_file_relative_path_without_repos_resolves_against_project_dir(server):
+    # arrange
+    (ProjectStore("pay").root / "notes.md").write_text("заметки", encoding="utf-8")
+    # act
+    r = get(server, "/api/p/pay/file?path=notes.md")
+    # assert
+    assert r.status == 200 and r.body.decode() == "заметки"
 
 
 def test_file_html_served_with_sandbox_csp(ui_server):
@@ -801,7 +822,7 @@ def test_file_outside_allowed_dirs_is_forbidden(ui_server, tmp_path):
     # act
     absolute = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(secret)))
     traversal = get(ui_server, "/api/p/pay/file?path=..%2F..%2F..%2Fsecret.txt")
-    symlink = get(ui_server, "/api/p/pay/file?path=link.txt")
+    symlink = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(store.root / "link.txt")))
     missing_outside = get(ui_server, "/api/p/pay/file?path=%2Fnope%2Fnot-here")
     # assert
     assert absolute.status == traversal.status == symlink.status == missing_outside.status == 403
@@ -815,7 +836,7 @@ def test_file_errors(ui_server):
     # assert
     assert get(ui_server, "/api/p/pay/file").status == 400
     assert get(ui_server, "/api/p/pay/file?path=absent.txt").status == 404
-    assert get(ui_server, "/api/p/pay/file?path=big.txt").status == 413
+    assert get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(store.root / "big.txt"))).status == 413
 
 
 def test_update_rule_violations_by_user_and_project_agent_only(server):
@@ -877,7 +898,7 @@ def test_file_denies_git_dir_and_logs(ui_server):
     # act
     git_config = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.repo / ".git" / "config")))
     wt_git = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.worktree / ".git")))
-    logs = get(ui_server, "/api/p/pay/file?path=logs/T-1.jsonl")
+    logs = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(store.root / "logs" / "T-1.jsonl")))
     # assert
     assert git_config.status == wt_git.status == logs.status == 403
 
@@ -981,7 +1002,7 @@ def test_file_denies_git_dir_and_logs_case_insensitive(ui_server):
     (store.root / "logs" / "T-1.jsonl").write_text("{}")
     # act
     git_config = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(ui_server.repo / ".GIT" / "config")))
-    logs = get(ui_server, "/api/p/pay/file?path=LOGS/T-1.jsonl")
+    logs = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(store.root / "LOGS" / "T-1.jsonl")))
     # assert
     assert git_config.status == logs.status == 403
     assert b"[core]" not in git_config.body
