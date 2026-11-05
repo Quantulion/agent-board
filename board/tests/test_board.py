@@ -1,39 +1,12 @@
 from __future__ import annotations
 
 import pytest
-from conftest import make_task as mk
+from conftest import NOW, flat, make_board, make_task as mk, wake
 
 from agent_board.board import Board
 from agent_board.config import ProjectConfig
 from agent_board.model import Question, Status
 from agent_board.store import ProjectStore
-
-NOW = "2026-01-01T00:00:00+00:00"
-
-
-def _board(chains, on_event=None):
-    s = ProjectStore("pay")
-    s.create(ProjectConfig(slug="pay", title="Платежи", chains=chains))
-    return Board(s, clock=lambda: NOW, on_event=on_event)
-
-
-@pytest.fixture
-def board(tmp_home):
-    return _board(True)
-
-
-@pytest.fixture
-def board_strict(tmp_home):
-    return _board(False)
-
-
-def flat(events):
-    return [dict(type=e.type, **e.data) for e in events]
-
-
-def wake(key, reason, **extra):
-    return dict(type="agent_wake", key=key, reason=reason, **extra)
-
 
 def test_add_task_ready_emits_task_added_and_wake(board):
     ev = board.add_task(mk("A"), "user")
@@ -251,7 +224,7 @@ def test_post_message_unknown_thread_rejected(board):
 
 def test_on_event_called_for_every_event_in_order(tmp_home):
     seen = []
-    b = _board(True, on_event=seen.append)
+    b = make_board(True, on_event=seen.append)
     ev = b.add_task(mk("A"), "user")
     assert [e.seq for e in seen] == [e.seq for e in ev] == [1, 2]
 

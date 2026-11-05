@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import pytest
-from conftest import make_task as mk
-from test_board import board, flat, wake  # noqa: F401
+from conftest import flat, make_task as mk, wake
 
 from agent_board.model import Status
 from agent_board.store import PROJECT_THREAD
