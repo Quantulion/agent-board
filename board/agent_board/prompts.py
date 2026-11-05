@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 from string import Template
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from .config import ProjectConfig
 from .model import Event, Task
@@ -22,22 +22,29 @@ def _or_none(value: str) -> str:
     return value.strip() if value and value.strip() else _NONE
 
 
-def _resources_text(config: ProjectConfig) -> str:
-    names = []
+def _resources_section(config: ProjectConfig, board_cli: str) -> str:
+    items = []
     for r in config.resources:
-        name = r.get("name") if isinstance(r, dict) else r
-        if name:
-            names.append(str(name))
-    if not names:
-        return "No shared resources are configured for this project."
-    return "Shared resources of this project: %s." % ", ".join(names)
+        if not isinstance(r, dict) or not r.get("name"):
+            continue
+        desc = r.get("description")
+        items.append("- %s%s" % (r["name"], " — %s" % desc if desc else ""))
+    if not items:
+        return ""
+    return (
+        "## Shared resources\n"
+        "These resources are shared and must be used exclusively:\n%s\n"
+        "Run any command that touches them only as `%s lock-run <resource> -- <command>`, never directly. "
+        "The call blocks while waiting in a queue (visible on the card), so run it with a long tool timeout "
+        "or in the background.\n" % ("\n".join(items), board_cli)
+    )
 
 
-def task_system(config: ProjectConfig, board_cli: str = "agent-board") -> str:
+def task_system(config: ProjectConfig, board_cli: str) -> str:
     return _render("task_system.md", {
         "board_cli": board_cli,
         "language": config.language,
-        "resources_text": _resources_text(config),
+        "resources_section": _resources_section(config, board_cli),
     })
 
 
@@ -92,35 +99,54 @@ def _quote(text: str) -> str:
     return "%s\n%s\n%s" % (fence, text, fence)
 
 
-def _wake_line(r: dict) -> str:
+def _read_hint(cmd: str, what: str) -> str:
+    return "%s is missing here; read it from the board with `%s`." % (what, cmd)
+
+
+def _wake_line(r: dict, cli: str) -> str:
     reason = r.get("reason", "")
+    key = r.get("key") or "<KEY>"
+    thread = "%s thread %s" % (cli, key)
     if reason == "message":
-        return "New message from the user (id %s), verbatim:\n%s" % (r.get("message_id", "?"), _quote(str(r.get("text", ""))))
+        if r.get("text"):
+            return "New message from the user (id %s), verbatim:\n%s" % (r.get("message_id", "?"), _quote(str(r["text"])))
+        return "New message from the user. " + _read_hint(thread, "Its text")
     if reason == "answer":
-        out = "The user answered your question%s." % (
-            " (%s)" % r["question_id"] if r.get("question_id") else "")
+        out = "The user answered your question%s." % (" (%s)" % r["question_id"] if r.get("question_id") else "")
         if r.get("question"):
             out += "\nQuestion: %s" % r["question"]
-        out += "\nChosen: %s" % (r.get("choice") or "(no option chosen)")
+        if r.get("choice"):
+            out += "\nChosen: %s" % r["choice"]
         if r.get("comment"):
             out += "\nComment, verbatim:\n%s" % _quote(str(r["comment"]))
+        if not r.get("choice") and not r.get("comment"):
+            out += " " + _read_hint("%s show %s" % (cli, key), "The answer")
         return out
     if reason == "returned":
         return ("The task was returned to work from status `%s`. Find out why in the card and thread, "
-                "then continue." % r.get("from", "?"))
+                "then continue." % (r.get("from") or "?"))
     if reason == "rebase":
-        base = r.get("base", "the base branch")
-        head = "The branch of dependency %s changed; rebase onto %s." % (r.get("from", "?"), base)
-        if r.get("rebase_ok") is True:
-            return head + " The rebase was applied cleanly; check that the work still fits and continue."
+        base = r.get("base") or "the new base"
+        dep = r.get("from") or "?"
+        files = r.get("conflict_files") or []
         if r.get("rebase_ok") is False:
-            return head + " The automatic rebase hit conflicts; resolve them in your worktree, or ask a question on the card if you cannot."
-        return head + " Do it and resolve conflicts yourself; ask a question on the card if you cannot."
+            return ("The branch of dependency %s changed; the board could not move your work onto %s. "
+                    "Do not run any git commands; ask a question on the card." % (dep, base))
+        if files:
+            return ("The branch of dependency %s changed; the board moved your work onto %s, but these files "
+                    "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
+                    % (dep, base, ", ".join(files)))
+        return ("The branch of dependency %s changed; the board moved your work onto %s. Continue." % (dep, base))
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
     if reason == "escalation":
-        return "Escalation from task agent %s in the project thread. Read it with thread _project and respond." % r.get("from", "?")
+        src = r.get("from") or "a task agent"
+        if r.get("text"):
+            return ("Escalation from task agent %s, verbatim:\n%s\nAnswer it with `%s say %s --text ...`."
+                    % (src, _quote(str(r["text"])), cli, src))
+        return ("Escalation from task agent %s. " % src) + _read_hint("%s thread _project" % cli, "Its text") + \
+            " Answer with `%s say %s --text ...`." % (cli, src)
     if reason == "proposal_rejected":
         return "The user rejected your proposal%s. Do not repeat it; adapt." % (
             " (%s)" % r["id"] if r.get("id") else "")
@@ -131,15 +157,22 @@ def _wake_line(r: dict) -> str:
     return "Woken: %s." % (reason or "unknown reason")
 
 
-def wake_message(reasons: List[dict], digest: str) -> str:
-    parts = [_wake_line(r) for r in reasons]
-    out = "\n\n".join(parts)
+def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board") -> str:
+    """Одно сообщение из накопленных пробуждений, в порядке поступления.
+
+    Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
+      message -> message_id, text; answer -> question_id, question, choice, comment;
+      returned -> from; rebase -> from, base, rebase_ok, conflict_files;
+      escalation -> from, text; interrupted, unblocked, ready, manual, proposal_rejected -> без полей.
+    Общий ключ key (агент_wake) нужен только для подсказок «прочитай на доске».
+    """
+    out = "\n\n".join(_wake_line(r, board_cli) for r in reasons)
     if digest and digest.strip():
         out += "\n\n## Board changes since your last turn\n" + digest.strip()
     return out + "\n"
 
 
-def _event_line(e: Event):
+def _event_line(e: Event) -> Optional[str]:
     d = e.data
     k = d.get("key", "?")
     t = e.type

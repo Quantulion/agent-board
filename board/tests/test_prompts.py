@@ -12,7 +12,7 @@ RULES = "Run tests via `make t {x}`; price is $5; never touch /etc."
 
 def _config(**kw):
     kw.setdefault("agent_rules", RULES)
-    kw.setdefault("resources", [{"name": "functests"}])
+    kw.setdefault("resources", [{"name": "functests", "description": "shared functional test DB"}])
     return ProjectConfig(slug="pay", title="Платежи", language="ru", **kw)
 
 
@@ -24,7 +24,7 @@ def _task(**kw):
 def _prompts(task=None):
     task = task or _task(deps=["PAY-3"])
     wt = Path("/repo/.agent-board-worktrees/PAY-7")
-    return task_system(_config()) + "\n" + task_prompt(task, _config(), wt, "main", CLI)
+    return task_system(_config(), CLI) + "\n" + task_prompt(task, _config(), wt, "main", CLI)
 
 
 def test_task_prompt_contains_task_specifics_and_rules():
@@ -42,7 +42,7 @@ def test_task_prompt_forbids_commit_and_push_and_describes_cli():
     text = _prompts()
 
     # assert
-    assert "git commit" in text and "git push" in text and "Never run" in text
+    assert "Nobody pushes" in text and "only read-only git commands" in text and "git commit" in text
     for cmd in ("status <KEY> in_progress", "status <KEY> in_review", "update <KEY> --summary",
                 "--todo-json", "--changed-files-json", "ask <KEY>", "--context", "--recommended",
                 "say _project", "lock-run <resource> -- <command>"):
@@ -59,7 +59,8 @@ def test_board_cli_is_embedded_not_hardcoded():
     text = task_system(_config(), "/opt/ab") + task_prompt(task, _config(), Path("/w"), "main", "/opt/ab")
 
     # assert
-    assert "/opt/ab status PAY-7 in_progress" in text and "agent-board " not in text.replace("agent-board, a local", "")
+    assert "/opt/ab status PAY-7 in_progress" in text and "/opt/ab lock-run" in text
+    assert "`agent-board" not in text
 
 
 def test_special_characters_in_task_fields_do_not_break_rendering():
@@ -103,7 +104,7 @@ def test_wake_message_merges_reasons_in_order_and_quotes_user_message_verbatim()
     # assert
     assert "Привет {x}\n```код``` $1" in text and "m42" in text
     assert text.index("Экспоненциальный") < text.index("m42") < text.index("PAY-3")
-    assert "conflicts" in text and "Board changes" not in text
+    assert "Do not run any git" in text and "Board changes" not in text
 
 
 def test_wake_message_covers_returned_interrupted_and_escalation_and_appends_digest():
@@ -141,3 +142,91 @@ def test_prompt_templates_are_listed_in_package_data():
 
     # act / assert
     assert "prompts/*.md" in pyproject
+
+
+def test_wake_message_rebase_variants_follow_board_side_rebase():
+    # arrange
+    base = {"reason": "rebase", "from": "PAY-3", "base": "main"}
+
+    # act
+    ok = wake_message([dict(base, rebase_ok=True, conflict_files=[])], "")
+    marked = wake_message([dict(base, rebase_ok=True, conflict_files=["a.py", "b.py"])], "")
+    failed = wake_message([dict(base, rebase_ok=False, conflict_files=[])], "")
+
+    # assert
+    assert "PAY-3" in ok and "main" in ok and "Continue" in ok and "marker" not in ok
+    assert "a.py, b.py" in marked and "conflict markers" in marked and "do not commit" in marked
+    assert "could not move" in failed and "Do not run any git" in failed and "ask a question" in failed
+    for t in (ok, marked, failed):
+        assert "git rebase" not in t
+
+
+def test_wake_message_missing_fields_point_to_the_board_instead_of_empty_quotes():
+    # arrange
+    reasons = [{"reason": "message", "key": "PAY-7"}, {"reason": "answer", "key": "PAY-7"},
+               {"reason": "escalation", "key": "_project", "from": "PAY-9"}]
+
+    # act
+    text = wake_message(reasons, "", "ab")
+
+    # assert
+    assert "ab thread PAY-7" in text and "ab show PAY-7" in text and "ab thread _project" in text
+    assert "```\n\n```" not in text and "no option chosen" not in text
+
+
+def test_wake_message_escalation_quotes_text_when_present():
+    # arrange / act
+    text = wake_message([{"reason": "escalation", "from": "PAY-9", "text": "which DB?"}], "")
+
+    # assert
+    assert "PAY-9" in text and "which DB?" in text
+
+
+def test_wake_message_simple_reasons_render_without_fields():
+    # arrange
+    reasons = [{"reason": r} for r in ("interrupted", "unblocked", "ready", "manual", "proposal_rejected")]
+
+    # act
+    text = wake_message(reasons, "")
+
+    # assert
+    assert text.count("\n\n") == 4 and "interrupted" in text and "rejected" in text and "unblocked" in text
+
+
+def test_task_system_conflict_marker_and_git_rules():
+    # arrange / act
+    text = task_system(_config(), CLI)
+
+    # assert
+    assert "<<<<<<<" in text and ">>>>>>>" in text and "until no marker lines remain" in text
+    for banned in ("git merge --abort", "git rebase --continue", "git add", "git stash"):
+        assert banned in text and text.index("Never run", text.index("<<<<<<<")) < text.index(banned)
+    assert "unless the board asks" not in text
+    assert "only read-only git commands" in text
+
+
+def test_task_system_resources_section_only_when_resources_exist():
+    # arrange
+    with_res = task_system(_config(), CLI)
+    without = task_system(_config(resources=[]), CLI)
+
+    # assert
+    assert "functests — shared functional test DB" in with_res and "lock-run" in with_res
+    assert "lock-run" not in without and "Shared resources" not in without
+
+
+def test_task_system_statuses_end_of_turn_and_research_rules():
+    # arrange / act
+    text = task_system(_config(), CLI)
+
+    # assert
+    assert "Set only in_progress, in_review" in text and "never set other statuses" in text
+    assert "Before ending any turn" in text and "reports/" in text and "long tool timeout" in text
+
+
+def test_project_prompt_escalation_answered_to_task_thread():
+    # arrange / act
+    text = project_prompt(_config(), {"tasks": []}, CLI)
+
+    # assert
+    assert "escalation" in text and "say <KEY>" in text and "only for the user" in text
