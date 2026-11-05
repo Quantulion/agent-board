@@ -98,10 +98,8 @@ def test_atomic_write_leaves_old_file_on_failure(tmp_home, monkeypatch):
     path = tmp_home / "f.json"
     atomic_write_json(path, {"v": 1})
     real_dump = json.dump
-    calls = {"n": 0}
 
     def flaky(*a, **kw):
-        calls["n"] += 1
         raise OSError("boom")
 
     monkeypatch.setattr(store_mod.json, "dump", flaky)
@@ -110,3 +108,37 @@ def test_atomic_write_leaves_old_file_on_failure(tmp_home, monkeypatch):
     monkeypatch.setattr(store_mod.json, "dump", real_dump)
     assert json.loads(path.read_text(encoding="utf-8")) == {"v": 1}
     assert os.listdir(tmp_home) == ["f.json"]
+
+
+def test_append_after_truncated_tail_keeps_new_records(tmp_home):
+    s = new_store()
+    s.append_event("a", {})
+    s.append_message("PAY-101", Message(id="m1", author="user", text="x", at="t"))
+    with open(s.root / "events.jsonl", "a", encoding="utf-8") as f:
+        f.write('{"seq": 2, "ty')
+    with open(s.root / "threads" / "PAY-101.jsonl", "a", encoding="utf-8") as f:
+        f.write('{"id": "m2", "au')
+    e = ProjectStore("pay").append_event("b", {})
+    s.append_message("PAY-101", Message(id="m3", author="user", text="y", at="t"))
+    assert e.seq == 2
+    assert [x.type for x in s.read_events()] == ["a", "b"]
+    assert [m.id for m in s.read_thread("PAY-101")] == ["m1", "m3"]
+
+
+def test_invalid_identifiers_raise(tmp_home):
+    with pytest.raises(ValueError):
+        ProjectStore("../x")
+    s = new_store()
+    with pytest.raises(ValueError):
+        s.append_message("a/b", Message(id="m", author="u", text="t", at="t"))
+    with pytest.raises(ValueError):
+        s.read_thread("a/b")
+    with pytest.raises(ValueError):
+        s.save_task(make_task(".."))
+    s.append_message("_project", Message(id="m", author="u", text="t", at="t"))
+
+
+def test_meta_merges_over_defaults(tmp_home):
+    s = new_store()
+    s.save_meta({"other": 1})
+    assert s.load_meta() == {"project_unread": 0, "other": 1}

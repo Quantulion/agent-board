@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,6 +12,13 @@ from .config import ProjectConfig
 from .model import Event, Message, Proposal, Task
 
 PROJECT_THREAD = "_project"
+_IDENT_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]{0,99}$")
+
+
+def _check_ident(value: str, what: str) -> str:
+    if not isinstance(value, str) or not _IDENT_RE.match(value) or ".." in value:
+        raise ValueError("Недопустимый идентификатор (%s): %r" % (what, value))
+    return value
 
 
 def board_home() -> Path:
@@ -58,7 +66,15 @@ def _read_jsonl(path: Path) -> list:
 
 
 def _append_jsonl(path: Path, obj) -> None:
+    # после обрыва записи файл может не оканчиваться переводом строки
+    needs_newline = False
+    if path.exists() and path.stat().st_size > 0:
+        with open(path, "rb") as rf:
+            rf.seek(-1, os.SEEK_END)
+            needs_newline = rf.read(1) != b"\n"
     with open(path, "a", encoding="utf-8") as f:
+        if needs_newline:
+            f.write("\n")
         f.write(json.dumps(obj, ensure_ascii=False) + "\n")
         f.flush()
         os.fsync(f.fileno())
@@ -66,7 +82,7 @@ def _append_jsonl(path: Path, obj) -> None:
 
 class ProjectStore:
     def __init__(self, slug: str):
-        self.slug = slug
+        self.slug = _check_ident(slug, "проект")
         self.root = board_home() / "projects" / slug
         self._last_seq = None
 
@@ -93,13 +109,13 @@ class ProjectStore:
         return result
 
     def save_task(self, t: Task) -> None:
-        atomic_write_json(self.root / "tasks" / (t.key + ".json"), t.to_dict())
+        atomic_write_json(self.root / "tasks" / (_check_ident(t.key, "задача") + ".json"), t.to_dict())
 
     def append_message(self, thread: str, m: Message) -> None:
-        _append_jsonl(self.root / "threads" / (thread + ".jsonl"), m.to_dict())
+        _append_jsonl(self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl"), m.to_dict())
 
     def read_thread(self, thread: str) -> List[Message]:
-        return [Message.from_dict(d) for d in _read_jsonl(self.root / "threads" / (thread + ".jsonl"))]
+        return [Message.from_dict(d) for d in _read_jsonl(self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl"))]
 
     def load_proposals(self) -> List[Proposal]:
         p = self.root / "proposals.json"
@@ -112,9 +128,10 @@ class ProjectStore:
 
     def load_meta(self) -> dict:
         p = self.root / "meta.json"
-        if not p.exists():
-            return {"project_unread": 0}
-        return json.loads(p.read_text(encoding="utf-8"))
+        meta = {"project_unread": 0}
+        if p.exists():
+            meta.update(json.loads(p.read_text(encoding="utf-8")))
+        return meta
 
     def save_meta(self, d: dict) -> None:
         atomic_write_json(self.root / "meta.json", d)
