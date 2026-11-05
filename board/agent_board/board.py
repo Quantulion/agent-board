@@ -17,13 +17,17 @@ UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
-    "agent_state", "turn_error", "last_turn_at", "harness", "turn_process",
+    "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations",
 }
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
     "turn_process",
 }
+# нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
+RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
+MAX_RULE_VIOLATIONS = 50
+LAST_MESSAGE_CHARS = 200
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
 TASK_KINDS = ("code", "research")
@@ -100,6 +104,14 @@ def new_task_from_dict(d: Any) -> Task:
     return Task(**dict(d, deps=list(deps)))
 
 
+def _check_rule_violations(value: Any) -> None:
+    if not isinstance(value, list) or len(value) > MAX_RULE_VIOLATIONS:
+        raise ValueError("rule_violations должен быть списком не длиннее %d" % MAX_RULE_VIOLATIONS)
+    for item in value:
+        if not isinstance(item, dict) or not isinstance(item.get("rule"), str) or not isinstance(item.get("text"), str):
+            raise ValueError("Элемент rule_violations должен быть объектом со строками rule и text")
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -169,6 +181,11 @@ class Board:
                 d["display_status"] = display_status(t, tasks, config.chains).value
                 d["open_deps"] = open_deps(t, tasks, config.chains)
                 d["terminal_command"] = self._terminal_command(t)
+                size, last = self.store.thread_summary(key)
+                d["thread_size"] = size
+                d["last_message"] = None if last is None else {
+                    "author": last.author, "text": last.text[:LAST_MESSAGE_CHARS], "at": last.at}
+                d["open_questions"] = sum(1 for q in t.questions if q.answer is None)
                 items.append(d)
             snap = {
                 "config": config.to_dict(),
@@ -292,6 +309,10 @@ class Board:
             owned = set(fields) & RUNNER_FIELDS
             if owned and actor != "system":
                 raise PermissionError("Эти поля меняет только раннер: %s" % ", ".join(sorted(owned)))
+            if "rule_violations" in fields:
+                if actor not in RULE_VIOLATION_AUTHORS:
+                    raise PermissionError("Нарушения правил фиксируют пользователь и агент проекта")
+                _check_rule_violations(fields["rule_violations"])
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)

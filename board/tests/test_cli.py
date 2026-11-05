@@ -340,6 +340,17 @@ def test_lock_run_undeclared_resource_prints_single_error(srv, capsys, monkeypat
     assert code == 1 and len(err.strip().splitlines()) == 1
 
 
+def test_stage_with_empty_actor_env_is_rejected_as_agent(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "")
+    # act
+    code, _, err = run(capsys, "stage", "work")
+    # assert
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "state")["config"]["stage"] == "decomposition"
+
+
 def test_stage_changed_by_user_but_not_by_agent(srv, capsys, monkeypatch):
     # act
     out = run_json(capsys, "stage", "work")

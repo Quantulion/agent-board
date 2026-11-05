@@ -161,8 +161,8 @@ def cmd_add_task(args):
 
 
 def cmd_stage(args):
-    # человек в терминале — пользователь; агенты запускаются с AGENT_BOARD_ACTOR и получат отказ
-    actor = os.environ.get("AGENT_BOARD_ACTOR") or "user"
+    # человек в терминале — пользователь; агенты запускаются с AGENT_BOARD_ACTOR (в том числе пустой) и получат отказ
+    actor = os.environ.get("AGENT_BOARD_ACTOR", "user") or "agent"
     return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": actor})
 
 

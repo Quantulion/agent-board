@@ -21,10 +21,13 @@ from .board import Board, new_task_from_dict
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
+from .worktree import GitError, changed_files, diff as worktree_diff, worktree_path
 
 COOKIE_NAME = "board_token"
 KEEPALIVE_SECONDS = 15
 MAX_BODY = 4 * 1024 * 1024
+MAX_DIFF_BYTES = 400 * 1024
+MAX_FILE_BYTES = 2 * 1024 * 1024
 MESSAGE_AUTHORS = {"user", "agent", "project_agent"}
 # постоянный порт, чтобы ссылка на доску переживала рестарт
 DEFAULT_PORTS = list(range(8737, 8747))
@@ -322,12 +325,76 @@ class _Handler(BaseHTTPRequestHandler):
         if len(rest) == 2 and rest[0] == "threads":
             messages = board.store.read_thread(rest[1])
             return self._send_json(200, {"messages": [m.to_dict() for m in messages]})
+        if len(rest) == 3 and rest[0] == "tasks" and rest[2] == "diff":
+            return self._send_json(200, self._task_diff(board, rest[1]))
+        if rest == ["file"]:
+            return self._send_file(board, query)
         if rest == ["events"]:
             events = board.store.read_events(self._since(query))
             return self._send_json(200, {"events": [e.to_dict() for e in events]})
         if rest == ["stream"]:
             return self._stream(board, slug, query)
         raise KeyError("Неизвестный маршрут")
+
+    @staticmethod
+    def _repo_path(config, task: Task) -> Optional[Path]:
+        repos = [r for r in config.repos if isinstance(r, dict) and r.get("path")]
+        if task.repo:
+            repo = next((r for r in repos if r.get("name") == task.repo), None)
+        else:
+            repo = repos[0] if len(repos) == 1 else None
+        return Path(repo["path"]) if repo else None
+
+    def _task_diff(self, board: Board, key: str) -> dict:
+        """Изменения задачи относительно её базовой ветки; git запускается только в собственном worktree задачи."""
+        empty = {"base": None, "files": [], "diff": ""}
+        task = board.store.load_tasks().get(key)
+        if task is None:
+            raise KeyError("Неизвестная задача: %s" % key)
+        if not task.worktree or not task.base_branch:
+            return empty
+        repo = self._repo_path(board.store.load_config(), task)
+        if repo is None or Path(task.worktree).resolve() != worktree_path(repo, key).resolve():
+            return empty
+        path = Path(task.worktree)
+        if not path.is_dir():
+            return empty
+        try:
+            files = changed_files(path, task.base_branch)
+            text = worktree_diff(path, task.base_branch)
+        except GitError as e:
+            raise ValueError("Не удалось получить изменения: %s" % e)
+        raw = text.encode("utf-8")
+        truncated = len(raw) > MAX_DIFF_BYTES
+        if truncated:
+            raw = raw[:MAX_DIFF_BYTES]
+            # режем по границе строки, чтобы не оставить обрывок
+            raw = raw[:raw.rfind(b"\n") + 1]
+            text = raw.decode("utf-8", "ignore")
+        return {"base": task.base_branch, "files": files, "diff": text, "truncated": truncated}
+
+    def _send_file(self, board: Board, query: dict) -> None:
+        """Отдаёт локальный файл, если он лежит в каталоге проекта, его репозиториев или worktree задач."""
+        raw = (query.get("path") or [""])[0]
+        if not raw:
+            raise ValueError("Не указан path")
+        root = board.store.root.resolve()
+        target = (root / raw).resolve()
+        config = board.store.load_config()
+        allowed = [root]
+        allowed += [Path(r["path"]).resolve() for r in config.repos if isinstance(r, dict) and r.get("path")]
+        allowed += [Path(t.worktree).resolve() for t in board.store.load_tasks().values() if t.worktree]
+        if not any(target == base or base in target.parents for base in allowed):
+            raise PermissionError("Путь вне каталогов проекта")
+        if not target.is_file():
+            raise KeyError("Файл не найден")
+        if target.stat().st_size > MAX_FILE_BYTES:
+            return self._send_json(413, {"error": "Файл больше %d МБ" % (MAX_FILE_BYTES // (1024 * 1024))})
+        body = target.read_bytes()
+        if target.suffix.lower() in (".html", ".htm"):
+            return self._send_bytes(200, body, "text/html", [
+                ("Content-Security-Policy", "sandbox"), ("X-Content-Type-Options", "nosniff")])
+        self._send_bytes(200, body, "text/plain; charset=utf-8", [("X-Content-Type-Options", "nosniff")])
 
     def _since(self, query: dict) -> int:
         # браузер при переподключении шлёт Last-Event-ID, а since остаётся из исходного URL
@@ -369,7 +436,9 @@ class _Handler(BaseHTTPRequestHandler):
         elif rest == ["stage"]:
             events = board.set_stage(_need(body, "stage"), body.get("actor", "user"))
         elif rest == ["tasks"]:
-            events = board.add_task(self._task(_need(body, "task")), _need(body, "actor"))
+            task = self._task(_need(body, "task"))
+            events = board.add_task(task, _need(body, "actor"))
+            extra["key"] = task.key
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "transition":
             events = board.transition(rest[1], Status(_need(body, "to")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "update":

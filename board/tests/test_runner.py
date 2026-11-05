@@ -418,6 +418,32 @@ def test_work_stage_starts_project_agent_on_runner_start(make_project, start_ser
     assert store.load_config().project_session_id == calls[0]["session"]
 
 
+def test_stage_work_wakes_project_agent_without_session(make_project, start_server, calls):
+    # arrange
+    store = make_project(stage="decomposition")
+    srv = start_server()
+    runner_sync(srv)
+    assert calls == []
+    # act
+    srv.board_for("pay").set_stage("tracker", "user")
+    srv.board_for("pay").set_stage("work", "user")
+    wait_events(store, "turn_finished", "_project")
+    # assert
+    assert [c["kind"] for c in calls] == ["start"]
+    assert store.load_config().project_session_id == calls[0]["session"]
+
+
+def test_stage_work_does_not_wake_project_agent_with_session(make_project, start_server, calls):
+    # arrange
+    store = make_project(stage="decomposition", project_session_id="p-0")
+    srv = start_server()
+    # act
+    srv.board_for("pay").set_stage("work", "user")
+    runner_sync(srv)
+    # assert
+    assert calls == [] and not events(store, "turn_started", "_project")
+
+
 def test_reapproved_dependency_rebases_dependent_carrying_its_changes(make_project, start_server, calls, git_repo):
     # arrange
     store = make_project()
@@ -601,6 +627,30 @@ def test_failed_approval_commit_returns_task_to_review_and_keeps_dependent_block
     assert not events(store, "task_committed", "A")
     assert any("x.txt" in t and "ревью" in t for t in thread_texts(store, "A"))
     assert not events(store, "turn_started", "B")
+
+
+def test_commit_failure_rollback_delivers_reasons_accumulated_during_approval(make_project, start_server, calls, monkeypatch):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "A", script({"write": {"path": "a.txt", "text": "A\n"}}, {"cli": ["status", "A", "in_review"]}))
+    wait_events(store, "turn_finished", "A")
+    runner_sync(srv)
+
+    def failing_commit(path, message):
+        # пока задача одобрена, пользователь успевает написать в тред
+        board.post_message("A", "user", "поправь заголовок")
+        raise runner_mod.GitError("не закоммитилось")
+
+    monkeypatch.setattr(runner_mod, "commit_all", failing_commit)
+    # act
+    board.transition("A", Status.APPROVED, "user")
+    wait_events(store, "turn_finished", "A", count=2)
+    # assert
+    assert task(store, "A").status == Status.IN_REVIEW
+    assert [c["kind"] for c in calls] == ["start", "resume"]
+    assert "поправь заголовок" in calls[1]["text"]
 
 
 # --- ошибки подготовки ---
@@ -934,7 +984,7 @@ def test_approved_task_gets_no_turn_until_returned(make_project, start_server, c
 
 def test_task_agents_start_only_in_work_stage(make_project, start_server, calls):
     # arrange: T-3 готова, но пробуждения о ней не было
-    store = make_project(stage="decomposition")
+    store = make_project(stage="decomposition", project_session_id="p-0")
     store.save_task(new_task_from_dict({"key": "T-3", "title": "Задача T-3"}))
     srv = start_server()
     board = srv.board_for("pay")

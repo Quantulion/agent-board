@@ -25,3 +25,4 @@ class ProjectConfig(_Serializable):
     global_max_agents: int = 6
     project_brief: str = ""
     project_session_id: Optional[str] = None
+    links: List[dict] = field(default_factory=list)

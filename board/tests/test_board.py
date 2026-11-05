@@ -761,3 +761,55 @@ def test_set_stage_rejects_disallowed_transition(board, path, to):
     with pytest.raises(ValueError):
         board.set_stage(to, "user")
     assert board.store.load_config().stage == before
+
+
+# --- снимок: данные для карточки ---
+
+def test_snapshot_task_without_thread_has_empty_summary(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    task = board.snapshot()["tasks"][0]
+    # assert
+    assert task["thread_size"] == 0 and task["last_message"] is None and task["open_questions"] == 0
+
+
+def test_snapshot_exposes_thread_size_last_message_and_open_questions(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    board.post_message("A", "user", "первое")
+    board.post_message("A", "agent", "я" * 300)
+    board.ask("A", Question(id="", text="q1"))
+    board.ask("A", Question(id="", text="q2"))
+    board.answer("A", board.store.load_tasks()["A"].questions[0].id, None, "ок")
+    # act
+    tasks = {t["key"]: t for t in board.snapshot()["tasks"]}
+    # assert
+    a = tasks["A"]
+    assert a["thread_size"] == len(board.store.read_thread("A")) >= 2
+    assert a["last_message"]["author"] != "" and a["last_message"]["at"] == NOW
+    assert a["open_questions"] == 1
+    assert tasks["B"]["thread_size"] == 0
+
+
+def test_snapshot_last_message_text_is_cut_to_200_chars(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.post_message("A", "agent", "я" * 300)
+    # act
+    last = board.snapshot()["tasks"][0]["last_message"]
+    # assert
+    assert last == {"author": "agent", "text": "я" * 200, "at": NOW}
+
+
+def test_snapshot_thread_summary_follows_new_messages(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.post_message("A", "user", "раз")
+    assert board.snapshot()["tasks"][0]["thread_size"] == 1
+    # act
+    board.post_message("A", "user", "два")
+    # assert
+    task = board.snapshot()["tasks"][0]
+    assert task["thread_size"] == 2 and task["last_message"]["text"] == "два"

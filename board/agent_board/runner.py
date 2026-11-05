@@ -439,7 +439,12 @@ class Runner:
         """Проект перешёл к работе: запускаются задачи с накопленными пробуждениями и готовые."""
         board = self._board(slug)
         tasks = board.store.load_tasks()
-        ready = set(ready_tasks(tasks, board.store.load_config().chains))
+        config = board.store.load_config()
+        ready = set(ready_tasks(tasks, config.chains))
+        project = (slug, PROJECT_THREAD)
+        if not config.project_session_id and project not in self._turns and project not in self._waiting \
+                and project not in self._backoff and not self._pending.get(project):
+            self._wake(slug, PROJECT_THREAD, {"key": PROJECT_THREAD, "reason": "ready"})
         for key in sorted(tasks):
             k = (slug, key)
             if k in self._turns or k in self._waiting or k in self._backoff:

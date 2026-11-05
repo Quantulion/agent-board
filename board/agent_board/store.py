@@ -6,7 +6,7 @@ import re
 import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from .config import ProjectConfig
 from .model import Event, Message, Proposal, Task
@@ -85,6 +85,7 @@ class ProjectStore:
         self.slug = _check_ident(slug, "проект")
         self.root = board_home() / "projects" / slug
         self._last_seq = None
+        self._thread_cache: dict = {}
 
     def create(self, config: ProjectConfig) -> None:
         # на регистрозависимой ФС иначе появились бы два проекта, неразличимые для пользователя
@@ -120,6 +121,22 @@ class ProjectStore:
 
     def read_thread(self, thread: str) -> List[Message]:
         return [Message.from_dict(d) for d in _read_jsonl(self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl"))]
+
+    def thread_summary(self, thread: str) -> Tuple[int, Optional[Message]]:
+        """Число сообщений треда и последнее сообщение; файл перечитывается, только если он изменился."""
+        path = self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl")
+        try:
+            st = path.stat()
+        except FileNotFoundError:
+            return 0, None
+        stamp = (st.st_mtime_ns, st.st_size)
+        cached = self._thread_cache.get(thread)
+        if cached is not None and cached[0] == stamp:
+            return cached[1], cached[2]
+        items = _read_jsonl(path)
+        result = (len(items), Message.from_dict(items[-1]) if items else None)
+        self._thread_cache[thread] = (stamp,) + result
+        return result
 
     def load_proposals(self) -> List[Proposal]:
         p = self.root / "proposals.json"

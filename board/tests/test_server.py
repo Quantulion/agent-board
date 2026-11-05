@@ -7,6 +7,7 @@ import socket
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import pytest
@@ -677,3 +678,160 @@ def test_stage_change_by_user_and_errors(server):
         ("stage_changed", {"from": "decomposition", "to": "work"})]
     assert bad.status == 400 and agent.status == 403 and missing.status == 400
     assert get(server, "/api/p/pay/state").json()["config"]["stage"] == "work"
+
+
+# --- API для интерфейса ---
+
+@pytest.fixture
+def ui_server(tmp_home, git_repo):
+    from agent_board.worktree import ensure_worktree
+
+    s = ProjectStore("pay")
+    s.create(ProjectConfig(slug="pay", title="Платежи", repos=[{"name": "app", "path": str(git_repo), "base": "main"}]))
+    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    s.save_task(make_task("T-1", repo="app", worktree=str(wt), base_branch="main"))
+    s.save_task(make_task("T-2"))
+    srv = BoardServer(port=0)
+    srv.start()
+    srv.worktree = wt
+    srv.repo = git_repo
+    yield srv
+    srv.stop()
+
+
+def test_post_tasks_returns_key(server):
+    # act
+    r = add_task(server, "T-7")
+    # assert
+    assert r.json()["key"] == "T-7"
+
+
+def test_diff_returns_changed_files_and_text(ui_server):
+    # arrange
+    (ui_server.worktree / "new.txt").write_text("hello\n")
+    (ui_server.worktree / "a.txt").write_text("changed\n")
+    # act
+    r = get(ui_server, "/api/p/pay/tasks/T-1/diff")
+    # assert
+    body = r.json()
+    assert r.status == 200 and body["base"] == "main" and body["truncated"] is False
+    assert body["files"] == ["a.txt", "new.txt"]
+    assert "+changed" in body["diff"] and "+hello" in body["diff"]
+
+
+def test_diff_without_worktree_is_empty(ui_server):
+    # act
+    r = get(ui_server, "/api/p/pay/tasks/T-2/diff")
+    # assert
+    assert r.json() == {"files": [], "diff": "", "base": None}
+
+
+def test_diff_unknown_task_is_404(ui_server):
+    assert get(ui_server, "/api/p/pay/tasks/T-404/diff").status == 404
+
+
+def test_diff_ignores_foreign_worktree_path(ui_server, tmp_path):
+    # arrange: путь задачи указывает не на её worktree
+    store = ProjectStore("pay")
+    t = store.load_tasks()["T-1"]
+    t.worktree = str(tmp_path)
+    store.save_task(t)
+    # act
+    r = get(ui_server, "/api/p/pay/tasks/T-1/diff")
+    # assert
+    assert r.json() == {"files": [], "diff": "", "base": None}
+
+
+def test_diff_truncated_on_line_boundary(ui_server):
+    # arrange
+    line = "x" * 99 + "\n"
+    (ui_server.worktree / "big.txt").write_text(line * 6000)
+    # act
+    body = get(ui_server, "/api/p/pay/tasks/T-1/diff").json()
+    # assert
+    assert body["truncated"] is True
+    assert len(body["diff"].encode()) <= server_mod.MAX_DIFF_BYTES
+    assert body["diff"].endswith("\n") and body["diff"].splitlines()[-1] == "+" + "x" * 99
+
+
+def test_file_serves_project_file_as_plain_text(ui_server):
+    # arrange
+    store = ProjectStore("pay")
+    (store.root / "notes.md").write_text("# привет\n", encoding="utf-8")
+    # act
+    r = get(ui_server, "/api/p/pay/file?path=notes.md")
+    # assert
+    assert r.status == 200 and r.body.decode() == "# привет\n"
+    assert r.headers["Content-Type"] == "text/plain; charset=utf-8"
+
+
+def test_file_html_served_with_sandbox_csp(ui_server):
+    # arrange
+    path = ui_server.worktree / "page.html"
+    path.write_text("<h1>x</h1>")
+    # act
+    r = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(path)))
+    # assert
+    assert r.status == 200 and r.headers["Content-Type"] == "text/html"
+    assert r.headers["Content-Security-Policy"] == "sandbox"
+    assert r.headers["X-Content-Type-Options"] == "nosniff"
+
+
+def test_file_outside_allowed_dirs_is_forbidden(ui_server, tmp_path):
+    # arrange
+    secret = tmp_path / "secret.txt"
+    secret.write_text("secret")
+    store = ProjectStore("pay")
+    (store.root / "link.txt").symlink_to(secret)
+    # act
+    absolute = get(ui_server, "/api/p/pay/file?path=" + urllib.parse.quote(str(secret)))
+    traversal = get(ui_server, "/api/p/pay/file?path=..%2F..%2F..%2Fsecret.txt")
+    symlink = get(ui_server, "/api/p/pay/file?path=link.txt")
+    missing_outside = get(ui_server, "/api/p/pay/file?path=%2Fnope%2Fnot-here")
+    # assert
+    assert absolute.status == traversal.status == symlink.status == missing_outside.status == 403
+    assert b"secret" not in absolute.body + traversal.body + symlink.body
+
+
+def test_file_errors(ui_server):
+    # arrange
+    store = ProjectStore("pay")
+    (store.root / "big.txt").write_bytes(b"x" * (server_mod.MAX_FILE_BYTES + 1))
+    # assert
+    assert get(ui_server, "/api/p/pay/file").status == 400
+    assert get(ui_server, "/api/p/pay/file?path=absent.txt").status == 404
+    assert get(ui_server, "/api/p/pay/file?path=big.txt").status == 413
+
+
+def test_update_rule_violations_by_user_and_project_agent_only(server):
+    # arrange
+    add_task(server)
+    value = [{"rule": "Не коммитить", "text": "закоммитил"}]
+    # act
+    by_user = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"rule_violations": value}})
+    by_pa = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "project_agent", "fields": {"rule_violations": []}})
+    by_agent = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"rule_violations": value}})
+    # assert
+    assert by_user.status == 200 and by_pa.status == 200 and by_agent.status == 403
+
+
+@pytest.mark.parametrize("bad", ["x", [1], [{"rule": "a"}], [{"rule": 1, "text": "b"}], [{"rule": "a", "text": "b"}] * 51])
+def test_update_rule_violations_validated(server, bad):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"rule_violations": bad}})
+    # assert
+    assert r.status == 400
+
+
+def test_state_exposes_links_and_rule_violations(server):
+    # arrange
+    add_task(server)
+    value = [{"rule": "r", "text": "t"}]
+    post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"rule_violations": value}})
+    # act
+    state = get(server, "/api/p/pay/state").json()
+    # assert
+    assert state["config"]["links"] == []
+    assert state["tasks"][0]["rule_violations"] == value

@@ -110,6 +110,7 @@ class Task(_Serializable):
     last_turn_at: str = ""
     harness: str = ""
     turn_process: Optional[dict] = None
+    rule_violations: List[dict] = field(default_factory=list)
     updated_at: str = ""
 
     @classmethod
