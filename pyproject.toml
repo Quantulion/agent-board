@@ -1,3 +1,21 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-board"
+version = "0.1.0"
+description = "Локальная доска задач для AI-агентов"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+agent-board = "agent_board.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "board"}
+packages = ["agent_board"]
+
 [tool.pytest.ini_options]
 testpaths = ["board/tests"]
 pythonpath = ["board"]
