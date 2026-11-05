@@ -145,6 +145,15 @@ def test_forbidden_actor_transition_is_403(server):
     assert r.status == 403
 
 
+def test_agent_approve_is_403(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/transition", {"to": "approved", "actor": "agent"})
+    # assert
+    assert r.status == 403
+
+
 def test_unknown_task_is_404(server):
     r = post(server, "/api/p/pay/tasks/NOPE/transition", {"to": "in_progress", "actor": "agent"})
     assert r.status == 404

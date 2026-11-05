@@ -11,7 +11,7 @@ from .model import Event, Message, Proposal, Question, Status, Task
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
-AGENT_FORBIDDEN = {Status.DONE, Status.SENT, Status.CANCELLED}
+AGENT_FORBIDDEN = {Status.APPROVED, Status.DONE, Status.SENT, Status.CANCELLED}
 RETURNED_FROM = {Status.IN_REVIEW, Status.APPROVED, Status.SENT, Status.DONE}
 UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",

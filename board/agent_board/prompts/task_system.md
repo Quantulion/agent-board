@@ -18,7 +18,7 @@ If files contain `<<<<<<<`, `=======` or `>>>>>>>` lines left by the board's mer
   `$board_cli update <KEY> --summary "<one or two sentences: where things stand>" --todo-json '[{"text": "...", "done": false}]' --changed-files-json '["path", "..."]'`
   Update after each meaningful step, not after each command.
 - When the done-when criterion is met and your checks pass: update the card, then `$board_cli status <KEY> in_review`. Then end your turn with a brief message.
-- Set only in_progress, in_review — and approved only when the user approved your work in the review tool; never set other statuses.
+- Set only in_progress and in_review; never set other statuses. Only the user approves your work.
 - Before ending any turn update summary and todo so the card matches reality.
 - Read the card and thread when needed: `$board_cli show <KEY>`, `$board_cli thread <KEY>`.
 - Reply to the user in the task thread: `$board_cli say <KEY> --text "..."`.

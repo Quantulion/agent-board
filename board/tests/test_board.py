@@ -50,7 +50,7 @@ def test_snapshot_contains_display_status_and_open_deps(board):
 def test_approving_dep_unblocks_dependent_with_chains(board):
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
-    ev = flat(board.transition("A", Status.APPROVED, "agent"))
+    ev = flat(board.transition("A", Status.APPROVED, "system"))
     assert dict(type="task_unblocked", key="B") in ev
     assert wake("B", "unblocked") in ev
 
@@ -58,7 +58,7 @@ def test_approving_dep_unblocks_dependent_with_chains(board):
 def test_no_unblock_on_approved_without_chains(board_strict):
     board_strict.add_task(mk("A"), "user")
     board_strict.add_task(mk("B", deps=["A"]), "user")
-    ev = board_strict.transition("A", Status.APPROVED, "agent")
+    ev = board_strict.transition("A", Status.APPROVED, "system")
     assert [e.type for e in ev] == ["status_changed"]
     ev = flat(board_strict.transition("A", Status.DONE, "user"))
     assert wake("B", "unblocked") in ev
@@ -67,7 +67,7 @@ def test_no_unblock_on_approved_without_chains(board_strict):
 def test_dependent_woken_only_once(board):
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
-    board.transition("A", Status.APPROVED, "agent")
+    board.transition("A", Status.APPROVED, "system")
     ev = flat(board.transition("A", Status.DONE, "user"))
     assert wake("B", "unblocked") not in ev
 
@@ -76,7 +76,7 @@ def test_dependent_with_other_open_dep_not_unblocked(board):
     for k in ("A", "C"):
         board.add_task(mk(k), "user")
     board.add_task(mk("B", deps=["A", "C"]), "user")
-    ev = board.transition("A", Status.APPROVED, "agent")
+    ev = board.transition("A", Status.APPROVED, "system")
     assert [e.type for e in ev] == ["status_changed"]
 
 
@@ -117,6 +117,20 @@ def test_agent_cannot_mark_done(board):
         with pytest.raises(PermissionError):
             board.transition("A", status, "agent")
     assert board.snapshot()["tasks"][0]["status"] == "not_started"
+
+
+def test_agent_cannot_approve_and_dependent_is_not_woken(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.transition("A", Status.IN_REVIEW, "agent")
+    before = board.store.last_seq()
+    # act
+    with pytest.raises(PermissionError):
+        board.transition("A", Status.APPROVED, "agent")
+    # assert
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+    assert board.store.read_events(before) == []
 
 
 def test_transition_unknown_actor_rejected(board):
@@ -567,17 +581,17 @@ def test_rebase_not_sent_without_session_or_for_closed_dependent(board):
     assert wake("B", "unblocked") in ev
 
 
-def test_rebase_not_sent_for_agent_actor(board):
+def test_rebase_not_sent_for_system_actor(board):
     # arrange
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
     board.update_task("B", "agent", {"session_id": "s1"})
     # act
-    by_agent = flat(board.transition("A", Status.APPROVED, "agent"))
+    by_system = flat(board.transition("A", Status.APPROVED, "system"))
     board.transition("A", Status.IN_PROGRESS, "user")
     by_user = flat(board.transition("A", Status.APPROVED, "user"))
     # assert
-    assert _rebases(by_agent) == []
+    assert _rebases(by_system) == []
     assert _rebases(by_user) == [("B", "A")]
 
 

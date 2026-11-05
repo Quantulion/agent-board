@@ -220,7 +220,8 @@ def test_task_system_statuses_end_of_turn_and_research_rules():
     text = task_system(_config(), CLI)
 
     # assert
-    assert "Set only in_progress, in_review" in text and "never set other statuses" in text
+    assert "Set only in_progress and in_review" in text and "never set other statuses" in text
+    assert "approved only when" not in text
     assert "Before ending any turn" in text and "reports/" in text and "long tool timeout" in text
 
 
