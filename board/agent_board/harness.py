@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
+import signal
 import sys
+import threading
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,17 +26,19 @@ class TurnResult:
     ok: bool
     error: str = ""
     exit_code: int = 0
+    note: str = ""
 
 
-class MissingBinaryProc:
-    """Заглушка вместо процесса, если бинарь харнесса не найден."""
+class FailedProc:
+    """Заглушка вместо процесса, который не удалось запустить."""
 
     stdout = None
     returncode = 127
     pid = None
 
-    def __init__(self, binary: str):
-        self.error = "%s не найден в PATH" % binary
+    def __init__(self, error: str, session_hint: Optional[str] = None):
+        self.error = error
+        self.session_hint = session_hint
 
     def wait(self, timeout=None):
         return self.returncode
@@ -56,42 +61,73 @@ class Harness:
 
     # --- общая механика ---
 
-    def _spawn(self, args: List[str], cwd: Path, env: dict, session_hint: Optional[str]):
+    def _spawn(self, args: List[str], cwd: Path, env: dict, session_hint: Optional[str], stdin_text: str = ""):
         full_env = dict(os.environ)
         full_env.update(env)
         if shutil.which(args[0], path=full_env.get("PATH")) is None:
-            return MissingBinaryProc(args[0])
-        proc = subprocess.Popen(
-            args, cwd=str(cwd), env=full_env, stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-            start_new_session=True,
-        )
+            return FailedProc("%s не найден в PATH" % args[0], session_hint)
+        try:
+            proc = subprocess.Popen(
+                args, cwd=str(cwd), env=full_env, stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                start_new_session=True,
+            )
+        except OSError as e:
+            return FailedProc("не удалось запустить %s: %s" % (args[0], e), session_hint)
         proc.session_hint = session_hint
+        # Промпт идёт через stdin отдельным потоком: большой ввод не должен блокировать чтение вывода.
+        threading.Thread(target=_feed_stdin, args=(proc, stdin_text), daemon=True).start()
         return proc
 
     def finish(self, proc, log: Path) -> TurnResult:
-        if isinstance(proc, MissingBinaryProc):
-            return TurnResult(session_id=None, ok=False, error=proc.error, exit_code=proc.returncode)
-        state = {"session_id": getattr(proc, "session_hint", None), "error": ""}
+        hint = getattr(proc, "session_hint", None)
+        if isinstance(proc, FailedProc):
+            return TurnResult(session_id=hint, ok=False, error=proc.error, exit_code=proc.returncode)
+        state = {"session_id": hint, "error": "", "note": ""}
         tail = ""
-        log.parent.mkdir(parents=True, exist_ok=True)
-        with open(str(log), "a", encoding="utf-8") as out:
-            for line in proc.stdout:
-                out.write(line if line.endswith("\n") else line + "\n")
-                out.flush()
-                event = _parse(line)
-                if event is None:
-                    tail = (tail + line)[-STDERR_TAIL:]
-                else:
-                    self._on_event(event, state)
-        code = proc.wait()
+        try:
+            log.parent.mkdir(parents=True, exist_ok=True)
+            with open(str(log), "a", encoding="utf-8") as out:
+                for line in proc.stdout:
+                    out.write(line if line.endswith("\n") else line + "\n")
+                    out.flush()
+                    event = _parse(line)
+                    if event is None:
+                        tail = (tail + line)[-STDERR_TAIL:]
+                    else:
+                        self._on_event(event, state)
+            code = proc.wait()
+        except BaseException:
+            _kill_group(proc)
+            raise
         error = state["error"]
         if not error and code != 0:
             error = tail.strip() or "процесс завершился с кодом %d" % code
-        return TurnResult(session_id=state["session_id"], ok=not error and code == 0, error=error, exit_code=code)
+        return TurnResult(
+            session_id=state["session_id"], ok=not error and code == 0, error=error, exit_code=code, note=state["note"]
+        )
 
     def _on_event(self, event: dict, state: dict) -> None:
         raise NotImplementedError
+
+
+def _feed_stdin(proc, text: str) -> None:
+    try:
+        proc.stdin.write(text)
+        proc.stdin.close()
+    except (OSError, ValueError):
+        pass
+
+
+def _kill_group(proc) -> None:
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+    try:
+        proc.wait()
+    except Exception:
+        pass
 
 
 def _parse(line: str) -> Optional[dict]:
@@ -119,29 +155,38 @@ class ClaudeHarness(Harness):
     def _common(self) -> List[str]:
         return ["--output-format", "stream-json", "--verbose", "--permission-mode", self.permission_mode]
 
-    def build_start_args(self, prompt: str, session_id: str) -> List[str]:
+    def build_start_args(self, session_id: str, system_file: Path) -> List[str]:
         args = [self.binary, "-p", "--session-id", session_id] + self._common()
         if self.model:
             args += ["--model", self.model]
-        return args + ["--append-system-prompt", self.system_prompt, prompt]
+        return args + ["--append-system-prompt-file", str(system_file)]
 
-    def build_resume_args(self, session_id: str, message: str) -> List[str]:
-        return [self.binary, "-p", "--resume", session_id] + self._common() + [message]
+    def build_resume_args(self, session_id: str) -> List[str]:
+        return [self.binary, "-p", "--resume", session_id] + self._common()
 
     def start_turn(self, cwd, prompt, session_id, log, env):
         session_id = session_id or self.new_session_id()
-        return self._spawn(self.build_start_args(prompt, session_id), cwd, env, session_id)
+        system_file = Path(str(log) + ".system.md")
+        try:
+            system_file.parent.mkdir(parents=True, exist_ok=True)
+            system_file.write_text(self.system_prompt, encoding="utf-8")
+        except OSError as e:
+            return FailedProc("не удалось записать системный промпт: %s" % e, session_id)
+        return self._spawn(self.build_start_args(session_id, system_file), cwd, env, session_id, prompt)
 
     def resume_turn(self, cwd, session_id, message, log, env):
-        return self._spawn(self.build_resume_args(session_id, message), cwd, env, session_id)
+        return self._spawn(self.build_resume_args(session_id), cwd, env, session_id, message)
 
     def terminal_command(self, cwd, session_id):
-        return "cd %s && claude --resume %s" % (cwd, session_id)
+        return "cd %s && claude --resume %s" % (shlex.quote(str(cwd)), shlex.quote(session_id))
 
     def _on_event(self, event, state):
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init" and event.get("session_id"):
-            state["session_id"] = event["session_id"]
+            if state["session_id"] and state["session_id"] != event["session_id"]:
+                state["note"] = "id сессии в потоке (%s) отличается от переданного (%s)" % (event["session_id"], state["session_id"])
+            else:
+                state["session_id"] = event["session_id"]
         elif kind == "result":
             if event.get("is_error"):
                 state["error"] = str(event.get("result") or event.get("error") or "ошибка агента")
@@ -156,23 +201,26 @@ class CodexHarness(Harness):
         self.sandbox = sandbox
         self.model = model
 
-    def build_start_args(self, cwd: Path, prompt: str) -> List[str]:
-        args = [self.binary, "exec", "--json", "-C", str(cwd), "--sandbox", self.sandbox]
+    def _exec_args(self) -> List[str]:
+        args = [self.binary, "exec", "--json", "--sandbox", self.sandbox]
         if self.model:
             args += ["--model", self.model]
-        return args + [prompt]
+        return args
 
-    def build_resume_args(self, cwd: Path, session_id: str, message: str) -> List[str]:
-        return [self.binary, "exec", "--json", "-C", str(cwd), "resume", session_id, message]
+    def build_start_args(self) -> List[str]:
+        return self._exec_args() + ["-"]
+
+    def build_resume_args(self, session_id: str) -> List[str]:
+        return self._exec_args() + ["resume", session_id, "-"]
 
     def start_turn(self, cwd, prompt, session_id, log, env):
-        return self._spawn(self.build_start_args(cwd, prompt), cwd, env, None)
+        return self._spawn(self.build_start_args(), cwd, env, None, prompt)
 
     def resume_turn(self, cwd, session_id, message, log, env):
-        return self._spawn(self.build_resume_args(cwd, session_id, message), cwd, env, session_id)
+        return self._spawn(self.build_resume_args(session_id), cwd, env, session_id, message)
 
     def terminal_command(self, cwd, session_id):
-        return "cd %s && codex resume %s" % (cwd, session_id)
+        return "cd %s && codex resume %s" % (shlex.quote(str(cwd)), shlex.quote(session_id))
 
     def _on_event(self, event, state):
         kind = event.get("type")
@@ -184,6 +232,8 @@ class CodexHarness(Harness):
             state["error"] = str(msg or event.get("message") or "ход завершился ошибкой")
         elif kind == "error" and not state["error"]:
             state["error"] = str(event.get("message") or "ошибка агента")
+        elif kind == "turn.completed":
+            state["error"] = ""
 
 
 class FakeHarness(ClaudeHarness):
@@ -194,14 +244,12 @@ class FakeHarness(ClaudeHarness):
     def __init__(self):
         super().__init__("auto")
 
-    def _fake_args(self, session_id: str, text: str) -> List[str]:
-        return [sys.executable, "-m", "agent_board.fake_agent", "--session-id", session_id, "--", text]
-
     def _spawn_fake(self, session_id: str, text: str, cwd: Path, env: dict):
         env = dict(env)
         pkg_root = str(Path(__file__).resolve().parent.parent)
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [pkg_root, env.get("PYTHONPATH") or os.environ.get("PYTHONPATH")]))
-        return self._spawn(self._fake_args(session_id, text), cwd, env, session_id)
+        args = [sys.executable, "-m", "agent_board.fake_agent", "--session-id", session_id]
+        return self._spawn(args, cwd, env, session_id, text)
 
     def start_turn(self, cwd, prompt, session_id, log, env):
         return self._spawn_fake(session_id or self.new_session_id(), prompt, cwd, env)

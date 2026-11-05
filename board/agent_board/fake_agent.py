@@ -24,14 +24,17 @@ def _run_cli(argv: List[str]) -> str:
     from . import cli
 
     err = io.StringIO()
-    with contextlib.redirect_stderr(err):
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
         code = cli.main(argv)
     return "" if code == 0 else (err.getvalue().strip() or "команда %s завершилась с кодом %d" % (argv[0], code))
 
 
 def run(session_id: str, text: str) -> int:
     _emit({"type": "system", "subtype": "init", "session_id": session_id})
-    steps = json.loads(text.split(MARKER, 1)[1]) if MARKER in text else []
+    steps = []
+    if MARKER in text:
+        # хвост после списка шагов (склеенные сообщения пробуждений) игнорируется
+        steps, _ = json.JSONDecoder().raw_decode(text.split(MARKER, 1)[1].lstrip())
     for step in steps:
         if "cli" in step or "lock-run" in step:
             argv = step["cli"] if "cli" in step else ["lock-run"] + step["lock-run"]
@@ -55,7 +58,7 @@ def run(session_id: str, text: str) -> int:
 def main(argv: List[str] = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     session_id = argv[argv.index("--session-id") + 1]
-    text = argv[argv.index("--") + 1] if "--" in argv else ""
+    text = sys.stdin.read()
     return run(session_id, text)
 
 
