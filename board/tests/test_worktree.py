@@ -179,3 +179,98 @@ def test_diff_includes_untracked_and_keeps_index(git_repo):
     assert "-base" in text and "+changed" in text
     assert "+++ b/new.txt" in text and "+hello" in text
     assert run_git(p, "diff", "--cached", "--name-only").strip() == ""
+
+
+def test_ensure_worktree_reentry_after_conflict_raises(git_repo):
+    # arrange
+    make_branch(git_repo, "dep-1", "a.txt", "one\n")
+    make_branch(git_repo, "dep-2", "a.txt", "two\n")
+    with pytest.raises(GitError):
+        ensure_worktree(git_repo, "T-3", "T-3", "main", ["dep-1", "dep-2"])
+    # act / assert
+    with pytest.raises(GitError):
+        ensure_worktree(git_repo, "T-3", "T-3", "main", ["dep-1", "dep-2"])
+
+
+def test_ensure_worktree_reentry_applies_missing_merges(git_repo):
+    # arrange
+    make_branch(git_repo, "dep-1", "one.txt", "1")
+    p = ensure_worktree(git_repo, "T-3", "T-3", "main", [])
+    # act
+    ensure_worktree(git_repo, "T-3", "T-3", "main", ["dep-1"])
+    # assert
+    assert (p / "one.txt").exists()
+
+
+def test_commit_all_refuses_during_unresolved_merge(git_repo):
+    # arrange
+    make_branch(git_repo, "dep-1", "a.txt", "one\n")
+    make_branch(git_repo, "dep-2", "a.txt", "two\n")
+    with pytest.raises(GitError):
+        ensure_worktree(git_repo, "T-3", "T-3", "main", ["dep-1", "dep-2"])
+    p = worktree_path(git_repo, "T-3")
+    # act / assert
+    with pytest.raises(GitError):
+        commit_all(p, "T-3 title")
+
+
+def test_rebase_onto_bad_ref_raises(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    # act / assert
+    with pytest.raises(GitError):
+        rebase_onto(p, "no-such-ref")
+
+
+def test_rebase_onto_missing_worktree_raises(git_repo):
+    # act / assert
+    with pytest.raises(GitError):
+        rebase_onto(git_repo / "nope", "main")
+
+
+def test_changed_files_lists_both_paths_of_rename(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    run_git(p, "mv", "a.txt", "b.txt")
+    # act
+    files = changed_files(p, "main")
+    # assert
+    assert files == ["a.txt", "b.txt"]
+    assert "rename" not in diff(p, "main")
+
+
+def test_file_named_like_base_branch(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    commit_file(p, "main", "x")
+    # act
+    files = changed_files(p, "main")
+    text = diff(p, "main")
+    # assert
+    assert files == ["main"]
+    assert "+++ b/main" in text
+
+
+def test_space_and_cyrillic_names(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "мой файл.txt").write_text("привет\n")
+    # act
+    files = changed_files(p, "main")
+    text = diff(p, "main")
+    # assert
+    assert files == ["мой файл.txt"]
+    assert "мой файл.txt" in text
+
+
+def test_run_git_timeout_raises_git_error(git_repo, monkeypatch):
+    # arrange
+    import agent_board.worktree as wt
+
+    def boom(*a, **kw):
+        raise subprocess.TimeoutExpired(cmd="git", timeout=1)
+
+    monkeypatch.setattr(wt.subprocess, "run", boom)
+    # act / assert
+    with pytest.raises(GitError, match="timed out"):
+        run_git(git_repo, "status")
