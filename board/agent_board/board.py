@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -122,8 +123,7 @@ class Board:
                 d = t.to_dict()
                 d["display_status"] = display_status(t, tasks, config.chains).value
                 d["open_deps"] = open_deps(t, tasks, config.chains)
-                hook = self.terminal_command_for
-                d["terminal_command"] = hook(t) if hook is not None and t.session_id else None
+                d["terminal_command"] = self._terminal_command(t)
                 items.append(d)
             return {
                 "config": config.to_dict(),
@@ -184,6 +184,16 @@ class Board:
             if actor == "user":
                 events.extend(self._manual_wake(task, prev))
             return events
+
+    def _terminal_command(self, task: Task) -> Optional[str]:
+        hook = self.terminal_command_for
+        if hook is None or not task.session_id:
+            return None
+        try:
+            return hook(task)
+        except Exception as exc:
+            print("terminal_command_for(%s) failed: %r" % (task.key, exc), file=sys.stderr)
+            return None
 
     def _rebase_wakes(self, key: str, affected: List[str]) -> List[Event]:
         tasks = self.store.load_tasks()

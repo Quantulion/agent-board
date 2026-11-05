@@ -547,17 +547,23 @@ def test_dep_done_wakes_dependent_with_session_as_rebase(board_strict):
     assert dict(type="agent_wake", key="B", reason="rebase", **{"from": "A"}) in ev
 
 
+def _rebases(ev):
+    return [(e["key"], e["from"]) for e in ev if e.get("reason") == "rebase"]
+
+
 def test_rebase_not_sent_without_session_or_for_closed_dependent(board):
-    # arrange
+    # arrange: D с сессией — положительный контроль; B без сессии, C отменена
     board.add_task(mk("A"), "user")
     board.add_task(mk("B", deps=["A"]), "user")
     board.add_task(mk("C", deps=["A"]), "user")
+    board.add_task(mk("D", deps=["A"]), "user")
     board.update_task("C", "agent", {"session_id": "s1"})
+    board.update_task("D", "agent", {"session_id": "s2"})
     board.transition("C", Status.CANCELLED, "user")
     # act
     ev = flat(board.transition("A", Status.APPROVED, "user"))
     # assert
-    assert not [e for e in ev if e.get("reason") == "rebase"]
+    assert _rebases(ev) == [("D", "A")]
     assert wake("B", "unblocked") in ev
 
 
@@ -567,9 +573,36 @@ def test_rebase_not_sent_for_agent_actor(board):
     board.add_task(mk("B", deps=["A"]), "user")
     board.update_task("B", "agent", {"session_id": "s1"})
     # act
-    ev = flat(board.transition("A", Status.APPROVED, "agent"))
+    by_agent = flat(board.transition("A", Status.APPROVED, "agent"))
+    board.transition("A", Status.IN_PROGRESS, "user")
+    by_user = flat(board.transition("A", Status.APPROVED, "user"))
     # assert
-    assert not [e for e in ev if e.get("reason") == "rebase"]
+    assert _rebases(by_agent) == []
+    assert _rebases(by_user) == [("B", "A")]
+
+
+def test_rebase_sent_for_tracker_actor(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.update_task("B", "agent", {"session_id": "s1"})
+    # act
+    ev = flat(board.transition("A", Status.APPROVED, "tracker"))
+    # assert
+    assert _rebases(ev) == [("B", "A")]
+
+
+def test_rebase_not_sent_to_transitive_dependent(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.add_task(mk("C", deps=["B"]), "user")
+    board.update_task("B", "agent", {"session_id": "s1"})
+    board.update_task("C", "agent", {"session_id": "s2"})
+    # act
+    ev = flat(board.transition("A", Status.APPROVED, "user"))
+    # assert
+    assert _rebases(ev) == [("B", "A")]
 
 
 def test_record_appends_event_and_notifies(tmp_home):
@@ -601,3 +634,15 @@ def test_snapshot_terminal_command_via_hook_only_for_tasks_with_session(board):
     # assert
     assert tasks["A"]["terminal_command"] is None
     assert tasks["B"]["terminal_command"] == "claude --resume s1"
+
+
+def test_snapshot_survives_raising_terminal_command_hook(board, capsys):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.update_task("A", "agent", {"session_id": "s1"})
+    board.terminal_command_for = lambda t: 1 / 0
+    # act
+    tasks = board.snapshot()["tasks"]
+    # assert
+    assert tasks[0]["terminal_command"] is None
+    assert "terminal_command_for" in capsys.readouterr().err
