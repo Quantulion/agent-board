@@ -27,6 +27,12 @@ RUNNER_FIELDS = {
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
 TASK_KINDS = ("code", "research")
+# стадии проекта: разбивка, заведение задач в трекере (необязательно), работа агентов, завершение
+STAGE_TRANSITIONS = {
+    "decomposition": ("tracker", "work"),
+    "tracker": ("work",),
+    "work": ("done",),
+}
 
 # Словарь событий журнала: тип -> поля data. Клиенты (UI, оркестратор агентов) опираются на него.
 EVENT_TYPES: Dict[str, str] = {
@@ -51,6 +57,7 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_waiting": "key, resource — задача ждёт общий ресурс",
     "lock_acquired": "key, resource",
     "lock_released": "key, resource",
+    "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -136,6 +143,19 @@ class Board:
                     raise ValueError("Неизвестное поле конфига: %s" % name)
                 setattr(config, name, value)
             self.store.save_config(config)
+
+    def set_stage(self, stage: str, actor: str) -> List[Event]:
+        """Переводит проект на следующую стадию; стадии меняет только пользователь."""
+        with self._lock:
+            if actor != "user":
+                raise PermissionError("Стадию проекта меняет только пользователь")
+            config = self.store.load_config()
+            prev = config.stage
+            if stage not in STAGE_TRANSITIONS.get(prev, ()):
+                raise ValueError("Недопустимый переход стадии: %s -> %r" % (prev, stage))
+            config.stage = stage
+            self.store.save_config(config)
+            return [self._emit("stage_changed", {"from": prev, "to": stage})]
 
     def snapshot(self) -> dict:
         with self._lock:

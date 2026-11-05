@@ -366,6 +366,8 @@ class _Handler(BaseHTTPRequestHandler):
             if from_task is not None and not isinstance(from_task, str):
                 raise ValueError("from_task должен быть строкой")
             events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None)
+        elif rest == ["stage"]:
+            events = board.set_stage(_need(body, "stage"), body.get("actor", "user"))
         elif rest == ["tasks"]:
             events = board.add_task(self._task(_need(body, "task")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "transition":

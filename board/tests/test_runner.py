@@ -58,6 +58,10 @@ def make_project(tmp_home, git_repo):
     def make(**kw):
         kw.setdefault("repos", [{"name": "app", "path": str(git_repo), "base": "main"}])
         kw.setdefault("harness", {"type": "fake"})
+        if "stage" not in kw:
+            # агенты задач работают только на стадии work; с готовой сессией агент проекта не стартует сам
+            kw.update(stage="work")
+            kw.setdefault("project_session_id", "p-0")
         store = ProjectStore("pay")
         store.create(ProjectConfig(slug="pay", title="Платежи", **kw))
         return store
@@ -390,8 +394,8 @@ def test_escalation_wakes_project_agent_with_digest(make_project, start_server, 
 
 
 def test_first_project_wake_starts_session_with_project_prompt(make_project, start_server, calls):
-    # arrange
-    store = make_project()
+    # arrange: агент проекта работает на любой стадии
+    store = make_project(stage="decomposition")
     srv = start_server()
     # act
     srv.board_for("pay").post_message("_project", "user", "привет, агент проекта")
@@ -897,3 +901,56 @@ def test_lost_session_is_dropped_and_task_starts_fresh(make_project, start_serve
     assert not events(store, "turn_failed", "T-1")
     assert srv.runner._failures.get(("pay", "T-1")) is None
     assert any("сесси" in text for text in thread_texts(store, "T-1"))
+
+
+# --- одобренная задача и стадии проекта ---
+
+def test_approved_task_gets_no_turn_until_returned(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1", script({"write": {"path": "f.txt", "text": "x"}}))
+    wait_events(store, "turn_finished", "T-1")
+    board.transition("T-1", Status.APPROVED, "user")
+    wait_events(store, "task_committed", "T-1")
+    # act
+    board.post_message("T-1", "user", "поправь ещё заголовок")
+    runner_sync(srv)
+    # assert
+    assert len(calls) == 1
+    assert "поправь ещё заголовок" in thread_texts(store, "T-1")
+    assert [r["reason"] for r in store.load_meta()["runner_pending"]["T-1"]] == ["message"]
+    assert task(store, "T-1").agent_state == "idle"
+    # act: пользователь возвращает задачу в работу
+    board.transition("T-1", Status.IN_PROGRESS, "user")
+    wait_events(store, "turn_finished", "T-1", count=2)
+    runner_sync(srv)
+    # assert
+    assert [c["kind"] for c in calls] == ["start", "resume"]
+    assert "поправь ещё заголовок" in calls[1]["text"]
+    assert not store.load_meta()["runner_pending"]
+
+
+def test_task_agents_start_only_in_work_stage(make_project, start_server, calls):
+    # arrange: T-3 готова, но пробуждения о ней не было
+    store = make_project(stage="decomposition")
+    store.save_task(new_task_from_dict({"key": "T-3", "title": "Задача T-3"}))
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1")
+    add(srv, "T-2")
+    runner_sync(srv)
+    board.set_stage("tracker", "user")
+    runner_sync(srv)
+    # assert: до стадии work агенты задач не стартуют, пробуждения копятся
+    assert calls == []
+    assert sorted(store.load_meta()["runner_pending"]) == ["T-1", "T-2"]
+    assert {t.agent_state for t in store.load_tasks().values()} == {"idle"}
+    # act
+    board.set_stage("work", "user")
+    for key in ("T-1", "T-2", "T-3"):
+        wait_events(store, "turn_finished", key)
+    # assert
+    assert sorted(c["env"]["AGENT_BOARD_TASK"] for c in calls) == ["T-1", "T-2", "T-3"]
+    assert {c["kind"] for c in calls} == {"start"}

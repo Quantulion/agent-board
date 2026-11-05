@@ -709,3 +709,55 @@ def test_transition_if_applies_when_status_matches(board):
     events = board.transition_if("T1", Status.NOT_STARTED, Status.QUEUED, "system")
     # assert
     assert events and board.store.load_tasks()["T1"].status == Status.QUEUED
+
+
+# --- стадии проекта ---
+
+def test_set_stage_walks_all_stages_and_emits_stage_changed(board):
+    # act
+    events = [board.set_stage(stage, "user") for stage in ("tracker", "work", "done")]
+    # assert
+    assert [flat(ev) for ev in events] == [
+        [dict(type="stage_changed", **{"from": "decomposition", "to": "tracker"})],
+        [dict(type="stage_changed", **{"from": "tracker", "to": "work"})],
+        [dict(type="stage_changed", **{"from": "work", "to": "done"})],
+    ]
+    assert board.store.load_config().stage == "done"
+
+
+def test_set_stage_skips_tracker(board):
+    # act
+    ev = board.set_stage("work", "user")
+    # assert
+    assert flat(ev) == [dict(type="stage_changed", **{"from": "decomposition", "to": "work"})]
+    assert board.store.load_config().stage == "work"
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system", "tracker"])
+def test_set_stage_by_non_user_is_forbidden(board, actor):
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.set_stage("work", actor)
+    assert board.store.load_config().stage == "decomposition"
+    assert board.snapshot()["last_seq"] == 0
+
+
+@pytest.mark.parametrize("path, to", [
+    ((), "done"),
+    ((), "decomposition"),
+    (("tracker",), "decomposition"),
+    (("tracker",), "done"),
+    (("work",), "tracker"),
+    (("work",), "decomposition"),
+    (("work", "done"), "work"),
+    ((), "nonsense"),
+])
+def test_set_stage_rejects_disallowed_transition(board, path, to):
+    # arrange
+    for stage in path:
+        board.set_stage(stage, "user")
+    before = board.store.load_config().stage
+    # act / assert
+    with pytest.raises(ValueError):
+        board.set_stage(to, "user")
+    assert board.store.load_config().stage == before

@@ -663,3 +663,17 @@ def test_sse_reconnect_after_restart_replays_missed_events(tmp_home):
     assert second.token == old_token
     assert "id: 3\n" in out and "id: 4\n" in out
     assert "id: 2\n" not in out
+
+
+def test_stage_change_by_user_and_errors(server):
+    # act
+    ok = post(server, "/api/p/pay/stage", {"stage": "work"})
+    bad = post(server, "/api/p/pay/stage", {"stage": "decomposition"})
+    agent = post(server, "/api/p/pay/stage", {"stage": "done", "actor": "agent"})
+    missing = post(server, "/api/p/pay/stage", {})
+    # assert
+    assert ok.status == 200
+    assert [(e["type"], e["data"]) for e in ok.json()["events"]] == [
+        ("stage_changed", {"from": "decomposition", "to": "work"})]
+    assert bad.status == 400 and agent.status == 403 and missing.status == 400
+    assert get(server, "/api/p/pay/state").json()["config"]["stage"] == "work"

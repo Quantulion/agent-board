@@ -419,6 +419,22 @@ def test_rebase_carrying_changes_keeps_work_in_ref_when_restore_fails_without_co
     assert run_git(git_repo, "stash", "list") == stashes_before == ""
 
 
+def test_rebase_carrying_changes_failed_restore_resets_tree_to_rebased_head(git_repo):
+    # arrange: отслеживаемая правка вернётся, а неотслеживаемый файл столкнётся с файлом из новой базы
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "a.txt").write_text("mine\n")
+    (p / "shared.txt").write_text("моя версия\n")
+    commit_file(git_repo, "shared.txt", "из зависимости\n")
+    # act
+    outcome = rebase_carrying_changes(p, "main", carry_ref("T-1"))
+    # assert
+    assert outcome == RebaseOutcome(True, [], carried_ref="refs/agent-board/T-1/carry")
+    assert run_git(p, "status", "--porcelain") == ""
+    assert (p / "a.txt").read_text() == "base\n" and (p / "shared.txt").read_text() == "из зависимости\n"
+    assert run_git(p, "show", outcome.carried_ref + ":a.txt") == "mine\n"
+    assert run_git(p, "show", outcome.carried_ref + "^3:shared.txt") == "моя версия\n"
+
+
 def test_rebase_carrying_changes_refuses_when_previous_carry_not_resolved(git_repo):
     # arrange
     p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])

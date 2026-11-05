@@ -208,12 +208,17 @@ def _snapshot(path: Path, message: str) -> str:
 
 
 def _restore(path: Path, snapshot: str) -> Tuple[bool, List[str]]:
-    """Возвращает сохранённую работу в файлы: (вернулась ли, файлы с маркерами конфликта)."""
+    """Возвращает сохранённую работу в файлы: (вернулась ли, файлы с маркерами конфликта).
+
+    Если не вернулась, файлы остаются как в HEAD."""
     res = _git(path, "stash", "apply", snapshot)
     if res.returncode == 0:
         return True, []
     conflicts = unmerged_files(path)
     if not conflicts:
+        # работа могла вернуться частично: дерево возвращаем к HEAD, вся работа остаётся в снимке
+        run_git(path, "reset", "-q", "--hard")
+        run_git(path, "clean", "-fdq")
         return False, []
     # индекс без конфликтных записей: агент разрешает конфликт правкой файлов, коммитит раннер
     run_git(path, "reset", "-q")
@@ -224,7 +229,7 @@ def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcom
     """Ребейз ветки с переносом незакоммиченной работы.
 
     Работа на время ребейза сохраняется в ref (общий список git stash не трогается) и после возврата в файлы
-    удаляется. Если вернуть её не удалось, ref остаётся, и он указан в carried_ref.
+    удаляется. Если вернуть её не удалось, файлы остаются как в HEAD, а ref остаётся и указан в carried_ref.
     """
     _check_no_rebase(path)
     if _git(path, "rev-parse", "-q", "--verify", ref).returncode == 0:

@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from . import prompts
-from .board import Board
-from .graph import base_for, open_deps
+from .board import RETURNED_FROM, Board
+from .graph import base_for, open_deps, ready_tasks
 from .harness import (
     Harness,
     TurnResult,
@@ -328,8 +328,17 @@ class Runner:
                     # коммитится только законченная работа: идущий ход останавливаем до коммита
                     self._interrupt_turn(k)
                     self._commit(slug, k[1])
-                if self._pending.get(k) and k not in self._turns and k not in self._waiting:
-                    self._schedule(k)
+            # одобренная задача копила причины без ходов: после возврата из одобрения они доставляются;
+            # при возврате в работу следом придёт пробуждение returned, и всё уйдёт одним ходом
+            returned = d.get("actor") in ("user", "tracker") and d.get("to") == Status.IN_PROGRESS.value \
+                and d.get("from") in {st.value for st in RETURNED_FROM}
+            resumes = d.get("actor") == "user" or d.get("from") == Status.APPROVED.value
+            if resumes and not returned and self._pending.get(k) and k not in self._turns and k not in self._waiting \
+                    and k not in self._backoff:
+                self._schedule(k)
+        elif event.type == "stage_changed":
+            if d.get("to") == "work":
+                self._start_work(slug)
         elif event.type == "agent_stop":
             self._stop(slug, str(d.get("key")))
         elif event.type == "agent_wake":
@@ -426,11 +435,38 @@ class Runner:
             return
         self._schedule(k)
 
+    def _start_work(self, slug: str) -> None:
+        """Проект перешёл к работе: запускаются задачи с накопленными пробуждениями и готовые."""
+        board = self._board(slug)
+        tasks = board.store.load_tasks()
+        ready = set(ready_tasks(tasks, board.store.load_config().chains))
+        for key in sorted(tasks):
+            k = (slug, key)
+            if k in self._turns or k in self._waiting or k in self._backoff:
+                continue
+            if not self._pending.get(k) and key in ready and not tasks[key].session_id:
+                self._pending[k] = [{"key": key, "reason": "ready"}]
+            if self._pending.get(k):
+                self._schedule(k)
+
+    @staticmethod
+    def _on_hold(config, task: Task) -> bool:
+        """Агенту задачи ходы не положены: проект ещё не на стадии работы или задача одобрена."""
+        return config.stage != "work" or task.status == Status.APPROVED
+
     # --- очередь, лимиты, повторы ---
 
     def _schedule(self, k: Key) -> None:
         if self._failures.get(k, 0) >= MAX_FAILURES or k in self._parked:
             return
+        if k[1] != PROJECT_THREAD:
+            board = self._board(k[0])
+            task = board.store.load_tasks().get(k[1])
+            # причины остаются в pending до стадии работы или возврата задачи из одобрения
+            if task is not None and self._on_hold(board.store.load_config(), task):
+                if task.agent_state == "waiting_turn":
+                    self._set_state(k, "idle")
+                return
         if self._has_capacity(k):
             self._run(k)
         else:
@@ -521,7 +557,9 @@ class Runner:
         reasons = self._pending.get(k, [])
         blocked = bool(task.external_blocker or open_deps(task, tasks, config.chains))
         # заблокированная задача не стартует сама и не ребейзится, причины ждут разблокировки
-        if task.session_id:
+        if self._on_hold(config, task):
+            deliver = []
+        elif task.session_id:
             deliver = [r for r in reasons if not (blocked and r.get("reason") == "rebase")]
         else:
             deliver = [] if blocked and task.status == Status.NOT_STARTED else list(reasons)

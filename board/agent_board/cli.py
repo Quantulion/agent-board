@@ -160,6 +160,12 @@ def cmd_add_task(args):
     return _request("POST", _p(args, "tasks"), {"task": task, "actor": "user"})
 
 
+def cmd_stage(args):
+    # человек в терминале — пользователь; агенты запускаются с AGENT_BOARD_ACTOR и получат отказ
+    actor = os.environ.get("AGENT_BOARD_ACTOR") or "user"
+    return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": actor})
+
+
 def cmd_propose(args):
     payload = _json_arg(args.json, "--json")
     return _request("POST", _p(args, "proposals"), {"kind": args.kind, "payload": payload, "reason": args.reason or ""})
@@ -295,6 +301,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--text", required=True)
     add("thread", cmd_thread).add_argument("thread")
     add("add-task", cmd_add_task).add_argument("--json", required=True)
+    add("stage", cmd_stage, help="перевести проект на стадию: tracker, work, done (только пользователь)").add_argument(
+        "stage")
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

@@ -338,3 +338,15 @@ def test_lock_run_undeclared_resource_prints_single_error(srv, capsys, monkeypat
     code, _, err = run(capsys, "lock-run", "stand", "--", "true")
     # assert
     assert code == 1 and len(err.strip().splitlines()) == 1
+
+
+def test_stage_changed_by_user_but_not_by_agent(srv, capsys, monkeypatch):
+    # act
+    out = run_json(capsys, "stage", "work")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    code, _, err = run(capsys, "stage", "done")
+    # assert
+    assert [e["type"] for e in out["events"]] == ["stage_changed"]
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "state")["config"]["stage"] == "work"
