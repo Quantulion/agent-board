@@ -403,6 +403,7 @@ class BoardServer:
 
     def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None):
         self.port = port
+        self._requested_port = port
         self.static_dir = static_dir
         self.token: Optional[str] = None
         self.hub = _Hub()
@@ -432,8 +433,9 @@ class BoardServer:
             httpd.app = self  # type: ignore[attr-defined]
             self._httpd = httpd
             self.port = httpd.server_address[1]
-            self._thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
-            self._thread.start()
+            thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
+            thread.start()
+            self._thread = thread
             path = discovery_path()
             atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
             os.chmod(str(path), 0o600)
@@ -448,6 +450,7 @@ class BoardServer:
             self._thread = None
         httpd.server_close()
         self._httpd = None
+        self.port = self._requested_port
         self._release_lock()
 
     def _bind(self) -> _HttpServer:

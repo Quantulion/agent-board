@@ -4,6 +4,7 @@ import http.client
 import json
 import os
 import socket
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -560,18 +561,42 @@ def test_start_failure_after_bind_releases_lock_and_socket(tmp_home, monkeypatch
     def boom(*args, **kwargs):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(server_mod, "atomic_write_json", boom)
-
     # act
-    with pytest.raises(RuntimeError):
-        srv.start()
-    monkeypatch.undo()
+    with monkeypatch.context() as m:
+        m.setattr(server_mod, "atomic_write_json", boom)
+        with pytest.raises(RuntimeError):
+            srv.start()
     again = BoardServer(port=0)
     again.start()
     again.stop()
 
     # assert
     assert srv._httpd is None
+    assert srv._lock_fd is None
+    assert srv.port == 0
+    assert again.port > 0
+    assert not (tmp_home / "server.json").exists()
+
+
+def test_start_failure_on_thread_start_does_not_hang_and_allows_retry(tmp_home, monkeypatch):
+    # arrange
+    srv = BoardServer(port=0)
+
+    def boom(self):
+        raise RuntimeError("can't start new thread")
+
+    # act
+    with monkeypatch.context() as m:
+        m.setattr(threading.Thread, "start", boom)
+        with pytest.raises(RuntimeError):
+            srv.start()
+    again = BoardServer(port=0)
+    again.start()
+    again.stop()
+
+    # assert
+    assert srv._httpd is None
+    assert srv._thread is None
     assert srv._lock_fd is None
     assert again.port > 0
 
