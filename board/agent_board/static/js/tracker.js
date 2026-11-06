@@ -3,7 +3,7 @@ import { h, icon } from './dom.js';
 import { T } from './i18n.js';
 import { httpUrl } from './review.js';
 import { formatTime } from './thread.js';
-import { toast } from './ui.js';
+import { confirmDialog, toast } from './ui.js';
 
 const NAMES = { jira: 'Jira', github: 'GitHub' };
 const SYNC_STAGES = new Set(['work', 'done']);
@@ -49,6 +49,12 @@ export function syncModel(snapshot, now = Date.now()) {
   if (Array.isArray(s.errors) && s.errors.length) return { state: 'warn', text: T.tracker.warn(info.name, rel), ...base };
   if (s.warning) return { state: 'warn', text: T.tracker.insecure(info.name, rel), warning: String(s.warning), ...base };
   return { state: 'ok', text: T.tracker.ok(info.name, rel), ...base };
+}
+
+// задачи, которые заведёт «Завести задачи в трекере»
+export function toCreate(snapshot) {
+  const tasks = snapshot && Array.isArray(snapshot.tasks) ? snapshot.tasks : [];
+  return tasks.filter(t => t.status !== 'cancelled' && !t.tracker_key);
 }
 
 export function trackerLink(task) {
@@ -189,7 +195,7 @@ const creations = new Map();
 
 export function mountTrackerStage(ctx, store) {
   const lead = h('p', { class: 'lead' });
-  const createBtn = h('button', { class: 'btn primary sm', type: 'button', 'data-tracker': 'create', onclick: create });
+  const createBtn = h('button', { class: 'btn primary sm', type: 'button', 'data-tracker': 'create', onclick: confirmCreate });
   const checkBtn = h('button', { class: 'btn sm', type: 'button', 'data-tracker': 'check', onclick: check }, T.tracker.check);
   const result = h('div', { class: 'tresult', hidden: true });
   const el = h('div', { class: 'tstage', hidden: true },
@@ -245,6 +251,20 @@ export function mountTrackerStage(ctx, store) {
     busy = null;
     showResult(res);
     paint();
+  }
+
+  // заведение пишет в чужую систему: сначала подтверждение с числом задач и адресом трекера
+  function confirmCreate() {
+    if (busy || saved().pending) return;
+    const snap = store.get().snapshot;
+    const info = trackerInfo(snap && snap.config);
+    if (!info) return;
+    confirmDialog({
+      title: T.tracker.confirmTitle,
+      body: h('p', { class: 'mtext', 'data-confirm-create': '1' }, T.tracker.confirmText(toCreate(snap).length, info.host, info.name)),
+      ok: T.tracker.confirmOk,
+      submit: async () => create(),
+    });
   }
 
   function create() {

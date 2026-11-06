@@ -121,6 +121,13 @@ async function main(browser) {
     check('«Проверить доступ» сообщает, что доступ есть',
       await waits(page, h => [...document.querySelectorAll('.toast')].some(t => t.textContent.includes('Доступ к ' + h)), 10000, host));
     await page.click('.tstage [data-tracker="create"]');
+    await page.waitForSelector('.modal [data-confirm-create]', { timeout: 5000 });
+    const confirmText = await page.$eval('.modal [data-confirm-create]', el => el.textContent);
+    check('подтверждение заведения: число задач и хост трекера', confirmText.includes('2 задачи') && confirmText.includes(host), confirmText);
+    const beforeConfirm = await jira.control('GET', '/_control/state');
+    check('до подтверждения в Jira ничего не заведено', Object.keys(beforeConfirm.issues).length === 0, beforeConfirm);
+    await shotThemes(page, 'tracker-confirm');
+    await page.click('.modal [data-ok]');
     await page.waitForSelector('.tresult:not([hidden]) .tblock', { timeout: 30000 });
     const result = await page.$eval('.tresult', el => el.textContent);
     check('результат заведения: обе задачи и связь', result.includes('Заведено: 2') && result.includes('Связей: 1') && result.includes('MNZ-1') && result.includes('MNZ-2'), result);

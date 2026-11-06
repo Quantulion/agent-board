@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { cardActions } from '../../agent_board/static/js/actions.js';
 import { reviewChip, reviewOf, reviewTool } from '../../agent_board/static/js/review.js';
 import { commandParts, selectShip, shipChip, shipCommand, shipPlan, shippable } from '../../agent_board/static/js/ship.js';
-import { relTime, syncModel, trackerInfo, trackerLink } from '../../agent_board/static/js/tracker.js';
+import { relTime, syncModel, toCreate, trackerInfo, trackerLink } from '../../agent_board/static/js/tracker.js';
 import { cardModel, taskFilter, waitingForYou, wavesOf } from '../../agent_board/static/js/board.js';
+import { T } from '../../agent_board/static/js/i18n.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -194,6 +195,13 @@ test('syncModel: ок, ошибка, пауза и ещё не было прох
   assert.equal(m({ at, ok: false, error: 'сеть', warning: 'http' }).state, 'err', 'ошибка важнее предупреждения');
   assert.equal(syncModel({ config: { ...cfg, stage: 'tracker' }, tracker_sync: null }, now), null, 'до стадии работы синхронизации нет');
   assert.equal(syncModel({ config: { stage: 'work', tracker: { type: 'none' } }, tracker_sync: null }, now), null);
+});
+
+test('toCreate: заводятся задачи без ключа трекера, кроме отменённых', () => {
+  const snap = { tasks: [task('A', { tracker_key: 'MNZ-1' }), task('B'), task('C', { status: 'cancelled' }), task('D')] };
+  assert.deepEqual(toCreate(snap).map(t => t.key), ['B', 'D']);
+  assert.equal(T.tracker.confirmText(2, 'jira.example.com', 'Jira'), 'В Jira (jira.example.com) будут заведены 2 задачи, затем проставятся связи между ними.');
+  assert.equal(T.tracker.confirmText(0, 'jira.example.com', 'Jira'), 'Новых задач нет: в Jira (jira.example.com) проставятся только недостающие связи.');
 });
 
 test('trackerLink: ссылка только абсолютная http(s)', () => {
