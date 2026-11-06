@@ -15,7 +15,7 @@ from .fake_http import FakeServer
 
 
 class FakeJira(FakeServer):
-    def __init__(self, project: str = "MNZ", authorization: Optional[str] = None, cookie: Optional[str] = None):
+    def __init__(self, project: str = "PROJ", authorization: Optional[str] = None, cookie: Optional[str] = None):
         super().__init__()
         self.project = project
         self.authorization = authorization

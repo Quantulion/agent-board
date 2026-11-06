@@ -163,7 +163,6 @@ def test_say_without_actor_env_posts_as_user(srv, capsys, monkeypatch):
     assert msgs[-1]["author"] == "user" and msgs[-1]["text"] == "от пользователя"
 
 
-
 # --- lock-run ---
 
 def _declare_resource(srv):
@@ -457,7 +456,7 @@ def fake_jira(monkeypatch):
 
 def with_tracker(srv, jira):
     srv.board_for("pay").update_config({"tracker": {
-        "type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+        "type": "jira", "url": jira.url, "project": "PROJ", "issue_type": "Task",
         "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}})
 
 
@@ -470,7 +469,7 @@ def test_tracker_create_and_check_as_user(srv, capsys, fake_jira):
     created = run_json(capsys, "tracker", "create")
     checked = run_json(capsys, "tracker", "check")
     # assert
-    assert created["created"][0]["tracker_key"] == "MNZ-1" and checked == {"ok": True}
+    assert created["created"][0]["tracker_key"] == "PROJ-1" and checked == {"ok": True}
 
 
 def test_tracker_errors_exit_1(srv, capsys, fake_jira):

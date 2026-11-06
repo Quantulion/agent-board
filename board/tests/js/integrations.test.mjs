@@ -198,16 +198,16 @@ test('syncModel: ок, ошибка, пауза и ещё не было прох
 });
 
 test('toCreate: заводятся задачи без ключа трекера, кроме отменённых', () => {
-  const snap = { tasks: [task('A', { tracker_key: 'MNZ-1' }), task('B'), task('C', { status: 'cancelled' }), task('D')] };
+  const snap = { tasks: [task('A', { tracker_key: 'PROJ-1' }), task('B'), task('C', { status: 'cancelled' }), task('D')] };
   assert.deepEqual(toCreate(snap).map(t => t.key), ['B', 'D']);
   assert.equal(T.tracker.confirmText(2, 'jira.example.com', 'Jira'), 'В Jira (jira.example.com) будут заведены 2 задачи, затем проставятся связи между ними.');
   assert.equal(T.tracker.confirmText(0, 'jira.example.com', 'Jira'), 'Новых задач нет: в Jira (jira.example.com) проставятся только недостающие связи.');
 });
 
 test('trackerLink: ссылка только абсолютная http(s)', () => {
-  assert.deepEqual(trackerLink(task('A', { tracker_key: 'MNZ-1', tracker_url: 'https://j/browse/MNZ-1' })), { key: 'MNZ-1', url: 'https://j/browse/MNZ-1' });
-  assert.deepEqual(trackerLink(task('A', { tracker_key: 'MNZ-1', tracker_url: '/browse/MNZ-1' })), { key: 'MNZ-1', url: null });
-  assert.deepEqual(trackerLink(task('A', { tracker_key: 'MNZ-1', tracker_url: 'javascript:1' })), { key: 'MNZ-1', url: null });
+  assert.deepEqual(trackerLink(task('A', { tracker_key: 'PROJ-1', tracker_url: 'https://j/browse/PROJ-1' })), { key: 'PROJ-1', url: 'https://j/browse/PROJ-1' });
+  assert.deepEqual(trackerLink(task('A', { tracker_key: 'PROJ-1', tracker_url: '/browse/PROJ-1' })), { key: 'PROJ-1', url: null });
+  assert.deepEqual(trackerLink(task('A', { tracker_key: 'PROJ-1', tracker_url: 'javascript:1' })), { key: 'PROJ-1', url: null });
   assert.equal(trackerLink(task('A')), null);
 });
 
@@ -248,10 +248,10 @@ test('waitingForYou: ревью ждёт только без работы аге
 test('cardModel: чипы ревью, отправки и ключ трекера', () => {
   const ctx = { byKey: new Map(), proposalKeys: new Set(), repoBase: new Map() };
   const m = cardModel(task('A', { status: 'approved', review: { round: 2, state: 'approved' }, ship: { state: 'error' },
-    tracker_key: 'MNZ-7', tracker_url: 'https://j/browse/MNZ-7' }), ctx);
+    tracker_key: 'PROJ-7', tracker_url: 'https://j/browse/PROJ-7' }), ctx);
   assert.deepEqual(m.review, { text: 'одобрено', cls: 'ok' });
   assert.deepEqual(m.ship, { text: 'отправка не удалась', cls: 'err' });
-  assert.deepEqual(m.tracker, { key: 'MNZ-7', url: 'https://j/browse/MNZ-7' });
+  assert.deepEqual(m.tracker, { key: 'PROJ-7', url: 'https://j/browse/PROJ-7' });
 });
 
 // --- исправления ревью ---

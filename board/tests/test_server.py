@@ -1348,7 +1348,7 @@ def jira(monkeypatch):
 
 def with_jira(server, jira, stage="tracker"):
     board = server.board_for("pay")
-    board.update_config({"tracker": {"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+    board.update_config({"tracker": {"type": "jira", "url": jira.url, "project": "PROJ", "issue_type": "Task",
                                      "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}})
     add_task(server, "A")
     add_task(server, "B", deps=["A"])
@@ -1364,10 +1364,10 @@ def test_tracker_create_creates_issues_and_links(server, jira):
     # assert
     assert r.status == 200
     body = r.json()
-    assert body["errors"] == [] and [c["tracker_key"] for c in body["created"]] == ["MNZ-1", "MNZ-2"]
+    assert body["errors"] == [] and [c["tracker_key"] for c in body["created"]] == ["PROJ-1", "PROJ-2"]
     assert body["linked"] == [["A", "B"]]
     tasks = {t["key"]: t for t in get(server, "/api/p/pay/state").json()["tasks"]}
-    assert tasks["B"]["tracker_url"] == jira.url + "/browse/MNZ-2"
+    assert tasks["B"]["tracker_url"] == jira.url + "/browse/PROJ-2"
 
 
 def test_tracker_create_401_never_leaks_token(server, jira, capfd):
@@ -1442,7 +1442,7 @@ def test_agent_cannot_write_tracker_key(server):
     # arrange
     add_task(server)
     # act
-    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": "MNZ-9"}})
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": "PROJ-9"}})
     # assert
     assert r.status == 403
 
@@ -1499,7 +1499,7 @@ def test_sync__tracker_done__marks_done_and_unblocks_dependent(server, jira, clo
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -1515,10 +1515,10 @@ def test_sync__reopened_in_tracker__wakes_agent(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     sync.tick()
-    jira.statuses["MNZ-1"] = "Reopened"
+    jira.statuses["PROJ-1"] = "Reopened"
     clock.now += 30
     # act
     sync.tick()
@@ -1597,7 +1597,7 @@ def test_sync__event_carries_ok_changed_error_only(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -1609,8 +1609,8 @@ def test_sync__mapping_is_case_insensitive(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock, statuses={"in progress": "in_progress", "DONE": "done"})
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
-    jira.statuses["MNZ-2"] = "IN PROGRESS"
+    jira.statuses["PROJ-1"] = "Done"
+    jira.statuses["PROJ-2"] = "IN PROGRESS"
     clock.now += 30
     # act
     sync.tick()
@@ -1623,7 +1623,7 @@ def test_sync__empty_mapping__only_reads_and_lists_unknown_statuses(server, jira
     # arrange
     sync = sync_project(server, jira, clock, statuses={})
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -1638,7 +1638,7 @@ def test_sync__unmapped_status__is_listed_and_ignored(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    jira.statuses["MNZ-1"] = "Code Review"
+    jira.statuses["PROJ-1"] = "Code Review"
     clock.now += 30
     # act
     sync.tick()
@@ -1649,7 +1649,7 @@ def test_sync__unmapped_status__is_listed_and_ignored(server, jira, clock):
 def test_sync__board_status_not_reverted_while_tracker_unchanged(server, jira, clock):
     # arrange: в трекере «In Progress», а доска ушла дальше — это не повод возвращать задачу
     sync = sync_project(server, jira, clock)
-    jira.statuses["MNZ-1"] = "In Progress"
+    jira.statuses["PROJ-1"] = "In Progress"
     sync.tick()
     board = server.board_for("pay")
     board.transition("A", Status.IN_REVIEW, "agent")
@@ -1673,8 +1673,8 @@ def test_sync__task_transition_error__does_not_stop_others(server, jira, clock, 
         return real(key, to, actor, *a, **kw)
 
     monkeypatch.setattr(board, "transition", flaky)
-    jira.statuses["MNZ-1"] = "Done"
-    jira.statuses["MNZ-2"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
+    jira.statuses["PROJ-2"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -1882,7 +1882,7 @@ def test_sync__not_started_by_default(server):
 def test_sync_config__forbidden_target__is_rejected_on_save(server, jira, target):
     # arrange
     board = server.board_for("pay")
-    cfg = {"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+    cfg = {"type": "jira", "url": jira.url, "project": "PROJ", "issue_type": "Task",
            "auth": {"type": "token_env", "env": "JIRA_TOKEN"}, "statuses": {"Done": target}}
     # act, assert
     with pytest.raises(ValueError, match="statuses"):
@@ -1893,7 +1893,7 @@ def test_sync__in_review_in_jira_maps_to_sent(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock, statuses={"In Review": "sent"})
     sync.tick()
-    jira.statuses["MNZ-1"] = "In Review"
+    jira.statuses["PROJ-1"] = "In Review"
     clock.now += 30
     # act
     sync.tick()
@@ -1909,7 +1909,7 @@ def test_sync__forbidden_target_in_stored_config__is_skipped(server, jira, clock
     config.tracker["statuses"] = {"Open": None, "Done": "approved"}
     board.store.save_config(config)
     sync.tick()
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -1921,15 +1921,15 @@ def test_sync__missing_issue_in_jira__others_still_sync(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    del jira.statuses["MNZ-1"]
-    jira.statuses["MNZ-2"] = "Done"
+    del jira.statuses["PROJ-1"]
+    jira.statuses["PROJ-2"] = "Done"
     clock.now += 30
     # act
     sync.tick()
     # assert
     state = sync_state(server)
     assert task_status(server, "B") == "done" and state["ok"] is True and state["paused"] is False
-    assert [e["key"] for e in state["errors"]] == ["A"] and "MNZ-1" in state["errors"][0]["error"]
+    assert [e["key"] for e in state["errors"]] == ["A"] and "PROJ-1" in state["errors"][0]["error"]
 
 
 @pytest.mark.parametrize("mode", ["header", "silent"])
@@ -1969,7 +1969,7 @@ def test_sync__some_issues_found__does_not_ask_who_am_i(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
     sync.tick()
-    del jira.statuses["MNZ-1"]
+    del jira.statuses["PROJ-1"]
     clock.now += 30
     # act
     sync.tick()
@@ -2018,8 +2018,8 @@ def test_sync__jira_rejects_batch__retries_per_key(server, jira, clock):
     sync.tick()
     jira.reject_batches = True
     jira.strict_missing = True
-    jira.statuses["MNZ-2"] = "Done"
-    del jira.statuses["MNZ-1"]
+    jira.statuses["PROJ-2"] = "Done"
+    del jira.statuses["PROJ-1"]
     clock.now += 30
     # act
     sync.tick()
@@ -2082,8 +2082,8 @@ def test_sync__github_default_interval_is_120_seconds(server, github, clock):
 def test_sync__first_read_done__transitions(server, jira, clock):
     # arrange: задача уже закрыта в трекере к первому чтению
     sync = sync_project(server, jira, clock)
-    jira.statuses["MNZ-1"] = "Done"
-    jira.statuses["MNZ-2"] = "In Progress"
+    jira.statuses["PROJ-1"] = "Done"
+    jira.statuses["PROJ-2"] = "In Progress"
     # act
     sync.tick()
     # assert
@@ -2095,8 +2095,8 @@ def test_sync__changed_tracker_key__counts_as_first_read(server, jira, clock):
     sync = sync_project(server, jira, clock)
     sync.tick()
     board = server.board_for("pay")
-    board.update_task("A", "system", {"tracker_key": "MNZ-9"})
-    jira.statuses["MNZ-9"] = "Done"
+    board.update_task("A", "system", {"tracker_key": "PROJ-9"})
+    jira.statuses["PROJ-9"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -2110,13 +2110,13 @@ def test_sync__seen_drops_cancelled_tasks(server, jira, clock):
     sync.tick()
     board = server.board_for("pay")
     board.transition("B", Status.CANCELLED, "user")
-    jira.statuses["MNZ-1"] = "In Progress"
+    jira.statuses["PROJ-1"] = "In Progress"
     clock.now += 30
     # act
     sync.tick()
     # assert
     seen = board.store.load_meta()["tracker_seen"]
-    assert set(seen) == {"A"} and seen["A"] == ["MNZ-1", "In Progress"]
+    assert set(seen) == {"A"} and seen["A"] == ["PROJ-1", "In Progress"]
 
 
 def test_sync__task_moved_meanwhile__transition_is_skipped(server, jira, clock, monkeypatch):
@@ -2133,7 +2133,7 @@ def test_sync__task_moved_meanwhile__transition_is_skipped(server, jira, clock, 
         return real(key, expected, to, actor)
 
     monkeypatch.setattr(board, "transition_if", racing)
-    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["PROJ-1"] = "Done"
     clock.now += 30
     # act
     sync.tick()
@@ -2206,7 +2206,7 @@ def test_sync__manual_sync_during_scheduled_tick__waits_and_applies_once(server,
         gated.statuses = jira.statuses
         sync = sync_project(server, gated, clock)
         sync.tick()
-        gated.statuses["MNZ-1"] = "Done"
+        gated.statuses["PROJ-1"] = "Done"
         gated.gated = True
         clock.now += 30
         results = {}
@@ -2258,7 +2258,7 @@ def test_config_set__valid_fields__saved_and_event_written(server, git_repo):
     fields = {"max_agents": 2, "repos": [{"name": "app", "path": str(git_repo), "base": "main"}],
               "links": [{"title": "Спека", "href": " https://example.com/spec "}],
               "ship": {"command": "git push origin {branch}", "timeout": 120},
-              "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+              "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
                           "auth": {"type": "token_env", "env": "JIRA_TOKEN"}, "statuses": {"Done": "done"}},
               "harness": {"type": "fake"}, "review": {"tool": "none"}}
     # act
@@ -2295,7 +2295,7 @@ def test_config_set__same_values__no_event(server):
     assert not [e for e in get(server, "/api/p/pay/events").json()["events"] if e["type"] == "config_changed"]
 
 
-JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
            "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}
 
 

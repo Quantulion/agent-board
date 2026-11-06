@@ -93,7 +93,7 @@ async function main(browser) {
       repos: [{ name: 'payments-api', path: gitRepo, base: 'master' }],
       review: { tool: 'crit', binary: crit },
       ship: { command: 'echo {key} {base} >> ' + marker, timeout: 60 },
-      tracker: { type: 'jira', url: jira.url, project: 'MNZ', issue_type: 'Task', auth: { type: 'token_env', env: TOKEN_ENV },
+      tracker: { type: 'jira', url: jira.url, project: 'PROJ', issue_type: 'Task', auth: { type: 'token_env', env: TOKEN_ENV },
         statuses: { Done: 'done' }, poll_seconds: 1 },
     }, null, 2));
 
@@ -130,16 +130,16 @@ async function main(browser) {
     await page.click('.modal [data-ok]');
     await page.waitForSelector('.tresult:not([hidden]) .tblock', { timeout: 30000 });
     const result = await page.$eval('.tresult', el => el.textContent);
-    check('результат заведения: обе задачи и связь', result.includes('Заведено: 2') && result.includes('Связей: 1') && result.includes('MNZ-1') && result.includes('MNZ-2'), result);
+    check('результат заведения: обе задачи и связь', result.includes('Заведено: 2') && result.includes('Связей: 1') && result.includes('PROJ-1') && result.includes('PROJ-2'), result);
     check('ключ трекера на карточке доски — ссылка',
-      await waits(page, () => document.querySelector('.card[data-key="PAY-1"] a.chip.trk')?.href.endsWith('/browse/MNZ-1'), 10000));
+      await waits(page, () => document.querySelector('.card[data-key="PAY-1"] a.chip.trk')?.href.endsWith('/browse/PROJ-1'), 10000));
     await shotThemes(page, 'tracker-created');
     // итог заведения остаётся после ухода со страницы проекта и возврата на неё
     await page.evaluate(() => { window.location.hash = '#/'; });
     await page.waitForFunction(() => !document.querySelector('.tstage'), { timeout: 5000 });
     await page.evaluate(() => { window.location.hash = '#/p/pay'; });
     check('итог заведения виден после возврата на доску',
-      await waits(page, () => document.querySelector('.tresult:not([hidden])')?.textContent.includes('MNZ-2'), 10000));
+      await waits(page, () => document.querySelector('.tresult:not([hidden])')?.textContent.includes('PROJ-2'), 10000));
     const jiraState = await jira.control('GET', '/_control/state');
     check('в Jira заведены задачи и связь', Object.keys(jiraState.issues).length === 2 && jiraState.links.length === 1, jiraState);
 

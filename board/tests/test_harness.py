@@ -446,6 +446,26 @@ def test_runner_harness_allows_crit_comment_only_for_crit_review(tmp_home):
     assert not any("crit" in a for a in tools({"tool": "none"}))
 
 
+def test_runner_harness_keeps_user_allowed_tools_with_crit_review(tmp_home):
+    # arrange
+    from agent_board.board import Board
+    from agent_board.config import ProjectConfig
+    from agent_board.runner import Runner
+    from agent_board.store import ProjectStore
+
+    store = ProjectStore("pay")
+    store.create(ProjectConfig(slug="pay", title="p", harness={
+        "type": "claude", "allowed_tools": ["Bash(python3 -m pytest:*)", "Bash(crit comment:*)"]}))
+    board = Board(store)
+
+    # act
+    args = Runner._harness(board).build_start_args("sid", tmp_home / "s.md")
+
+    # assert
+    assert "Bash(python3 -m pytest:*)" in args
+    assert args.count("Bash(crit comment:*)") == 1
+
+
 # --- сигналы группе процессов после завершения лидера ---
 
 @pytest.fixture

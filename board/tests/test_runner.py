@@ -1887,7 +1887,7 @@ def test_ship_output_is_scrubbed_of_tracker_secrets(make_project, start_server, 
     monkeypatch.setenv("AB_SHIP_JIRA_TOKEN", SHIP_SECRET)
     store = make_project(
         ship={"command": "echo before; echo token=$AB_SHIP_JIRA_TOKEN; echo after; exit %d" % exit_code},
-        tracker={"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+        tracker={"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
                  "auth": {"type": "token_env", "env": "AB_SHIP_JIRA_TOKEN"}})
     srv = start_server()
     approved(srv, store, "T-1")

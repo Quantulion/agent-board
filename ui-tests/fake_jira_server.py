@@ -25,7 +25,7 @@ class ControlledJira(FakeJira):
 
 
 def main() -> None:
-    jira = ControlledJira(project="MNZ").start()
+    jira = ControlledJira(project="PROJ").start()
     print(json.dumps({"url": jira.url}), flush=True)
     try:
         sys.stdin.read()

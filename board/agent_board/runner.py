@@ -345,7 +345,9 @@ class Runner:
             config["type"] = task.harness
         review = project.review if isinstance(project.review, dict) else {}
         if (review.get("tool") or "crit") == "crit":
-            config["allowed_tools"] = ["Bash(%s comment:*)" % (review.get("binary") or "crit")]
+            rule = "Bash(%s comment:*)" % (review.get("binary") or "crit")
+            tools = list(config.get("allowed_tools") or [])
+            config["allowed_tools"] = tools if rule in tools else tools + [rule]
         return make_harness(config)
 
     def _env(self, board: Board, key: str) -> dict:

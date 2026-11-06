@@ -44,7 +44,7 @@ def github():
 
 
 def jira_config(url, **kw):
-    cfg = {"type": "jira", "url": url, "project": "MNZ", "issue_type": "Task", "epic": None, "epic_field": None,
+    cfg = {"type": "jira", "url": url, "project": "PROJ", "issue_type": "Task", "epic": None, "epic_field": None,
            "components": [], "labels": [], "extra_fields": {}, "link_type": "Blocks",
            "auth": {"type": "token_env", "env": "JIRA_TOKEN", "user_env": "JIRA_USER"}, "statuses": {}}
     cfg.update(kw)
@@ -79,23 +79,23 @@ def all_project_text(board) -> str:
 
 def test_create__jira__creates_issues_in_dependency_order_with_fields(board, jira):
     # arrange
-    setup_board(board, jira_config(jira.url, epic="MNZ-1", epic_field="customfield_10007", components=["billing"],
+    setup_board(board, jira_config(jira.url, epic="PROJ-1", epic_field="customfield_10007", components=["billing"],
                                    labels=["agent"], extra_fields={"priority": {"name": "Major"}}))
     # act
     result = tracker.create_issues(board, "user")
     # assert
     assert result["errors"] == []
     tasks = board.store.load_tasks()
-    assert {k: t.tracker_key for k, t in tasks.items()} == {"A": "MNZ-1", "B": "MNZ-2", "C": "MNZ-3", "D": "MNZ-4"}
-    assert tasks["B"].tracker_url == jira.url + "/browse/MNZ-2"
+    assert {k: t.tracker_key for k, t in tasks.items()} == {"A": "PROJ-1", "B": "PROJ-2", "C": "PROJ-3", "D": "PROJ-4"}
+    assert tasks["B"].tracker_url == jira.url + "/browse/PROJ-2"
     first = jira.calls("POST", "/rest/api/2/issue")[0]
     assert first.headers["Authorization"] == BASIC
     assert first.body == {"fields": {
-        "project": {"key": "MNZ"}, "summary": "Схема", "issuetype": {"name": "Task"},
+        "project": {"key": "PROJ"}, "summary": "Схема", "issuetype": {"name": "Task"},
         "description": "Описание A\n\nКритерий готовности: Миграция применена",
-        "components": [{"name": "billing"}], "labels": ["agent"], "customfield_10007": "MNZ-1",
+        "components": [{"name": "billing"}], "labels": ["agent"], "customfield_10007": "PROJ-1",
         "priority": {"name": "Major"}}}
-    assert jira.issues["MNZ-2"]["fields"]["description"] == "Описание B\n\nЗависит от: MNZ-1"
+    assert jira.issues["PROJ-2"]["fields"]["description"] == "Описание B\n\nЗависит от: PROJ-1"
 
 
 def test_create__jira__links_blocker_to_blocked_after_issues(board, jira):
@@ -105,8 +105,8 @@ def test_create__jira__links_blocker_to_blocked_after_issues(board, jira):
     result = tracker.create_issues(board, "user")
     # assert
     assert jira.links == [
-        {"type": {"name": "Blocks"}, "inwardIssue": {"key": "MNZ-1"}, "outwardIssue": {"key": "MNZ-2"}},
-        {"type": {"name": "Blocks"}, "inwardIssue": {"key": "MNZ-2"}, "outwardIssue": {"key": "MNZ-3"}},
+        {"type": {"name": "Blocks"}, "inwardIssue": {"key": "PROJ-1"}, "outwardIssue": {"key": "PROJ-2"}},
+        {"type": {"name": "Blocks"}, "inwardIssue": {"key": "PROJ-2"}, "outwardIssue": {"key": "PROJ-3"}},
     ]
     assert result["linked"] == [["A", "B"], ["B", "C"]]
     last_issue = max(i for i, r in enumerate(jira.requests) if r.path == "/rest/api/2/issue")
@@ -116,11 +116,11 @@ def test_create__jira__links_blocker_to_blocked_after_issues(board, jira):
 
 def test_create__epic_without_field__uses_parent(board, jira):
     # arrange
-    setup_board(board, jira_config(jira.url, epic="MNZ-100"), [make_task("A")])
+    setup_board(board, jira_config(jira.url, epic="PROJ-100"), [make_task("A")])
     # act
     tracker.create_issues(board, "user")
     # assert
-    assert jira.issues["MNZ-1"]["fields"]["parent"] == {"key": "MNZ-100"}
+    assert jira.issues["PROJ-1"]["fields"]["parent"] == {"key": "PROJ-100"}
 
 
 def test_create__title_template__applies_key_and_title(board, jira):
@@ -129,7 +129,7 @@ def test_create__title_template__applies_key_and_title(board, jira):
     # act
     tracker.create_issues(board, "user")
     # assert
-    assert jira.issues["MNZ-1"]["fields"]["summary"] == "[A] Схема"
+    assert jira.issues["PROJ-1"]["fields"]["summary"] == "[A] Схема"
 
 
 def test_create__without_user_env__sends_bearer(board, monkeypatch):
@@ -142,7 +142,7 @@ def test_create__without_user_env__sends_bearer(board, monkeypatch):
     finally:
         fake.stop()
     # assert
-    assert result["errors"] == [] and result["created"][0]["tracker_key"] == "MNZ-1"
+    assert result["errors"] == [] and result["created"][0]["tracker_key"] == "PROJ-1"
 
 
 def test_create__cookie_file__sends_cookie_from_file(board, tmp_path):
@@ -158,7 +158,7 @@ def test_create__cookie_file__sends_cookie_from_file(board, tmp_path):
     finally:
         fake.stop()
     # assert
-    assert result["errors"] == [] and board.store.load_tasks()["A"].tracker_key == "MNZ-1"
+    assert result["errors"] == [] and board.store.load_tasks()["A"].tracker_key == "PROJ-1"
 
 
 def test_create__cancelled_tasks__are_skipped(board, jira):
@@ -181,7 +181,7 @@ def test_create__server_error_midway__keeps_created_skips_dependents_and_rerun_f
     first = tracker.create_issues(board, "user")
     # assert
     keys = {k: t.tracker_key for k, t in board.store.load_tasks().items()}
-    assert keys == {"A": "MNZ-1", "B": None, "C": None, "D": "MNZ-2"}
+    assert keys == {"A": "PROJ-1", "B": None, "C": None, "D": "PROJ-2"}
     assert [e["key"] for e in first["errors"]] == ["B", "C"]
     assert "HTTP 500" in first["errors"][0]["error"] and "B" in first["errors"][1]["error"]
     assert jira.links == []
@@ -191,10 +191,10 @@ def test_create__server_error_midway__keeps_created_skips_dependents_and_rerun_f
     assert second["errors"] == []
     assert [c["key"] for c in second["created"]] == ["B", "C"]
     keys = {k: t.tracker_key for k, t in board.store.load_tasks().items()}
-    assert keys == {"A": "MNZ-1", "B": "MNZ-3", "C": "MNZ-4", "D": "MNZ-2"}
+    assert keys == {"A": "PROJ-1", "B": "PROJ-3", "C": "PROJ-4", "D": "PROJ-2"}
     assert len(jira.issues) == 4
     assert [(l["inwardIssue"]["key"], l["outwardIssue"]["key"]) for l in jira.links] == [
-        ("MNZ-1", "MNZ-3"), ("MNZ-3", "MNZ-4")]
+        ("PROJ-1", "PROJ-3"), ("PROJ-3", "PROJ-4")]
 
 
 def test_create__link_failure__rerun_creates_only_missing_links(board, jira):
@@ -380,15 +380,15 @@ def test_create__emits_tracker_created_event(board, jira):
 
 @pytest.mark.parametrize("cfg, message", [
     ({"type": "redmine"}, "type"),
-    ({"type": "jira", "url": "http://x", "project": "MNZ", "issue_type": "Task",
+    ({"type": "jira", "url": "http://x", "project": "PROJ", "issue_type": "Task",
       "auth": {"type": "token_env", "env": "JIRA_TOKEN", "token": "raw"}}, "token"),
-    ({"type": "jira", "url": "ftp://x", "project": "MNZ", "issue_type": "Task",
+    ({"type": "jira", "url": "ftp://x", "project": "PROJ", "issue_type": "Task",
       "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}, "url"),
     ({"type": "jira", "url": "http://x", "issue_type": "Task", "auth": {"type": "token_env", "env": "T"}}, "project"),
     ({"type": "github", "repo": "nope", "auth": {"type": "token_env", "env": "T"}}, "repo"),
     ({"type": "github", "repo": "o/n", "auth": {"type": "basic", "password": "x"}}, "auth"),
     ({"type": "github", "repo": "o/n", "auth": {"type": "token_env", "env": "T"}, "title_template": "{oops}"}, "oops"),
-    ({"type": "jira", "url": "http://x", "project": "MNZ", "issue_type": "Task",
+    ({"type": "jira", "url": "http://x", "project": "PROJ", "issue_type": "Task",
       "auth": {"type": "token_env", "env": "T"}, "statuses": {"Done": "finished"}}, "finished"),
 ])
 def test_update_config__invalid_tracker__is_rejected(board, cfg, message):
@@ -403,7 +403,7 @@ def test_agent_cannot_forge_tracker_key(board):
     # act / assert
     for actor in ("agent", "user"):
         with pytest.raises(PermissionError):
-            board.update_task("A", actor, {"tracker_key": "MNZ-9"})
+            board.update_task("A", actor, {"tracker_key": "PROJ-9"})
 
 
 # --- проверка доступа и статусы ---
@@ -414,7 +414,7 @@ def test_check__jira_ok(board, jira):
     # act
     tracker.check(board.store.load_config())
     # assert
-    assert [r.path for r in jira.requests] == ["/rest/api/2/myself", "/rest/api/2/project/MNZ"]
+    assert [r.path for r in jira.requests] == ["/rest/api/2/myself", "/rest/api/2/project/PROJ"]
 
 
 def test_check__jira_unknown_project__names_it(board, jira):
@@ -463,7 +463,7 @@ def test_get_statuses__jira_and_github(jira, github):
     jira.statuses[a["key"]] = "In Review"
     github.issues[1]["state"] = "closed"
     # act / assert
-    assert j.get_statuses([a["key"]]) == {"MNZ-1": "In Review"}
+    assert j.get_statuses([a["key"]]) == {"PROJ-1": "In Review"}
     assert g.get_statuses([b["key"]]) == {"#1": "closed"}
     assert j.get_statuses([]) == {}
 
@@ -592,7 +592,7 @@ def test_get_statuses__non_object_response__is_validation_error(jira):
     jira.search_response = ["not", "an", "object"]
     # act / assert
     with pytest.raises(tracker.TrackerError) as info:
-        tracker.adapter_for(jira_config(jira.url)).get_statuses(["MNZ-1"])
+        tracker.adapter_for(jira_config(jira.url)).get_statuses(["PROJ-1"])
     assert info.value.kind == "validation"
 
 
@@ -614,7 +614,7 @@ def test_get_statuses__custom_search_path(jira):
     # act
     statuses = adapter.get_statuses([key])
     # assert
-    assert statuses == {"MNZ-1": "Open"} and jira.requests[-1].path.startswith("/rest/api/2/search/jql?")
+    assert statuses == {"PROJ-1": "Open"} and jira.requests[-1].path.startswith("/rest/api/2/search/jql?")
 
 
 def test_update_config__bad_search_path__is_rejected(board):

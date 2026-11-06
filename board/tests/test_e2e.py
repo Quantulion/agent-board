@@ -144,7 +144,7 @@ def test_full_flow_with_server_crash_during_dependent_turn(tmp_home, git_repo):
 def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, git_repo, tmp_path):
     # arrange: цепочки выключены — B ждёт, пока A станет done (по статусу в трекере)
     token = "e2e-secret-token"
-    jira = FakeJira(project="MNZ", authorization="Bearer " + token).start()
+    jira = FakeJira(project="PROJ", authorization="Bearer " + token).start()
     crit = fake_crit.install(tmp_path / "crit-bin")
     marker = tmp_path / "shipped.txt"
     store = ProjectStore("pay")
@@ -153,7 +153,7 @@ def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, 
         repos=[{"name": "app", "path": str(git_repo), "base": "main"}],
         review={"tool": "crit", "binary": str(crit)},
         ship={"command": "printf '%s %s\\n' {key} {base} >> " + str(marker), "timeout": 60},
-        tracker={"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task", "poll_seconds": 3600,
+        tracker={"type": "jira", "url": jira.url, "project": "PROJ", "issue_type": "Task", "poll_seconds": 3600,
                  "auth": {"type": "token_env", "env": "E2E_JIRA_TOKEN"},
                  "statuses": {"Open": None, "Done": "done"}}))
     server = ServerProcess(tmp_home, {"E2E_JIRA_TOKEN": token}, ["--no-tracker-sync"])
@@ -176,7 +176,7 @@ def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, 
         # act: заводим задачи в трекере и начинаем работу
         server.call("POST", "stage", {"stage": "tracker", "actor": "user"})
         created = server.call("POST", "tracker/create", {"actor": "user"})
-        assert not created["errors"] and sorted(c["tracker_key"] for c in created["created"]) == ["MNZ-1", "MNZ-2"]
+        assert not created["errors"] and sorted(c["tracker_key"] for c in created["created"]) == ["PROJ-1", "PROJ-2"]
         server.call("POST", "stage", {"stage": "work", "actor": "user"})
         wait_for(lambda: store.load_tasks()["A"].status.value == "in_review"
                  and store.load_tasks()["A"].agent_state == "idle", WAIT, "A в in_review")
@@ -212,7 +212,7 @@ def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, 
         # act: первое чтение статусов, затем в Jira «Done»
         server.call("POST", "tracker/sync", {"actor": "user"})
         assert store.load_tasks()["A"].status.value == "sent"
-        jira.statuses["MNZ-1"] = "Done"
+        jira.statuses["PROJ-1"] = "Done"
         sync = server.call("POST", "tracker/sync", {"actor": "user"})
         wait_events(store, "turn_started", "B")
         wait_for(lambda: (Path(store.load_tasks()["B"].worktree) / "b-started.txt").exists(), WAIT, "B стартовала")

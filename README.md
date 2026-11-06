@@ -125,7 +125,7 @@ sh scripts/install-codex.sh --uninstall  # удалить ссылку
 | `harness` | `{"type": "claude"\|"codex"\|"fake", "permission_mode": ..., "model": ..., "allowed_tools": [...]}`, по умолчанию `claude` с `auto`. `allowed_tools` (только Claude) — дополнительные разрешённые инструменты, например `"Bash(python3 -m pytest:*)"`: при `acceptEdits` без них агент не запустит тесты и сборку |
 | `review` | `{"tool": "crit"\|"none", "binary": "crit"}` — инструмент ревью, по умолчанию crit |
 | `ship` | `{"command": str, "timeout": 600}` — команда отправки в ревью (шаблон), без команды отправка недоступна |
-| `tracker` | `{"type": "none"}` (по умолчанию); Jira: `{"type": "jira", "url", "project", "issue_type", "epic": "MNZ-1"\|null, "epic_field": "customfield_10007"\|null, "components": [], "labels": [], "extra_fields": {}, "link_type": "Blocks", "title_template": "{title}", "auth": {"type": "token_env", "env": "JIRA_TOKEN", "user_env": "JIRA_USER"} \| {"type": "cookie_file", "path": "~/keys/jira.txt"}, "statuses": {"<статус Jira>": "<статус доски>"}, "jira_search_path": "/rest/api/2/search"}` (эпик без `epic_field` задаётся через `parent`; путь поиска статусов по умолчанию — для Jira Server/DC, Jira Cloud может потребовать `/rest/api/2/search/jql`); GitHub: `{"type": "github", "repo": "owner/name", "labels": [], "auth": {"type": "token_env", "env": "GITHUB_TOKEN"}, "statuses": {"open": null, "closed": "done"}, "api_url": "https://api.github.com"}`. Статусы по умолчанию не сопоставляются |
+| `tracker` | `{"type": "none"}` (по умолчанию); Jira: `{"type": "jira", "url", "project", "issue_type", "epic": "PROJ-1"\|null, "epic_field": "customfield_10007"\|null, "components": [], "labels": [], "extra_fields": {}, "link_type": "Blocks", "title_template": "{title}", "auth": {"type": "token_env", "env": "JIRA_TOKEN", "user_env": "JIRA_USER"} \| {"type": "cookie_file", "path": "~/keys/jira.txt"}, "statuses": {"<статус Jira>": "<статус доски>"}, "jira_search_path": "/rest/api/2/search"}` (эпик без `epic_field` задаётся через `parent`; путь поиска статусов по умолчанию — для Jira Server/DC, Jira Cloud может потребовать `/rest/api/2/search/jql`); GitHub: `{"type": "github", "repo": "owner/name", "labels": [], "auth": {"type": "token_env", "env": "GITHUB_TOKEN"}, "statuses": {"open": null, "closed": "done"}, "api_url": "https://api.github.com"}`. Статусы по умолчанию не сопоставляются |
 | `repos` | `[{"name", "path", "base"}]` — репозитории проекта |
 | `branch_template` | шаблон ветки задачи, по умолчанию `{key}` |
 | `max_agents` | одновременных ходов на проект (3) |
@@ -167,8 +167,8 @@ sh scripts/install-codex.sh --uninstall  # удалить ссылку
 Jira Server с токеном из переменной окружения (`user_env` включает Basic вместо Bearer):
 
 ```json
-"tracker": {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
-            "epic": "MNZ-1", "epic_field": "customfield_10007", "link_type": "Blocks",
+"tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
+            "epic": "PROJ-1", "epic_field": "customfield_10007", "link_type": "Blocks",
             "auth": {"type": "token_env", "env": "JIRA_TOKEN"},
             "statuses": {"Open": "not_started", "In Progress": "in_progress", "In Review": "sent", "Done": "done"}}
 ```
@@ -176,7 +176,7 @@ Jira Server с токеном из переменной окружения (`use
 Jira с cookie-сессией из файла (только Jira):
 
 ```json
-"tracker": {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+"tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
             "auth": {"type": "cookie_file", "path": "~/keys/jira.txt"}, "statuses": {}}
 ```
 
@@ -220,7 +220,7 @@ GitHub:
 |---|---|
 | `AGENT_BOARD_HOME` | каталог данных (по умолчанию `~/.agent-board`) |
 | `AGENT_BOARD_PROJECT` | проект по умолчанию вместо `--project` |
-| `AGENT_BOARD_ACTOR` | кто действует: `user` (по умолчанию в терминале), `agent`, `project_agent`; раннер задаёт его агентам сам |
+| `AGENT_BOARD_ACTOR` | кто действует: `agent`, `user`, `project_agent`; раннер задаёт его агентам сам. Не задан: для `say` и команд пользователя — `user`, для `status <KEY> <STATUS>` — `agent` (эту команду в основном вызывают агенты, а сообщение из терминала пишет человек) |
 | `AGENT_BOARD_TASK` | задача агента; с ней `say _project` будит агента проекта (эскалация) |
 
 ## Интерфейс
