@@ -29,8 +29,35 @@ def settings(config) -> Tuple[str, float]:
     return command, float(timeout)
 
 
+QUOTES_TEXT = "Плейсхолдер внутри кавычек: не берите плейсхолдеры в кавычки — значения уже экранированы"
+
+
+def check_quotes(command: str) -> None:
+    """Плейсхолдер внутри '…' или "…" отвергается: подставленное значение вышло бы из экранирования."""
+    quote = None
+    i = 0
+    while i < len(command):
+        c = command[i]
+        if quote is None:
+            if c == "\\":
+                i += 1
+            elif c in "'\"":
+                quote = c
+        elif c == "\\" and quote == '"':
+            i += 1
+        elif c == quote:
+            quote = None
+        elif quote is not None and c == "{":
+            if command[i + 1:i + 2] == "{":
+                i += 1
+            elif "}" in command[i:]:
+                raise ValueError(QUOTES_TEXT)
+        i += 1
+
+
 def validate_template(command: str) -> None:
     """Шаблон может содержать только известные плейсхолдеры без индексов и форматирования."""
+    check_quotes(command)
     try:
         parsed = list(string.Formatter().parse(command))
     except ValueError as e:
@@ -94,7 +121,11 @@ def tail_of(path: Path, limit: int = OUTPUT_TAIL_BYTES) -> str:
             data = f.read()
     except OSError:
         return ""
-    return data.decode("utf-8", errors="replace")
+    text = data.decode("utf-8", errors="replace")
+    encoded = text.encode("utf-8")
+    if len(encoded) > limit:
+        text = encoded[-limit:].decode("utf-8", errors="ignore")
+    return text
 
 
 def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict] = None) -> "subprocess.Popen":

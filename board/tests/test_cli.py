@@ -397,6 +397,8 @@ def test_ship_without_command_exits_1_with_reason(srv, capsys):
     # arrange
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
     # act
+    srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
     code, _, err = run(capsys, "ship", "T-1")
     # assert
-    assert code != 0
+    assert code != 0 and "команда отправки" in err

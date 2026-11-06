@@ -1210,7 +1210,8 @@ def test_ship_without_command_is_400_with_reason(server):
 
 def test_ship_unknown_placeholder_is_400_at_request_time(server):
     # arrange
-    with_ship(server, command="echo {nope}")
+    server.board_for("pay").store.save_config(
+        _with_ship(server.board_for("pay").store.load_config(), "echo {nope}"))
     approved_task(server)
     # act
     r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
@@ -1288,3 +1289,25 @@ def test_agent_cannot_write_ship_field(server):
     r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"ship": {"state": "done"}}})
     # assert
     assert r.status == 403
+
+
+def test_ship_quoted_placeholder_is_400_at_request_time(server):
+    # arrange
+    server.board_for("pay").store.save_config(
+        _with_ship(server.board_for("pay").store.load_config(), 'run "{title}"'))
+    approved_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # assert
+    assert r.status == 400 and "в кавычки" in r.json()["error"]
+
+
+def test_config_update_with_quoted_placeholder_is_rejected(server):
+    # arrange, act, assert
+    with pytest.raises(ValueError, match="в кавычки"):
+        with_ship(server, command="run '{title}'")
+
+
+def _with_ship(config, command):
+    config.ship = {"command": command, "timeout": 5}
+    return config

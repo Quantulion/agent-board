@@ -169,6 +169,9 @@ class Board:
                 if not hasattr(config, name):
                     raise ValueError("Неизвестное поле конфига: %s" % name)
                 setattr(config, name, value)
+            ship = config.ship if isinstance(config.ship, dict) else {}
+            if "ship" in fields and ship.get("command"):
+                ship_settings(config)
             self.store.save_config(config)
 
     def set_stage(self, stage: str, actor: str) -> List[Event]:

@@ -82,6 +82,9 @@ SHIP_INTERRUPTED_TEXT = "Отправка в ревью прервана пер�
 SHIP_FAILED_TEXT = "Отправка в ревью не удалась (код выхода %s)."
 SHIP_TIMEOUT_TEXT = "Отправка в ревью прервана по таймауту (%d с), процессы команды остановлены."
 SHIP_ERROR_TEXT = "Отправка в ревью не выполнена: %s"
+SHIP_NOT_STARTED_TEXT = "Отправка в ревью не была запущена из-за перезапуска сервера — отправьте задачу снова."
+SHIP_COMMITTED_TEXT = "Перед отправкой закоммичены оставшиеся изменения (%s)."
+SHIP_CANCELLED_TEXT = "Задача отменена, отправка в ревью остановлена."
 SHIP_MULTI_DEPS_TEXT = "несколько незавершённых зависимостей — отправьте их сначала"
 
 Key = Tuple[str, str]
@@ -143,10 +146,11 @@ class _ShipBatch:
 
 
 class _Ship:
-    def __init__(self, proc, batch: _ShipBatch, log: Path):
+    def __init__(self, proc, batch: _ShipBatch, log: Path, timeout: float):
         self.proc = proc
         self.batch = batch
         self.log = log
+        self.timeout = timeout
         self.stopped = False
 
 
@@ -418,6 +422,8 @@ class Runner:
             if d.get("actor") == "user":
                 self._reset_failures(k)
                 self._unpark(k)
+                if d.get("to") == Status.CANCELLED.value:
+                    self._cancel_ship(k)
                 if d.get("to") == Status.APPROVED.value:
                     # коммитится только законченная работа: идущий ход останавливаем до коммита
                     self._interrupt_turn(k)
@@ -580,7 +586,7 @@ class Runner:
     @staticmethod
     def _on_hold(config, task: Task) -> bool:
         """Агенту задачи ходы не положены: проект ещё не на стадии работы или задача одобрена."""
-        return config.stage != "work" or task.status == Status.APPROVED
+        return config.stage != "work" or task.status in (Status.APPROVED, Status.SENT)
 
     # --- очередь, лимиты, повторы ---
 
@@ -1141,9 +1147,23 @@ class Runner:
         if state.get("state") == "running":
             Runner._kill_leftover(board, task.key, state.get("process"))
             state["output_tail"] = ship.tail_of(board.store.root / "logs" / (task.key + ".ship.log"))
+        was_running = state.get("state") == "running"
         state.update(state="interrupted", process=None)
         board.update_task(task.key, "system", {"ship": state})
-        board.post_message(task.key, "system", SHIP_INTERRUPTED_TEXT)
+        board.post_message(task.key, "system", SHIP_INTERRUPTED_TEXT if was_running else SHIP_NOT_STARTED_TEXT)
+
+    def _cancel_ship(self, k: Key) -> None:
+        """Отмена задачи останавливает идущую отправку (группу процессов команды)."""
+        sh = self._ships.pop(k, None)
+        if sh is None:
+            return
+        sh.stopped = True
+        threading.Thread(target=terminate, args=(sh.proc, SHIP_KILL_GRACE), daemon=True).start()
+        board = self._board(k[0])
+        self._ship_set(board, k[1], state="cancelled", at=self._clock(), output_tail=ship.tail_of(sh.log),
+                       exit_code=None, process=None)
+        board.post_message(k[1], "system", SHIP_CANCELLED_TEXT)
+        self._ship_next(sh.batch)
 
     def _start_ship(self, slug: str, keys: List[str]) -> None:
         self._ship_next(_ShipBatch(slug, keys))
@@ -1217,6 +1237,7 @@ class Runner:
             sha = commit_all(path, "%s %s" % (key, task.title))
             if sha:
                 board.record("task_committed", {"key": key, "sha": sha})
+                board.post_message(key, "system", SHIP_COMMITTED_TEXT % sha[:10])
         except (ValueError, GitError, _PrepareError) as e:
             self._ship_fail(batch, key, str(e))
             return False
@@ -1226,7 +1247,7 @@ class Runner:
         except OSError as e:
             self._ship_fail(batch, key, "не удалось запустить команду: %s" % e)
             return False
-        sh = _Ship(proc, batch, log)
+        sh = _Ship(proc, batch, log, timeout)
         k = (slug, key)
 
         def watch() -> None:
@@ -1270,8 +1291,11 @@ class Runner:
         ok = code == 0 and not timed_out
         if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system"):
             ok = False
-            self._ship_fail(sh.batch, key, "команда отправки выполнена, но задача уже не одобрена — статус не изменён")
-            self._ship_set(board, key, output_tail=tail, exit_code=0)
+            error = "команда отправки выполнена, но задача уже не одобрена — статус не изменён"
+            sh.batch.failed.add(key)
+            self._ship_set(board, key, state="error", at=self._clock(), error=error, output_tail=tail,
+                           exit_code=0, process=None)
+            board.post_message(key, "system", SHIP_ERROR_TEXT % error)
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": 0})
         elif ok:
             self._ship_set(board, key, state="done", at=self._clock(), output_tail=tail, exit_code=0, process=None)
@@ -1281,15 +1305,8 @@ class Runner:
             exit_code = None if timed_out else code
             self._ship_set(board, key, state="error", at=self._clock(), output_tail=tail, exit_code=exit_code,
                            process=None)
-            head = SHIP_TIMEOUT_TEXT % int(self._ship_timeout(board)) if timed_out else SHIP_FAILED_TEXT % code
+            head = SHIP_TIMEOUT_TEXT % int(sh.timeout) if timed_out else SHIP_FAILED_TEXT % code
             text = head + ("\n" + tail.strip()[-SHIP_TEXT_CHARS:] if tail.strip() else "")
             board.post_message(key, "system", text)
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": exit_code})
         self._ship_next(sh.batch)
-
-    @staticmethod
-    def _ship_timeout(board: Board) -> float:
-        try:
-            return ship.settings(board.store.load_config())[1]
-        except ValueError:
-            return ship.DEFAULT_TIMEOUT

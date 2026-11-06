@@ -100,3 +100,28 @@ def test_tail_of_keeps_last_bytes(tmp_path):
     # assert
     assert len(tail.encode()) <= ship.OUTPUT_TAIL_BYTES and tail.endswith("конец")
     assert ship.tail_of(tmp_path / "missing.log") == ""
+
+
+@pytest.mark.parametrize("command", ['run "{title}"', "run '{title}'", 'run "a $(x) {key}"', 'run "a \\" {title}"',
+                                     "run 'a' \"b {branch}\""])
+def test_validate_template_rejects_placeholder_inside_quotes(command):
+    # arrange, act, assert
+    with pytest.raises(ValueError, match="не берите плейсхолдеры в кавычки"):
+        ship.validate_template(command)
+
+
+@pytest.mark.parametrize("command", ["run --title={title}", 'run "x" {title}', "run 'x' {title} \"y\"",
+                                     'echo "no placeholders {{literal}}" {key}', 'echo \\"{title}'])
+def test_validate_template_allows_placeholder_outside_quotes(command):
+    # arrange, act, assert
+    ship.validate_template(command)
+
+
+def test_tail_of_stays_within_limit_after_decoding_invalid_utf8(tmp_path):
+    # arrange
+    log = tmp_path / "x.log"
+    log.write_bytes(b"\xff" * 10000)
+    # act
+    tail = ship.tail_of(log)
+    # assert
+    assert 0 < len(tail.encode("utf-8")) <= ship.OUTPUT_TAIL_BYTES

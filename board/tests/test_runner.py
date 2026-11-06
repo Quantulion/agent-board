@@ -1749,3 +1749,95 @@ def test_ship_foreign_worktree_is_error_and_command_not_run(make_project, start_
     state = wait_ship(store, "T-1")
     # assert
     assert state["state"] == "error" and not out.exists()
+
+
+def test_ship_success_after_task_left_approved_is_error_with_full_state(make_project, start_server, calls, tmp_path):
+    # arrange
+    gate = tmp_path / "gate"
+    store = make_project(ship={"command": "echo shipped; while [ ! -e %s ]; do sleep 0.05; done" % gate})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_events(store, "ship_started", "T-1")
+    srv.board_for("pay").transition("T-1", Status.IN_PROGRESS, "user")
+    # act
+    gate.write_text("")
+    state = wait_ship(store, "T-1")
+    # assert
+    assert state["state"] == "error" and state["exit_code"] == 0 and "shipped" in state["output_tail"]
+    assert "не одобрена" in state["error"] and state["at"]
+    assert task(store, "T-1").status == Status.IN_PROGRESS
+
+
+def test_cancel_during_ship_stops_process_group_and_marks_cancelled(make_project, start_server, calls, tmp_path):
+    # arrange
+    pidfile = tmp_path / "p.pid"
+    store = make_project(ship={"command": "sleep 300 & echo $! > %s; echo hello; wait" % pidfile})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_for(pidfile.exists, what="команда стартовала")
+    pid = int(pidfile.read_text())
+    # act
+    srv.board_for("pay").transition("T-1", Status.CANCELLED, "user")
+    state = wait_ship(store, "T-1", states=("cancelled",))
+    # assert
+    wait_for(lambda: not _alive(pid), what="группа остановлена")
+    assert state["state"] == "cancelled" and task(store, "T-1").status == Status.CANCELLED
+
+
+def test_sent_task_does_not_wake_agent_from_accumulated_reasons(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_for(lambda: task(store, "T-1").status == Status.SENT, what="sent")
+    started = len(events(store, "turn_started", "T-1"))
+    # act
+    srv.board_for("pay").post_message("T-1", "user", "после отправки")
+    runner_sync(srv)
+    # assert
+    assert len(events(store, "turn_started", "T-1")) == started
+
+
+def test_queued_ship_after_restart_gets_not_started_text(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    srv.stop()
+    srv.board_for("pay").update_task("T-1", "system", {"ship": {"state": "queued", "at": "x"}})
+    # act
+    start_server()
+    state = wait_ship(store, "T-1")
+    # assert
+    assert state["state"] == "interrupted"
+    assert any("не была запущена" in t for t in thread_texts(store, "T-1"))
+
+
+def test_ship_posts_message_when_leftovers_committed(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    (Path(task(store, "T-1").worktree) / "late.txt").write_text("late")
+    # act
+    send(srv, "T-1")
+    wait_ship(store, "T-1")
+    # assert
+    assert any("закоммичены оставшиеся изменения" in t for t in thread_texts(store, "T-1"))
+
+
+def test_ship_timeout_message_uses_timeout_of_the_run(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "sleep 300", "timeout": 1})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_events(store, "ship_started", "T-1")
+    srv.board_for("pay").update_config({"ship": {"command": "sleep 300", "timeout": 999}})
+    # act
+    wait_ship(store, "T-1")
+    # assert
+    assert any("(1 с)" in t for t in thread_texts(store, "T-1"))
