@@ -1,0 +1,15 @@
+{
+  "name": "agent-board-local",
+  "description": "Local marketplace for the agent-board skill",
+  "owner": {
+    "name": "agent-board"
+  },
+  "plugins": [
+    {
+      "name": "agent-board",
+      "description": "Lay a plan out on a local task board and let background coding agents work on it",
+      "version": "0.1.0",
+      "source": "./"
+    }
+  ]
+}

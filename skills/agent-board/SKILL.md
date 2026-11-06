@@ -19,8 +19,9 @@ starting task agents, tracker issues, shipping — is a button the user presses 
 `agent-board` in this skill and its references means `sh <skill-dir>/scripts/agent-board`, where `<skill-dir>` is
 the directory of this SKILL.md (Claude Code prints it as the skill's base directory; in Codex it is where you
 read this file). Run it as an ordinary shell command, never as a background job: `serve --detach` returns at once.
-Project commands take `--project <slug>` before the subcommand. Codex: if the sandbox blocks localhost
-(connection refused, exit 2 while `status` says the board runs), run board commands outside the sandbox.
+Project commands take `--project <slug>` before the subcommand. Harness details: `references/harness-claude.md`
+(Claude Code), `references/harness-codex.md` (Codex; its sandbox blocks localhost and the board home —
+run board commands outside the sandbox).
 
 Talk to the user in their language. Ask one question at a time.
 
