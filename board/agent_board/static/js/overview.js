@@ -1,10 +1,12 @@
 // Вкладка «Обзор»: вопросы, предложения, описание, зависимости, ветка и данные трекера.
 import { spill, statusOf } from './chips.js';
-import { h, icon, patchList, safeUrl } from './dom.js';
+import { h, icon, patchList } from './dom.js';
+import { httpUrl } from './review.js';
 import { T, statusInfo } from './i18n.js';
 import { reportHref } from './changes.js';
 import { copyButton, isResearch, md, region, sec } from './pane-kit.js';
 import { proposalNote, proposalSignature, proposalsTouching } from './project.js';
+import { shipSection } from './ship.js';
 import { externalBlockerDialog } from './status.js';
 import { formatTime } from './thread.js';
 import { toast } from './ui.js';
@@ -14,11 +16,11 @@ export function overviewPane(pc) {
   const questions = h('div', { class: 'qlist' });
   const proposals = h('div', { class: 'qlist' });
   const parts = {
-    error: region('div'), violations: region('div'), task: region('div'), summary: region('div'),
+    error: region('div'), ship: region('div'), violations: region('div'), task: region('div'), summary: region('div'),
     deps: region('div'), work: region('div'), tracker: region('div'),
   };
   const el = h('div', { class: 'dgrid' },
-    h('main', null, questions, proposals, parts.error.el, parts.violations.el, parts.task.el, parts.summary.el),
+    h('main', null, questions, proposals, parts.error.el, parts.ship.el, parts.violations.el, parts.task.el, parts.summary.el),
     h('aside', null, parts.deps.el, parts.work.el, parts.tracker.el));
   return {
     el,
@@ -33,6 +35,7 @@ export function overviewPane(pc) {
       proposals.hidden = !touching.length;
       parts.error.paint(t.turn_error, () => t.turn_error ? h('section', { class: 'sec err' },
         h('h3', null, icon('warn'), T.card.turnError), h('pre', { class: 'errtext' }, t.turn_error)) : null);
+      parts.ship.paint(t.ship || null, () => shipSection(t));
       const violations = t.rule_violations || [];
       parts.violations.paint(violations, () => violations.length ? sec(T.card.violations,
         h('ul', { class: 'violations' }, violations.map(v => h('li', null,
@@ -166,7 +169,7 @@ function paintWork(pc, part, t) {
 function paintTracker(part, t) {
   const rows = [];
   if (t.tracker_key) {
-    const url = t.tracker_url && safeUrl(t.tracker_url);
+    const url = httpUrl(t.tracker_url);
     rows.push([T.card.trackerKey, url ? h('a', { href: url, target: '_blank', rel: 'noopener noreferrer' }, t.tracker_key) : t.tracker_key]);
   }
   if (t.session_id) rows.push([T.card.session, h('span', { class: 'mono' }, t.session_id)]);

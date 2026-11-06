@@ -216,6 +216,10 @@ export function createStore(slug, client, options = {}) {
       eventListeners.add(fn);
       return () => eventListeners.delete(fn);
     },
+    // перечитать снимок вне событий: например, итог синхронизации трекера без изменений событий не пишет
+    refresh() {
+      if (running) refresh();
+    },
     start() {
       if (running) return;
       running = true;

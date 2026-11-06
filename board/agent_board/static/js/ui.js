@@ -26,6 +26,43 @@ export function toast(text, options = {}) {
   return el;
 }
 
+// Подтверждение действия: submit выполняется по кнопке, его ошибка показывается в окне, и окно остаётся открытым.
+// Промис разрешается true после успешного submit и false при отмене — по нему кнопка действия знает, что всё кончилось.
+export function confirmDialog({ title, body = [], ok, submit, focus }) {
+  return new Promise(resolve => {
+    const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
+    let done = false;
+    let sending = false;
+    const finish = value => {
+      if (done) return;
+      done = true;
+      resolve(value);
+    };
+    const go = async () => {
+      if (sending) return;
+      sending = true;
+      okBtn.disabled = true;
+      error.hidden = true;
+      try {
+        await submit();
+        finish(true);
+        close();
+      } catch (err) {
+        error.textContent = (err && err.message) || String(err);
+        error.hidden = false;
+      } finally {
+        sending = false;
+        okBtn.disabled = false;
+      }
+    };
+    const okBtn = h('button', { class: 'btn primary', type: 'button', 'data-ok': '1', onclick: go }, ok);
+    const { close } = openModal(title, [...[body].flat(), error],
+      [h('span', { class: 'grow' }), h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel), okBtn],
+      () => finish(false));
+    (focus || okBtn).focus();
+  });
+}
+
 // Модальное окно поверх всего; Esc и клик мимо закрывают только его. Возвращает {close, modal}.
 export function openModal(title, body, footer, onClose) {
   const before = document.activeElement;

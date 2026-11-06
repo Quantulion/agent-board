@@ -151,6 +151,8 @@ function projectView(slug, mode) {
     openGraph: () => {},
     openNewTask: () => {},
     openProject: () => {},
+    openShip: () => {},
+    openSync: () => {},
     // задача, к которой прокрутить страницу разбивки; её забирает смонтированная разбивка
     pendingFocus: null,
     applyFocus: () => {},

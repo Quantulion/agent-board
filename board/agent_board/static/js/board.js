@@ -1,12 +1,15 @@
 // Доска проекта: шапка, «Ждут вас», колонки по статусам, карточки и их перенос между статусами.
 import { h, icon, patchList } from './dom.js';
-import { mountGraph } from './graph.js';
+import { layoutGraph, mountGraph } from './graph.js';
 import { sdot, statusOf, color } from './chips.js';
 import { connectionIndicator, paintStageAction, paintStepper } from './header.js';
 import { STATUSES, T, statusInfo } from './i18n.js';
 import { openNewTaskDialog } from './newtask.js';
 import { requestMove, statusMenu } from './status.js';
 import { mountProjectPanel, proposalsTouching } from './project.js';
+import { reviewChip, reviewOf } from './review.js';
+import { openShipDialog, shipChip, shippable } from './ship.js';
+import { mountTrackerStage, mountTrackerSync, syncModel, trackerChip, trackerLink } from './tracker.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
@@ -28,12 +31,27 @@ const unique = list => [...new Set(list)];
 
 // --- Чистые функции ---
 
-// Проходит ли задача фильтры доски (репозиторий, тип, «только требующие меня», поиск).
+let wavesMemo = { sig: null, waves: new Map() };
+
+// Волна задачи — номер слоя в графе зависимостей (с 1): задачи одной волны могут идти параллельно.
+// Отменённые задачи в граф не входят и волны не имеют.
+export function wavesOf(tasks) {
+  const live = (tasks || []).filter(t => statusOf(t) !== 'cancelled');
+  const sig = JSON.stringify(live.map(t => [t.key, t.deps || []]));
+  if (wavesMemo.sig !== sig) {
+    wavesMemo = { sig, waves: new Map(layoutGraph(live).nodes.map(n => [n.key, n.layer + 1])) };
+  }
+  return wavesMemo.waves;
+}
+
+// Проходит ли задача фильтры доски (репозиторий, тип, волна, «только требующие меня», поиск).
 export function taskFilter(snapshot, filters = {}) {
   const attn = filters.attn ? new Set(waitingForYou(snapshot).map(i => i.key).filter(Boolean)) : null;
   const q = String(filters.q || '').trim().toLowerCase();
+  const waves = filters.wave ? wavesOf(snapshot ? snapshot.tasks : []) : null;
   return t => (!filters.repo || t.repo === filters.repo)
     && (!filters.type || t.kind === filters.type)
+    && (!waves || String(waves.get(t.key) || '') === String(filters.wave))
     && (!attn || attn.has(t.key))
     && (!q || (t.key + ' ' + t.title).toLowerCase().includes(q));
 }
@@ -69,7 +87,18 @@ export function waitingForYou(snapshot) {
     const key = proposalKey(p);
     items.push({ kind: 'proposal', id: p.id, proposal: p.kind, ...(key ? { key } : {}), open: project });
   }
-  for (const t of tasks) if (statusOf(t) === 'in_review') items.push({ kind: 'review', key: t.key, open: card(t.key) });
+  // пока агент отвечает на комментарии ревью, задача ждёт не пользователя
+  for (const t of tasks) {
+    const r = reviewOf(t);
+    if (statusOf(t) !== 'in_review' || (r && (r.state === 'changes' || r.state === 'fixing'))) continue;
+    items.push({ kind: 'review', key: t.key, ...(r && r.state === 'open' && r.round ? { round: r.round } : {}), open: card(t.key) });
+  }
+  for (const t of tasks) {
+    const state = t.status === 'approved' && t.ship && t.ship.state;
+    if (state === 'error' || state === 'interrupted') items.push({ kind: 'ship_error', key: t.key, state, open: card(t.key) });
+  }
+  const toShip = shippable(snapshot).length;
+  if (toShip) items.push({ kind: 'ship', count: toShip, open: { type: 'ship' } });
   for (const t of tasks) {
     if (t.agent_state === 'error') items.push({ kind: 'error', key: t.key, error: t.turn_error || '', open: card(t.key) });
   }
@@ -86,6 +115,10 @@ export function waitingForYou(snapshot) {
       const n = (t.rule_violations || []).length;
       if (n) items.push({ kind: 'violation', key: t.key, count: n, open: { type: 'decomposition', key: t.key } });
     }
+  }
+  const sync = syncModel(snapshot);
+  if (sync && (sync.state === 'err' || sync.state === 'paused')) {
+    items.push({ kind: 'sync', name: sync.name, error: (snapshot.tracker_sync && snapshot.tracker_sync.error) || '', open: { type: 'sync' } });
   }
   return items;
 }
@@ -133,6 +166,9 @@ export function cardModel(task, ctx) {
     unread: task.unread || 0,
     chain: task.base_branch && task.base_branch !== base ? task.base_branch : null,
     proposal: ctx.proposalKeys.has(task.key),
+    review: reviewChip(task),
+    ship: shipChip(task),
+    tracker: trackerLink(task),
   };
 }
 
@@ -144,7 +180,7 @@ export const cardSignature = (task, ctx) => signatureOf(cardModel(task, ctx));
 // --- Настройки вида, переживающие перезагрузку ---
 
 function loadPrefs(key) {
-  const defaults = { view: 'board', repo: '', type: '', q: '', attn: false, collapsed: { cancelled: true } };
+  const defaults = { view: 'board', repo: '', wave: '', type: '', q: '', attn: false, collapsed: { cancelled: true } };
   try {
     const saved = JSON.parse(window.localStorage.getItem(key) || 'null');
     return saved && typeof saved === 'object' ? { ...defaults, ...saved } : defaults;
@@ -188,6 +224,7 @@ export function mountBoard(root, store, ctx) {
   const banner = h('div', { class: 'banner-slot', hidden: true });
 
   const repoSelect = h('select', { 'aria-label': T.repoAria, onchange: e => setFilter('repo', e.target.value) });
+  const waveSelect = h('select', { 'aria-label': T.waveAria, 'data-filter': 'wave', onchange: e => setFilter('wave', e.target.value) });
   const typeSeg = h('div', { class: 'seg', role: 'group', 'aria-label': T.typeAria },
     [['', T.typeAll, null], ['code', T.typeCode, 'code'], ['research', T.typeResearch, 'flask']].map(([id, label, ic]) =>
       h('button', { type: 'button', 'data-type': id, 'aria-pressed': String(prefs.type === id), onclick: () => setFilter('type', id) },
@@ -227,6 +264,11 @@ export function mountBoard(root, store, ctx) {
     h('button', { type: 'button', 'data-view': id, 'aria-pressed': String(prefs.view === id), onclick: () => setView(id) }, icon(ic), label));
 
   const panel = mountProjectPanel(ctx, store, projectBtn);
+  const trackerSync = mountTrackerSync(ctx, store);
+  const trackerStage = mountTrackerStage(ctx, store);
+  const shipBtn = h('button', { class: 'btn shipbtn', type: 'button', hidden: true, onclick: () => ctx.openShip() });
+  ctx.openShip = () => openShipDialog(ctx);
+  ctx.openSync = () => trackerSync.open();
   ctx.openProject = () => panel.reveal();
   ctx.openGraph = () => setView('graph');
   ctx.openNewTask = () => openNewTaskDialog(ctx);
@@ -236,17 +278,18 @@ export function mountBoard(root, store, ctx) {
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
         h('div', { class: 'proj' }, title, sub),
-        stepper, stageGo, h('span', { class: 'spacer' }), sync, projectBtn, ctx.themeButton()),
+        stepper, stageGo, h('span', { class: 'spacer' }), trackerSync.el, sync, projectBtn, ctx.themeButton()),
       h('div', { class: 'row2' },
         h('div', { class: 'progress' }, h('div', { class: 'ptxt' }, doneText, restText), bar, pills),
         artifacts),
-      attn, banner),
+      trackerStage.el, attn, banner),
     h('div', { class: 'toolbar' },
       h('div', { class: 'seg', role: 'group', 'aria-label': T.viewAria }, viewButtons),
-      repoSelect, typeSeg,
+      repoSelect, waveSelect, typeSeg,
       h('label', { class: 'toggle' }, attnToggle, ' ' + T.onlyMine),
       h('div', { class: 'search' }, icon('search'), search),
       h('span', { class: 'grow' }),
+      shipBtn,
       h('button', { class: 'btn primary', type: 'button', onclick: () => ctx.openNewTask() }, icon('plus'), T.newTask)),
     h('div', { class: 'work' }, h('div', { class: 'views' }, cols, graphView), panel.el)));
 
@@ -400,6 +443,9 @@ export function mountBoard(root, store, ctx) {
     if (m.unread) chips.push(h('span', { class: 'chip unread', title: T.unreadTitle }, icon('chat'), String(m.unread)));
     if (m.chain) chips.push(h('span', { class: 'chip', title: T.chainTitle }, icon('branch'), T.chainFrom(m.chain)));
     if (m.proposal) chips.push(h('span', { class: 'chip pa', title: T.proposalTitle }, icon('spark'), T.proposalChip));
+    if (m.review) chips.push(h('span', { class: 'chip rvw ' + m.review.cls }, icon('eye'), m.review.text));
+    if (m.ship) chips.push(h('span', { class: 'chip shp ' + m.ship.cls }, icon('send'), m.ship.text));
+    if (m.tracker) chips.push(trackerChip(m.tracker));
     if (chips.length) parts.push(h('div', { class: 'meta' }, chips));
     return parts;
   }
@@ -547,6 +593,23 @@ export function mountBoard(root, store, ctx) {
       repoSelect.replaceChildren(h('option', { value: '' }, T.allRepos), ...repos.map(r => h('option', { value: r }, r)));
     }
     repoSelect.value = prefs.repo || '';
+
+    const waves = [...new Set(wavesOf(snap.tasks).values())].sort((a, b) => a - b);
+    if (prefs.wave && !waves.includes(Number(prefs.wave))) waves.push(Number(prefs.wave));
+    const wantedWaves = JSON.stringify(waves);
+    if (waveSelect.dataset.waves !== wantedWaves) {
+      waveSelect.dataset.waves = wantedWaves;
+      waveSelect.replaceChildren(h('option', { value: '' }, T.allWaves), ...waves.map(n => h('option', { value: String(n) }, T.wave(n))));
+    }
+    waveSelect.value = prefs.wave || '';
+
+    const toShip = shippable(snap).length;
+    shipBtn.hidden = !toShip;
+    if (shipBtn.dataset.n !== String(toShip)) {
+      shipBtn.dataset.n = String(toShip);
+      shipBtn.title = T.ship.headerTitle(toShip);
+      shipBtn.replaceChildren(icon('send'), T.ship.header(toShip));
+    }
   }
 
   function paintPill(node, { s, n }) {
@@ -560,6 +623,7 @@ export function mountBoard(root, store, ctx) {
   const ATTN_LOOK = {
     question: ['q', 'chat'], proposal: ['pa', 'spark'], review: ['rv', 'eye'],
     error: ['er', 'warn'], loop: ['er', 'chat'], violation: ['er', 'warn'], blocker: ['er', 'lock'],
+    ship_error: ['er', 'send'], ship: ['ok', 'send'], sync: ['er', 'sync'],
   };
 
   function attnText(item) {
@@ -568,6 +632,10 @@ export function mountBoard(root, store, ctx) {
     if (item.kind === 'error') return item.key ? T.attn.error : T.attn.projectError;
     if (item.kind === 'loop') return item.key ? T.attn.loop : T.attn.projectLoop;
     if (item.kind === 'violation') return T.attn.violation(item.count);
+    if (item.kind === 'review' && item.round) return T.attn.reviewRound(item.round);
+    if (item.kind === 'ship_error') return item.state === 'interrupted' ? T.attn.shipInterrupted : T.attn.shipError;
+    if (item.kind === 'ship') return T.attn.ship(item.count);
+    if (item.kind === 'sync') return T.attn.sync(item.name);
     return T.attn[item.kind];
   }
 
@@ -598,6 +666,8 @@ export function mountBoard(root, store, ctx) {
         const it = node._item;
         if (it.open.type === 'card') ctx.openCard(it.open.key);
         else if (it.open.type === 'decomposition') ctx.openDecomposition(it.open.key);
+        else if (it.open.type === 'ship') ctx.openShip();
+        else if (it.open.type === 'sync') ctx.openSync();
         else ctx.openProject();
       } });
       paintAttnItem(node, item);
@@ -633,8 +703,10 @@ export function mountBoard(root, store, ctx) {
   return function destroy() {
     unsubscribe();
     panel.destroy();
+    trackerSync.destroy();
+    trackerStage.destroy();
     if (resizeObserver) resizeObserver.disconnect();
-    for (const name of ['openProject', 'openGraph', 'openNewTask']) ctx[name] = () => {};
+    for (const name of ['openProject', 'openGraph', 'openNewTask', 'openShip', 'openSync']) ctx[name] = () => {};
     cleanups.forEach(fn => fn());
   };
 }

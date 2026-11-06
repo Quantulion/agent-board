@@ -2,7 +2,7 @@
 // Панель и вкладки создаются один раз на открытую карточку; живые обновления правят их на месте.
 import { actionsSignature, cardActions, createActionRunner, registerCardAction } from './actions.js';
 import { spill, statusOf } from './chips.js';
-import { h, icon, safeUrl } from './dom.js';
+import { h, icon } from './dom.js';
 import { T, statusInfo } from './i18n.js';
 import { requestMove, statusMenu } from './status.js';
 import { createThread, draftsFor } from './thread.js';
@@ -11,6 +11,10 @@ import { changesPane } from './changes.js';
 import { overviewPane } from './overview.js';
 import { copyText, isResearch, region } from './pane-kit.js';
 import { reviewPane } from './review-pane.js';
+import { trackerChip, trackerLink } from './tracker.js';
+// действия шапки карточки регистрируются при загрузке модулей
+import './review.js';
+import './ship.js';
 
 export { authorOf, createDrafts, formatTime } from './thread.js';
 
@@ -145,8 +149,9 @@ function createCard(ctx, key, returnFocus) {
       isVisible: id => isVisible(id),
       alive: () => current === self,
       paintTabs: () => paintTabs(),
+      showTab: id => showTab(id),
     };
-    const builders = { overview: () => overviewPane(pc), thread: threadPane, review: reviewPane, changes: () => changesPane(pc) };
+    const builders = { overview: () => overviewPane(pc), thread: threadPane, review: () => reviewPane(pc), changes: () => changesPane(pc) };
     const scrolls = {};
     let task = first;
     let snapshot = store.get().snapshot;
@@ -345,15 +350,13 @@ function createCard(ctx, key, returnFocus) {
       paint(t, snap) {
         lastTask = t;
         paintActions(t, snap);
-        const next = JSON.stringify([t.title, t.tracker_url, t.repo, t.kind, t.estimate, statusOf(t), t.terminal_command]);
+        const next = JSON.stringify([t.title, t.tracker_key, t.tracker_url, t.repo, t.kind, t.estimate, statusOf(t), t.terminal_command]);
         if (next === sig) return;
         sig = next;
-        const trackerUrl = t.tracker_url && safeUrl(t.tracker_url);
-        keySlot.replaceChildren(trackerUrl
-          ? h('a', { class: 'key', href: trackerUrl, target: '_blank', rel: 'noopener noreferrer', title: T.card.openTracker }, key, icon('ext'))
-          : h('span', { class: 'key' }, key));
+        keySlot.replaceChildren(h('span', { class: 'key' }, key));
         // replaceChildren превратил бы null в текст «null»
         chips.replaceChildren(...[
+          trackerChip(trackerLink(t)),
           t.repo ? h('span', { class: 'chip repo' }, t.repo) : null,
           h('span', { class: 'chip' }, icon(isResearch(t) ? 'flask' : 'code'), isResearch(t) ? T.kindResearch : T.kindCode),
           t.estimate !== null && t.estimate !== undefined ? h('span', { class: 'chip' }, T.estimate(t.estimate)) : null,
