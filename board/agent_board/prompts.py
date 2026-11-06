@@ -144,28 +144,33 @@ def _wake_line(r: dict, cli: str) -> str:
         return _review_line(r, cli, key)
     if reason == "rebase":
         base = r.get("base") or "the new base"
-        dep = "dependency %s" % r["from"] if r.get("from") else \
-            "a dependency (which one: see `%s show %s`)" % (cli, key)
         files = r.get("conflict_files") or []
+        if r.get("by") and not r.get("from"):
+            who = "The user" if r["by"] == "user" else "The project agent"
+            cause = "%s asked to bring your branch up to date with its base branch" % who
+        else:
+            dep = "dependency %s" % r["from"] if r.get("from") else \
+                "a dependency (which one: see `%s show %s`)" % (cli, key)
+            cause = "The branch of %s changed" % dep
         if r.get("merge_branches"):
-            return ("The branches of your dependencies changed: %s. The board does not merge several dependency "
-                    "branches into your worktree by itself. Do not run any git commands; ask the user on the card "
-                    "to merge them." % ", ".join(r["merge_branches"]))
+            return ("%s. Your branch is based on several dependency branches: %s. The board does not merge several "
+                    "dependency branches into your worktree by itself. Do not run any git commands; ask the user on "
+                    "the card to merge them." % (cause, ", ".join(r["merge_branches"])))
         if r.get("carried_ref"):
             moved = "moved your branch onto %s" % base if r.get("rebase_ok") is not False else \
                 "could not move your branch onto %s" % base
-            return ("The branch of %s changed; the board %s, but could not put your uncommitted work back into "
+            return ("%s; the board %s, but could not put your uncommitted work back into "
                     "the files. Your work is not lost: it is saved in git at `%s`. Do not run any git commands and "
                     "do not redo the work; ask the user on the card with `%s ask %s` to restore it from that ref, "
-                    "then continue." % (dep, moved, r["carried_ref"], cli, key))
+                    "then continue." % (cause, moved, r["carried_ref"], cli, key))
         if r.get("rebase_ok") is False:
-            return ("The branch of %s changed; the board could not move your work onto %s. "
-                    "Do not run any git commands; ask a question on the card." % (dep, base))
+            return ("%s; the board could not move your work onto %s. "
+                    "Do not run any git commands; ask a question on the card." % (cause, base))
         if files:
-            return ("The branch of %s changed; the board moved your work onto %s, but these files "
+            return ("%s; the board moved your work onto %s, but these files "
                     "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
-                    % (dep, base, ", ".join(files)))
-        return ("The branch of %s changed; the board moved your work onto %s. Continue." % (dep, base))
+                    % (cause, base, ", ".join(files)))
+        return ("%s; the board moved your work onto %s. Continue." % (cause, base))
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
@@ -228,7 +233,7 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text, task (комментарий пользователя к этой задаче для агента проекта); answer -> question_id, question, choice, comment;
       returned -> from, text (комментарий пользователя к возврату); review -> round, comments, binary, crit_dir;
-      rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
+      rebase -> from (или by при ручном переносе), base, rebase_ok, conflict_files, merge_branches, carried_ref;
       escalation -> from, text; proposal_rejected -> id;
       retry -> error; interrupted, queued_restart, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».

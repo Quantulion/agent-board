@@ -525,7 +525,7 @@ class Runner:
 
     @staticmethod
     def _by_agent(reason: dict) -> bool:
-        return reason.get("reason") in ("message", "escalation") and reason.get("by") in AGENT_AUTHORS
+        return reason.get("reason") in ("message", "escalation", "rebase") and reason.get("by") in AGENT_AUTHORS
 
     def _unpark(self, k: Key) -> None:
         self._agent_wakes.pop(k, None)

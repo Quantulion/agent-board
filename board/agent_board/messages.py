@@ -68,6 +68,10 @@ CATALOG: Dict[str, tuple] = {
                   "отправить одобренные задачи в ревью командой проекта (только пользователь)"),
     "help.retry": ("retry a failed turn of a task agent or the project agent (_project); user only",
                    "повторить упавший ход агента задачи или агента проекта (_project); только пользователь"),
+    "help.rebase": ("move the task branch onto the current base together with uncommitted work; "
+                    "user or project agent",
+                    "перенести ветку задачи на текущую базу вместе с незакоммиченной работой; "
+                    "пользователь или агент проекта"),
     "help.tracker": ("create tasks in the tracker (create), check access (check) or sync statuses now (sync); "
                      "user only",
                      "завести задачи в трекере (create), проверить доступ (check) или синхронизировать статусы "

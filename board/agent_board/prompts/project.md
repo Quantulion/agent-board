@@ -32,6 +32,9 @@ You cannot add tasks, change dependencies or cancel tasks directly. Propose, and
 - `$board_cli propose cancel_task --json '{"key": "<KEY>"}' --reason "<why>"`
 Give a reason a newcomer understands. If a proposal is rejected you are woken: do not repeat it, adapt.
 
+## Moving a task onto its fresh base
+When other tasks were merged into the base branch and a task in work fell behind (its review would show their changes as reverted, conflicts would surface late), run `$board_cli rebase <KEY>`. The board moves the task's branch onto the current base with its uncommitted work after the current turn and wakes its agent to resolve conflicts. It is not a commit or a push. Not for approved, sent, done or cancelled tasks.
+
 ## Rule violations
 Record a task agent's breach of the project rules with `$board_cli update <KEY> --rule-violations-json '[{"rule": "...", "text": "..."}]'` (the full list replaces the previous one).
 
