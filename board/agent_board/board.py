@@ -31,6 +31,8 @@ RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
     "turn_process", "agent_parked", "review", "ship", "tracker_key", "tracker_url",
 }
+# формулировку задачи меняет только пользователь: агент не переписывает себе критерий готовности
+TASK_TEXT_FIELDS = {"title", "description", "done_when", "estimate"}
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
 MAX_RULE_VIOLATIONS = 50
@@ -125,6 +127,15 @@ def new_task_from_dict(d: Any) -> Task:
     if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
         raise ValueError("deps задачи должен быть списком строк")
     return Task(**dict(d, deps=list(deps)))
+
+
+def _check_task_text(fields: dict) -> None:
+    for name in ("title", "description", "done_when"):
+        if name in fields and not isinstance(fields[name], str):
+            raise ValueError("Поле задачи %s должно быть строкой" % name)
+    estimate = fields.get("estimate")
+    if estimate is not None and (isinstance(estimate, bool) or not isinstance(estimate, (int, float))):
+        raise ValueError("Оценка задачи должна быть числом")
 
 
 def _clean_rule_violations(value: Any) -> List[dict]:
@@ -498,6 +509,10 @@ class Board:
             owned = set(fields) & RUNNER_FIELDS
             if owned and actor != "system":
                 raise PermissionError("Эти поля меняет только раннер: %s" % ", ".join(sorted(owned)))
+            if set(fields) & TASK_TEXT_FIELDS:
+                if actor not in ("user", "system"):
+                    raise PermissionError("Формулировку задачи меняет только пользователь")
+                _check_task_text(fields)
             if "rule_violations" in fields:
                 if actor not in RULE_VIOLATION_AUTHORS:
                     raise PermissionError("Нарушения правил фиксируют пользователь и агент проекта")

@@ -814,3 +814,26 @@ def test_deps__cycle__rejected_with_exit_code_1(srv, capsys):
     # assert
     assert code == 1 and "цикл" in err
     assert run_json(capsys, "show", "T-1")["deps"] == []
+
+
+def test_update__task_text_by_user__changes_title_description_done_when_estimate(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "user")
+    # act
+    run_json(capsys, "update", "T-1", "--title", "Новый", "--description", "что делать", "--done-when", "тесты",
+             "--estimate", "1.5")
+    # assert
+    task = run_json(capsys, "show", "T-1")
+    assert (task["title"], task["description"], task["done_when"], task["estimate"]) == \
+        ("Новый", "что делать", "тесты", 1.5)
+
+
+def test_update__task_text_by_agent__rejected(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    # act
+    code, _, err = run(capsys, "update", "T-1", "--done-when", "ничего")
+    # assert
+    assert code == 1 and err.strip()
+    assert run_json(capsys, "show", "T-1")["done_when"] == ""

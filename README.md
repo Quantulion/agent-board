@@ -29,7 +29,7 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 | `state` | снимок проекта целиком |
 | `show <key>` | одна задача |
 | `status <key> <status>` | сменить статус задачи |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...]` | обновить поля задачи |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N]` | обновить поля задачи; формулировку (`title`, `description`, `done_when`, `estimate`) меняет только пользователь (`AGENT_BOARD_ACTOR=user`), нарушения правил — пользователь или агент проекта |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | задать вопрос пользователю |
 | `say <thread> --text T` | написать в тред задачи или в `_project` |
 | `thread <thread>` | прочитать тред |

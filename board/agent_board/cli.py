@@ -162,6 +162,10 @@ UPDATE_OPTIONS = [
     ("changed_files", "changed_files_json", True),
     ("report", "report", False),
     ("rule_violations", "rule_violations_json", True),
+    ("title", "title", False),
+    ("description", "description", False),
+    ("done_when", "done_when", False),
+    ("estimate", "estimate", True),
 ]
 
 
