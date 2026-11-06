@@ -28,7 +28,7 @@ async function cyrillicOn(page) {
   }, CYRILLIC.source);
 }
 
-const env = createEnv({ prefix: 'ab-en-', slug: 'pay', title: 'Payments migration', config: { language: 'en' } });
+const env = createEnv({ prefix: 'ab-en-', slug: 'pay', title: 'Payments migration', language: 'en' });
 const results = {};
 let browser;
 let ok = false;

@@ -12,8 +12,10 @@ import { python } from './python.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 const out = path.join(here, 'out');
+// Язык проекта задаётся явно: ожидания текстов ниже рассчитаны на него, а не на язык по умолчанию.
+const LANG = 'ru';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-ui-'));
-const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user' };
+const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: LANG };
 const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 20000 });
 
 function withTimeout(promise, ms, what) {
@@ -36,6 +38,7 @@ cli('init', 'pay', '--title', 'Перенос платежей на PostgreSQL')
 const cfgPath = path.join(home, 'projects', 'pay', 'project.json');
 const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
 cfg.harness = { type: 'fake' };
+cfg.language = LANG;
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
 
 const { proc, url } = await startServer();

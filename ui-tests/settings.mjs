@@ -9,7 +9,7 @@ import { cleanupAll, createEnv, out } from './lib.mjs';
 const VIEW = { width: 1440, height: 900 };
 const LINKS = [{ title: 'Spec', href: 'https://example.com/spec' }];
 
-const env = createEnv({ prefix: 'ab-settings-', slug: 'pay', title: 'Платежи' });
+const env = createEnv({ prefix: 'ab-settings-', slug: 'pay', title: 'Платежи', language: 'ru' });
 const results = {};
 let browser;
 let ok = false;
