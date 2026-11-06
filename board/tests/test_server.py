@@ -2672,3 +2672,52 @@ def test_retry_of_project_agent_only_in_error(server):
     assert idle.status == 400
     assert r.status == 200
     assert r.json()["events"][0]["data"] == {"key": "_project", "reason": "retry", "error": "упал CLI"}
+
+
+def started_task(server, key="T-1"):
+    add_task(server, key)
+    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
+    server.board_for("pay").update_task(key, "system", {"session_id": "s-1", "worktree": "/tmp/wt"})
+
+
+def test_rebase_by_user_or_project_agent_records_rebase_wake(server):
+    # arrange
+    started_task(server)
+    # act
+    user = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "user"})
+    project_agent = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "project_agent"})
+    # assert
+    assert (user.status, project_agent.status) == (200, 200)
+    assert [e["data"] for e in user.json()["events"]] == [{"key": "T-1", "reason": "rebase", "by": "user"}]
+    assert project_agent.json()["events"][0]["data"]["by"] == "project_agent"
+
+
+def test_rebase_by_task_agent_is_403(server):
+    # arrange
+    started_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "agent"})
+    # assert
+    assert r.status == 403 and "агент проекта" in r.json()["error"]
+
+
+@pytest.mark.parametrize("status", ["approved", "done", "cancelled"])
+def test_rebase_of_closed_task_is_400(server, status):
+    # arrange
+    started_task(server)
+    for to in ("in_review", status) if status != "cancelled" else (status,):
+        post(server, "/api/p/pay/tasks/T-1/transition", {"to": to, "actor": "user"})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "user"})
+    # assert
+    assert r.status == 400 and status in r.json()["error"]
+
+
+def test_rebase_of_task_without_worktree_is_400(server):
+    # arrange
+    add_task(server)
+    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "рабочей копии" in r.json()["error"]

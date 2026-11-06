@@ -484,6 +484,8 @@ class _Handler(BaseHTTPRequestHandler):
             events = board.approve(rest[1], _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "retry":
             events = board.retry(rest[1], _need(body, "actor"))
+        elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "rebase":
+            events = board.request_rebase(rest[1], _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "return":
             events = board.return_to_work(rest[1], _need(body, "actor"), _need(body, "text"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "update":

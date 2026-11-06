@@ -218,6 +218,10 @@ def cmd_retry(args):
     return _request("POST", _p(args, "tasks/%s/retry" % args.key), {"actor": _user_actor()})
 
 
+def cmd_rebase(args):
+    return _request("POST", _p(args, "tasks/%s/rebase" % args.key), {"actor": _user_actor()})
+
+
 def cmd_ship(args):
     return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": _user_actor()})
 
@@ -413,6 +417,8 @@ def build_parser() -> argparse.ArgumentParser:
         "keys", nargs="+")
     add("retry", cmd_retry, help="повторить упавший ход агента задачи или агента проекта (_project); "
                                  "только пользователь").add_argument("key")
+    add("rebase", cmd_rebase, help="перенести ветку задачи на текущую базу вместе с незакоммиченной работой; "
+                                   "пользователь или агент проекта").add_argument("key")
     add("tracker", cmd_tracker, help="завести задачи в трекере (create), проверить доступ (check) или "
                                      "синхронизировать статусы сейчас (sync); только пользователь").add_argument(
         "action", choices=["create", "check", "sync"])

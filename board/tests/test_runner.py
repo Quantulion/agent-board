@@ -595,6 +595,54 @@ def test_blocked_dependent_defers_rebase_until_unblocked(make_project, start_ser
     assert (b_wt / "a2.txt").read_text() == "A2\n"
 
 
+def commit_to_main(git_repo, name, text):
+    (git_repo / name).write_text(text)
+    run_git(git_repo, "add", name)
+    run_git(git_repo, "commit", "-m", name)
+
+
+def test_rebase_request_waits_for_running_turn_and_carries_work_onto_fresh_base(make_project, start_server, calls,
+                                                                               git_repo):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T", script({"sleep": 1.0}, {"write": {"path": "t.txt", "text": "работа T\n"}}))
+    wait_events(store, "turn_started", "T")
+    commit_to_main(git_repo, "fresh.txt", "свежая база\n")
+    # act
+    board.request_rebase("T", "user")
+    wait_events(store, "turn_finished", "T", count=2)
+    # assert
+    wt = Path(task(store, "T").worktree)
+    assert (wt / "fresh.txt").read_text() == "свежая база\n"
+    assert (wt / "t.txt").read_text() == "работа T\n"
+    assert run_git(wt, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    assert [c["kind"] for c in calls] == ["start", "resume"] and calls[1]["alive_before"] == []
+    assert "The user asked to bring your branch up to date" in calls[1]["text"]
+    assert "moved your work onto main" in calls[1]["text"]
+
+
+def test_rebase_request_conflict_keeps_work_in_carry_ref_with_card_message(make_project, start_server, calls,
+                                                                           git_repo):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T", script({"write": {"path": "shared.txt", "text": "работа T\n"}}))
+    wait_events(store, "turn_finished", "T")
+    commit_to_main(git_repo, "shared.txt", "версия базы\n")
+    # act
+    board.request_rebase("T", "project_agent")
+    wait_events(store, "turn_finished", "T", count=2)
+    # assert
+    ref = "refs/agent-board/T/carry"
+    assert run_git(git_repo, "show", ref + "^3:shared.txt") == "работа T\n"
+    assert run_git(git_repo, "stash", "list") == ""
+    assert "The project agent asked" in calls[-1]["text"] and ref in calls[-1]["text"]
+    assert any(ref in text for text in thread_texts(store, "T"))
+
+
 
 # --- перезапуск ---
 

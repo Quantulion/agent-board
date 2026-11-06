@@ -170,6 +170,20 @@ def test_wake_message_rebase_variants_follow_board_side_rebase():
         assert "git rebase" not in t
 
 
+def test_wake_message_requested_rebase_names_who_asked_instead_of_dependency():
+    # arrange
+    base = {"reason": "rebase", "base": "main", "rebase_ok": True, "conflict_files": []}
+
+    # act
+    by_user = wake_message([dict(base, by="user")], "")
+    by_project_agent = wake_message([dict(base, by="project_agent", conflict_files=["a.py"])], "")
+
+    # assert
+    assert "The user asked to bring your branch up to date" in by_user and "moved your work onto main" in by_user
+    assert "dependency" not in by_user
+    assert "The project agent asked" in by_project_agent and "a.py" in by_project_agent
+
+
 def test_wake_message_missing_fields_point_to_the_board_instead_of_empty_quotes():
     # arrange
     reasons = [{"reason": "message", "key": "PAY-7"}, {"reason": "answer", "key": "PAY-7"},

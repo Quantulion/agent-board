@@ -100,7 +100,8 @@ WAKE_REASONS: Dict[str, str] = {
     "proposal_rejected": "агенту проекта отклонили предложение",
     "escalation": "from, by (agent) — агент задачи написал в тред проекта",
     "manual": "пользователь сам запустил задачу без сессии агента",
-    "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
+    "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения; "
+              "by (user или project_agent) — перенос на текущую базу запрошен вручную",
     "interrupted": "ход агента был прерван, нужно продолжить",
     "retry": "error — пользователь повторил упавший ход агента, нужно продолжить с места остановки",
     "queued_restart": "следующий ход ждал очереди, когда сервер перезапустился, нужно продолжить",
@@ -485,6 +486,24 @@ class Board:
             if state != "error":
                 raise ValueError("Повторить можно только упавший ход: агент %s сейчас в состоянии %s" % (key, state))
             return [self._emit("agent_wake", {"key": key, "reason": "retry", "error": error})]
+
+    def request_rebase(self, key: str, actor: str) -> List[Event]:
+        """Перенос ветки задачи на текущую базу с незакоммиченной работой; переносит раннер перед ходом агента,
+        поэтому идущий ход перенос дожидается."""
+        with self._lock:
+            if actor not in ACTORS and actor != "project_agent":
+                raise ValueError("Неизвестный актор: %r" % actor)
+            if actor not in ("user", "project_agent"):
+                raise PermissionError("Перенести задачу на базу может только пользователь или агент проекта")
+            task = self._get(self.store.load_tasks(), key)
+            if task.status in (Status.APPROVED, Status.SENT, Status.DONE, Status.CANCELLED):
+                raise ValueError("Задача на статусе %s не переносится на базу: её работа уже принята или отменена"
+                                 % task.status.value)
+            if not task.session_id or not task.worktree:
+                raise ValueError("У задачи ещё нет рабочей копии: агент начнёт работу сразу от свежей базы")
+            if self.store.load_config().stage != "work":
+                raise ValueError("Агенты задач работают только на стадии work")
+            return [self._emit("agent_wake", {"key": key, "reason": "rebase", "by": actor})]
 
     def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
         """Возврат в работу с комментарием: агент получает комментарий вместе с пробуждением returned."""

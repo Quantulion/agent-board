@@ -936,3 +936,20 @@ def test_retry_from_agent_is_rejected(srv, capsys, monkeypatch):
     code, _, err = run(capsys, "retry", "_project")
     # assert
     assert code == 1 and "только пользователь" in err
+
+
+def test_rebase_sends_actor_from_env_and_rejects_task_agent(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    run_json(capsys, "stage", "work")
+    srv.board_for("pay").update_task("T-1", "system", {"session_id": "s-1", "worktree": "/tmp/wt"})
+    # act
+    by_user = run_json(capsys, "rebase", "T-1")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    by_project_agent = run_json(capsys, "rebase", "T-1")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    code, _, err = run(capsys, "rebase", "T-1")
+    # assert
+    assert by_user["events"][0]["data"] == {"key": "T-1", "reason": "rebase", "by": "user"}
+    assert by_project_agent["events"][0]["data"]["by"] == "project_agent"
+    assert code == 1 and "агент проекта" in err
