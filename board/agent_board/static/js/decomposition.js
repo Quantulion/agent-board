@@ -9,6 +9,7 @@ import { PROJECT_THREAD, agentStateLine, proposalCard, proposalSignature } from 
 import { boardHref } from './router.js';
 import { createThread, draftsFor } from './thread.js';
 import { openModal, toast } from './ui.js';
+import { settingsButton } from './settings.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const REPO_PALETTE = ['--s-progress', '--s-approved', '--s-answer', '--s-sent', '--s-review', '--s-queue', '--s-done'];
@@ -151,7 +152,7 @@ export function mountDecomposition(root, store, ctx) {
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, title, sub),
+        h('div', { class: 'proj' }, h('div', { class: 'ptl' }, title, settingsButton(ctx)), sub),
         stepper, stageGo, h('span', { class: 'spacer' }), sync,
         h('a', { class: 'btn ghost', href: boardHref(slug) }, icon('board'), T.board),
         ctx.themeButton())),

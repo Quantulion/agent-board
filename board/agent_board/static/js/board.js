@@ -10,6 +10,7 @@ import { mountProjectPanel, proposalsTouching } from './project.js';
 import { reviewChip, reviewOf } from './review.js';
 import { openShipDialog, shipChip, shippable } from './ship.js';
 import { mountTrackerStage, mountTrackerSync, syncModel, trackerChip, trackerLink } from './tracker.js';
+import { settingsButton } from './settings.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
@@ -277,7 +278,7 @@ export function mountBoard(root, store, ctx) {
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, title, sub),
+        h('div', { class: 'proj' }, h('div', { class: 'ptl' }, title, settingsButton(ctx)), sub),
         stepper, stageGo, h('span', { class: 'spacer' }), trackerSync.el, sync, projectBtn, ctx.themeButton()),
       h('div', { class: 'row2' },
         h('div', { class: 'progress' }, h('div', { class: 'ptxt' }, doneText, restText), bar, pills),
