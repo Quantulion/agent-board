@@ -14,7 +14,7 @@ from .config import (
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
-from .tracker import is_http_url, validate_config as validate_tracker
+from .tracker import check_issue_key, is_http_url, validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
@@ -527,6 +527,8 @@ class Board:
                 if actor not in ("user", "system"):
                     raise PermissionError("Привязку к трекеру меняет только пользователь")
                 _check_tracker_link(fields)
+                if fields.get("tracker_key") is not None:
+                    check_issue_key(self.store.load_config().tracker, fields["tracker_key"])
             if set(fields) & TASK_TEXT_FIELDS:
                 if actor not in ("user", "system"):
                     raise PermissionError("Формулировку задачи меняет только пользователь")

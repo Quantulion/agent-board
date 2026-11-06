@@ -1452,6 +1452,17 @@ def test_update__tracker_link_cleared_by_user__is_removed(server):
     assert (task["tracker_key"], task["tracker_url"]) == (None, None)
 
 
+def test_update__tracker_key_wrong_format__bad_request_with_example(server):
+    # arrange
+    server.board_for("pay").update_config({"tracker": JIRA_OK})
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"tracker_key": "proj-9"}})
+    # assert
+    assert r.status == 400 and "PROJ-123" in r.json()["error"]
+    assert get(server, "/api/p/pay/state").json()["tasks"][0]["tracker_key"] is None
+
+
 def test_update__tracker_link_cleared_by_agent__forbidden(server):
     # arrange
     add_task(server)

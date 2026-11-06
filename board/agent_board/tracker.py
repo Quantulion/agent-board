@@ -49,6 +49,22 @@ GITHUB_REQUIRED = ("repo", "auth")
 AUTH_KEYS = {"token_env": ("type", "env", "user_env"), "cookie_file": ("type", "path")}
 AUTH_TYPES = {"jira": ("token_env", "cookie_file"), "github": ("token_env",)}
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+# формат ключа задачи в трекере каждого вида и пример для сообщения об ошибке
+ISSUE_KEY_FORMATS = {
+    "jira": (re.compile(r"[A-Z][A-Z0-9_]*-[1-9][0-9]*"), "PROJ-123"),
+    "github": (re.compile(r"#[1-9][0-9]*"), "#123"),
+}
+
+
+def check_issue_key(cfg: dict, key: str) -> None:
+    """Проверяет, что ключ задачи похож на ключ трекера проекта, чтобы ошибка не всплыла только при синхронизации."""
+    kind = cfg.get("type") if isinstance(cfg, dict) else None
+    if kind not in ISSUE_KEY_FORMATS:
+        return
+    pattern, example = ISSUE_KEY_FORMATS[kind]
+    if not pattern.fullmatch(key):
+        name = "Jira" if kind == "jira" else "GitHub"
+        raise ValueError("Ключ задачи %s должен быть вида %s, получено: %s" % (name, example, key))
 
 
 class TrackerError(ValueError):
