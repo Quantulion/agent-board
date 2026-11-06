@@ -33,3 +33,8 @@ def cli_json(env_dir: Path, args):
 
 def server_running(env_dir: Path) -> bool:
     return bool((cli_json(env_dir, ["status", "--json"]).get("server") or {}).get("running"))
+
+
+def git_env() -> dict:
+    """Окружение git без глобального и системного конфига пользователя (хуки, подпись, шаблоны)."""
+    return dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1")

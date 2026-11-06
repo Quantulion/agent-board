@@ -36,4 +36,4 @@ the agent must record it as a violation of «Every task is at most 2 days», not
 - Stage `decomposition`, all tasks `not_started`, no `turn_started` events.
 - Final message contains `<board url>#/p/<slug>/decomposition`, a summary and the violation.
 - Re-run (same message, same env, second agent): `check_state.py <dir> plan-6-tasks --rerun` finds the same
-  6 tasks and the same titles, no duplicates.
+  6 tasks, keys and titles, no duplicates.

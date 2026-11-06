@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import DEMO_SLUG, ROOT, WRAPPER, cli, cli_json  # noqa: E402
+from common import DEMO_SLUG, ROOT, WRAPPER, cli, cli_json, git_env  # noqa: E402
 
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
@@ -31,7 +31,8 @@ def test_add_item():
 
 
 def _git(repo: Path, *args):
-    subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True, text=True)
+    subprocess.run(["git", "-C", str(repo)] + list(args), check=True, capture_output=True, text=True,
+                   env=git_env())
 
 
 def make_repo(repo: Path) -> None:
