@@ -15,6 +15,7 @@ from agent_board import ship as ship_module
 from agent_board.board import new_task_from_dict
 from agent_board.config import ProjectConfig
 from agent_board.harness import FakeHarness
+from agent_board.messages import CATALOG, msg
 from agent_board.model import Status
 from agent_board.server import BoardServer
 from agent_board.store import ProjectStore
@@ -376,6 +377,24 @@ def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_se
     assert task(store, "T-1").session_id == "s-1"
 
 
+@pytest.mark.parametrize("language, expected", [("en", "en"), ("ru", "ru")])
+def test_running_task_on_start__project_language__interruption_note_in_that_language(
+        make_project, start_server, calls, git_repo, monkeypatch, language, expected):
+    # arrange: язык процесса противоположен языку проекта — сообщение должно следовать проекту
+    monkeypatch.setenv("AGENT_BOARD_LANG", "ru" if language == "en" else "en")
+    store = make_project(language=language)
+    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
+    t.agent_state, t.harness = "running", "fake"
+    store.save_task(t)
+    # act
+    start_server()
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    assert msg("run.interrupted").render(expected) in thread_texts(store, "T-1")
+
+
 def test_escalation_wakes_project_agent_with_digest(make_project, start_server, calls):
     # arrange
     store = make_project(project_session_id="p-1")
@@ -647,7 +666,7 @@ def test_graceful_stop_terminates_turn_and_next_start_resumes_it(make_project, s
     wake = [e.data["reason"] for e in events(store, "agent_wake", "T-1")]
     assert wake.count("interrupted") == 1
     assert [c["kind"] for c in calls] == ["start", "resume"] and "interrupted" in calls[1]["text"]
-    assert runner_mod.LEFTOVER_MISSING_TEXT not in thread_texts(store, "T-1")
+    assert CATALOG["run.leftover_missing"][1] not in thread_texts(store, "T-1")
 
 
 def test_queued_task_pending_message_survives_restart(make_project, start_server, calls):
@@ -949,7 +968,7 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     project_turns = lambda: len(events(store, "turn_started", "_project"))
     # act
     add(srv, "T-1", script({"pingpong": "T-1"}))
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "_project"), what="остановка переписки")
     runner_sync(srv)
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
@@ -957,11 +976,11 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     # assert
     assert parked_turns == runner_mod.MAX_AGENT_WAKES
     assert len(events(store, "turn_started", "T-1")) == runner_mod.MAX_AGENT_WAKES + 1
-    assert thread_texts(store, "_project").count(runner_mod.AGENTS_LOOP_TEXT) == 1
+    assert thread_texts(store, "_project").count(CATALOG["run.agents_loop"][1]) == 1
     assert srv.board_for("pay").snapshot()["project_agent"]["parked"] is True
     # act: пользователь отвечает в треде — агент проекта снова работает
     srv.board_for("pay").post_message("_project", "user", "продолжайте")
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "T-1"), what="остановка у задачи")
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
     # assert
@@ -975,9 +994,9 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
 def _park_task_agent(store, srv):
     """Доводит переписку агентов до остановки у задачи T-1."""
     add(srv, "T-1", script({"pingpong": "T-1"}))
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "_project"), what="остановка переписки")
     srv.board_for("pay").post_message("_project", "user", "продолжайте")
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "T-1"), what="остановка у задачи")
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
     assert store.load_tasks()["T-1"].agent_parked is True
@@ -1481,7 +1500,7 @@ def test_review_approved_during_agent_turn_is_left_to_the_user(make_project, sta
     busy_agent(srv, store)
     # act
     fake_crit.finish(crit_dir(store), first["session"])
-    wait_for(lambda: runner_mod.REVIEW_DURING_TURN_TEXT in thread_texts(store, "A"), what="сообщение на карточке")
+    wait_for(lambda: CATALOG["run.review_during_turn"][1] in thread_texts(store, "A"), what="сообщение на карточке")
     wait_events(store, "turn_finished", "A", count=2)
     runner_sync(srv)
     # assert
@@ -1960,3 +1979,84 @@ def test_runner__daily_housekeeping__removes_review_data(make_project, start_ser
     data = _closed_long_ago(srv.board_for("pay").store, "B", "bbbbbbbbbbbb")
     # assert
     wait_for(lambda: not data.exists(), what="данные ревью удалены ежедневной уборкой")
+
+
+# --- повтор упавшего хода пользователем ---
+
+RETRY_NOTICE = "Your previous turn broke off"
+
+
+def test_retry_after_failed_first_turn_starts_new_session_and_resets_failures(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1", script({"fail": "boom"}))
+    wait_events(store, "turn_failed", "T-1", count=3)
+    runner_sync(srv)
+    # act
+    srv.board_for("pay").retry("T-1", "user")
+    # assert: после повтора снова три попытки — счётчик неудач сброшен
+    wait_events(store, "turn_failed", "T-1", count=6)
+    runner_sync(srv)
+    retried = calls[3]
+    assert retried["kind"] == "start" and retried["session"] not in {c["session"] for c in calls[:3]}
+    assert RETRY_NOTICE in retried["text"] and "boom" in retried["text"]
+    assert len(events(store, "turn_started", "T-1")) == 6
+    assert any("agent-board retry T-1" in t for t in thread_texts(store, "T-1"))
+
+
+def test_retry_resumes_same_session_with_notice_and_undelivered_reasons(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+    session = task(store, "T-1").session_id
+    board.post_message("T-1", "user", "доделай " + script({"fail": "обрыв соединения"}))
+    wait_events(store, "turn_failed", "T-1", count=3)
+    runner_sync(srv)
+    # act
+    board.retry("T-1", "user")
+    wait_events(store, "turn_failed", "T-1", count=4)
+    runner_sync(srv)
+    # assert
+    retried = calls[4]
+    assert (retried["kind"], retried["session"]) == ("resume", session)
+    assert RETRY_NOTICE in retried["text"] and "обрыв соединения" in retried["text"]
+    assert retried["text"].index(RETRY_NOTICE) < retried["text"].index("доделай")
+    assert retried["text"].count(RETRY_NOTICE) == 1
+    wake = events(store, "agent_wake", "T-1")[-1].data
+    assert (wake["reason"], wake["error"]) == ("retry", "обрыв соединения")
+
+
+def test_retry_of_project_agent_resumes_its_session(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    board = srv.board_for("pay")
+    board.post_message("_project", "user", "разбери " + script({"fail": "упал CLI"}))
+    wait_events(store, "turn_failed", "_project", count=3)
+    runner_sync(srv)
+    # act
+    board.retry("_project", "user")
+    wait_events(store, "turn_started", "_project", count=4)
+    wait_events(store, "turn_failed", "_project", count=4)
+    # assert
+    retried = calls[3]
+    assert (retried["kind"], retried["session"]) == ("resume", "p-1")
+    assert RETRY_NOTICE in retried["text"] and "упал CLI" in retried["text"] and "разбери" in retried["text"]
+
+
+def test_retry_of_running_agent_is_rejected_without_second_turn(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1", script({"sleep": 20}))
+    wait_for(lambda: task(store, "T-1").agent_state == "running", what="ход T-1 идёт")
+    # act
+    with pytest.raises(ValueError, match="running"):
+        srv.board_for("pay").retry("T-1", "user")
+    runner_sync(srv)
+    # assert
+    assert len(calls) == 1 and len(events(store, "turn_started", "T-1")) == 1

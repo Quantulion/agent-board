@@ -12,7 +12,7 @@ from .config import (
     validate_fields, validate_structure,
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
-from .messages import msg
+from .messages import Msg, localize, msg, normalize
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
 from .tracker import is_http_url, validate_config as validate_tracker
@@ -103,6 +103,7 @@ WAKE_REASONS: Dict[str, str] = {
     "manual": "пользователь сам запустил задачу без сессии агента",
     "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
     "interrupted": "ход агента был прерван, нужно продолжить",
+    "retry": "error — пользователь повторил упавший ход агента, нужно продолжить с места остановки",
     "queued_restart": "следующий ход ждал очереди, когда сервер перезапустился, нужно продолжить",
     "review": "round, comments [{id, path, line, body}], binary, crit_dir — пользователь завершил раунд ревью "
               "с комментариями",
@@ -194,6 +195,10 @@ class Board:
         self.locks_for: Optional[Callable[[str], List[dict]]] = None
         self._migrate_config()
 
+    def _localized(self, value):
+        """Сообщения каталога в сохраняемых данных переводятся на язык проекта в момент записи."""
+        return localize(value, normalize(self.store.load_config().language))
+
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
         if type not in EVENT_TYPES:
@@ -205,7 +210,7 @@ class Board:
         """Служебные поля meta.json (состояние агента проекта и т.п.), без событий."""
         with self._lock:
             meta = self.store.load_meta()
-            meta.update(fields)
+            meta.update(self._localized(fields))
             self.store.save_meta(meta)
 
     def update_config(self, fields: dict) -> ProjectConfig:
@@ -466,6 +471,24 @@ class Board:
                 events.extend(self.post_message(key, "system", note))
             return events
 
+    def retry(self, key: str, actor: str) -> List[Event]:
+        """Пользователь повторяет упавший ход агента задачи или агента проекта; ход запускает раннер."""
+        with self._lock:
+            self._require_user(actor, msg("board.retry_user_only"))
+            if key == PROJECT_THREAD:
+                meta = self.store.load_meta()
+                state, error = meta.get("project_agent_state") or "idle", meta.get("project_turn_error") or ""
+            else:
+                task = self._get(self.store.load_tasks(), key)
+                if task.status in (Status.CANCELLED, Status.APPROVED, Status.SENT):
+                    raise ValueError(msg("board.retry_status", status=task.status.value))
+                if self.store.load_config().stage != "work":
+                    raise ValueError(msg("board.retry_stage"))
+                state, error = task.agent_state, task.turn_error
+            if state != "error":
+                raise ValueError(msg("board.retry_not_failed", key=key, state=state))
+            return [self._emit("agent_wake", {"key": key, "reason": "retry", "error": error})]
+
     def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
         """Возврат в работу с комментарием: агент получает комментарий вместе с пробуждением returned."""
         with self._lock:
@@ -537,7 +560,7 @@ class Board:
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
-            for name, value in fields.items():
+            for name, value in self._localized(fields).items():
                 setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
@@ -631,7 +654,7 @@ class Board:
 
     def _append_message(self, thread: str, author: str, text: str):
         """Сообщение в тред без пробуждений: (сообщение, событие message_posted)."""
-        message = Message(id=uuid.uuid4().hex, author=author, text=text, at=self._clock())
+        message = Message(id=uuid.uuid4().hex, author=author, text=self._localized(text), at=self._clock())
         self.store.append_message(thread, message)
         if author != "user":
             if thread != PROJECT_THREAD:
@@ -680,7 +703,7 @@ class Board:
             proposal.status = "applied"
             self.store.save_proposals(proposals)
             events.append(self._emit("proposal_applied", {"id": pid}))
-            text = "Применено предложение %s: %s" % (pid, self._describe_proposal(proposal))
+            text = msg("board.applied_proposal", id=pid, change=self._describe_proposal(proposal))
             for thread in (PROJECT_THREAD, affected):
                 events.extend(self.post_message(thread, "system", text))
             return events
@@ -734,13 +757,13 @@ class Board:
         return proposal
 
     @staticmethod
-    def _describe_proposal(proposal: Proposal) -> str:
+    def _describe_proposal(proposal: Proposal) -> Msg:
         p = proposal.payload
         if proposal.kind == "add_task":
-            return "добавлена задача %s" % p["task"]["key"]
+            return msg("board.applied_add_task", key=p["task"]["key"])
         if proposal.kind == "set_deps":
-            return "зависимости задачи %s: %s" % (p["key"], ", ".join(p["deps"]) or "нет")
-        return "отменена задача %s" % p["key"]
+            return msg("board.applied_set_deps", key=p["key"], deps=", ".join(p["deps"]) or msg("board.applied_no_deps"))
+        return msg("board.applied_cancel_task", key=p["key"])
 
     @staticmethod
     def _check_new_key(key: str, tasks) -> None:
@@ -766,7 +789,7 @@ class Board:
             raise PermissionError(msg("board.graph_via_proposals"))
 
     def _emit(self, type: str, data: dict) -> Event:
-        event = self.store.append_event(type, data, self._clock())
+        event = self.store.append_event(type, self._localized(data), self._clock())
         if self._on_event is not None:
             self._on_event(event)
         return event

@@ -220,6 +220,10 @@ def cmd_stage(args):
     return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": _user_actor()})
 
 
+def cmd_retry(args):
+    return _request("POST", _p(args, "tasks/%s/retry" % args.key), {"actor": _user_actor()})
+
+
 def cmd_ship(args):
     return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": _user_actor()})
 
@@ -412,6 +416,7 @@ def build_parser() -> argparse.ArgumentParser:
         "stage")
     add("ship", cmd_ship, help=msg("help.ship")).add_argument(
         "keys", nargs="+")
+    add("retry", cmd_retry, help=msg("help.retry")).add_argument("key")
     add("tracker", cmd_tracker, help=msg("help.tracker")).add_argument(
         "action", choices=["create", "check", "sync"])
     sp = add("config", cmd_config, help=msg("help.config"))

@@ -199,7 +199,7 @@ def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
         stdout.close()
-        raise OSError("не удалось запустить запись вывода: %s" % e)
+        raise OSError(msg("ship.output_failed", error=str(e)))
     return proc
 
 

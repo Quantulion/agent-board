@@ -27,7 +27,7 @@ from .harness import (
     terminate_group,
     turn_process_record,
 )
-from .messages import LANG_ENV, normalize
+from .messages import LANG_ENV, Msg, msg, normalize, reason as error_text
 from .model import Event, Status, Task
 from .review import RoundResult, kill_group, kill_round, make_review, port_of, prune_review_data, trim_log
 from .store import PROJECT_THREAD, board_home, list_projects
@@ -49,13 +49,6 @@ MAX_FAILURES = 3
 STOP_GRACE_SECONDS = 10.0
 # паузы перед повтором после 1-й и 2-й подряд неудачи
 RETRY_DELAYS = (5.0, 30.0)
-LEFTOVER_MISSING_TEXT = "Старый процесс хода не найден (завершился или pid занят другим процессом), его не трогаем."
-INTERRUPTED_TEXT = "Ход прерван перезапуском сервера, агент продолжит с сообщением о прерывании."
-FAILURES_TEXT = ("Агент упал %d раза подряд, автоматический перезапуск остановлен: %s. "
-                 "Напишите сообщение или смените статус, чтобы запустить его снова.")
-CARRIED_TEXT = ("Ветка задачи перенесена на %s, но незакоммиченную работу не удалось вернуть в файлы без конфликта. "
-                "Она сохранена в git по ссылке %s: верните её вручную (например, git stash apply %s), "
-                "затем удалите ссылку командой git update-ref -d %s.")
 PROJECT_SYSTEM_PROMPT = (
     "Ты агент проекта доски agent-board. Не пиши код и не меняй репозитории. "
     "Читай доску и общайся командой agent-board."
@@ -63,35 +56,23 @@ PROJECT_SYSTEM_PROMPT = (
 # сколько подряд пробуждений одного агента могут вызвать другие агенты без участия пользователя
 MAX_AGENT_WAKES = 5
 AGENT_AUTHORS = ("agent", "project_agent")
-AGENTS_LOOP_TEXT = "Агенты переписываются без участия пользователя — остановлено; ответьте в треде, чтобы продолжить"
 # причины, которые не добавляют ничего к стартовому промпту задачи
 _START_ONLY = {"ready", "unblocked", "manual", "interrupted", "queued_restart", "rebase"}
 # так Claude отвечает на продолжение сессии, которой у него нет (например, первый ход упал до её сохранения)
 LOST_SESSION_MARK = "No conversation found"
-LOST_SESSION_TEXT = "Сессия агента %s не найдена у харнесса, агент начнёт задачу заново в новой сессии."
-REVIEW_APPROVED_TEXT = "Одобрено в ревью (раунд %d)"
-REVIEW_FAILED_TEXT = "Ревью не запущено: %s"
-REVIEW_ABORTED_TEXT = "Раунд ревью %d прерван: %s. Откройте ревью снова."
 REVIEW_ERROR_CHARS = 1000
-REVIEW_DURING_TURN_TEXT = "Ревью завершено во время хода агента — одобрите вручную"
-REVIEW_NOT_IN_REVIEW_TEXT = ("Раунд ревью %d завершён без замечаний, но задача уже не на ревью (%s): "
-                             "одобрите её вручную, когда она будет готова")
-REVIEW_TOOL_OFF_TEXT = "Инструмент ревью в проекте отключён: открытый раунд %d закрыт"
 
 SHIP_KILL_GRACE = 3.0
 # как часто раннер убирает устаревшие данные ревью (кроме уборки при старте)
 HOUSEKEEPING_SECONDS = 24 * 3600
 SHIP_TEXT_CHARS = 500
-SHIP_INTERRUPTED_TEXT = "Отправка в ревью прервана перезапуском сервера. Команда могла выполниться не до конца: проверьте результат и при необходимости отправьте задачу снова."
-SHIP_FAILED_TEXT = "Отправка в ревью не удалась (код выхода %s)."
-SHIP_TIMEOUT_TEXT = "Отправка в ревью прервана по таймауту (%d с), процессы команды остановлены."
-SHIP_ERROR_TEXT = "Отправка в ревью не выполнена: %s"
-SHIP_NOT_STARTED_TEXT = "Отправка в ревью не была запущена из-за перезапуска сервера — отправьте задачу снова."
-SHIP_COMMITTED_TEXT = "Перед отправкой закоммичены оставшиеся изменения (%s)."
-SHIP_CANCELLED_TEXT = "Задача отменена, отправка в ревью остановлена."
-SHIP_MULTI_DEPS_TEXT = "несколько незавершённых зависимостей — отправьте их сначала"
 
 Key = Tuple[str, str]
+
+
+def _tail(text, limit: int):
+    """Хвост произвольного текста; сообщения каталога короткие и остаются переводимыми."""
+    return text if isinstance(text, Msg) else text[-limit:]
 
 
 def _utc_now() -> str:
@@ -309,7 +290,7 @@ class Runner:
         try:
             board = self._board(slug)
             if key == PROJECT_THREAD or key in board.store.load_tasks():
-                board.post_message(key, "system", "Ошибка раннера: %r" % error)
+                board.post_message(key, "system", msg("run.runner_error", error=repr(error)))
         except Exception:
             traceback.print_exc(file=sys.stderr)
 
@@ -375,8 +356,8 @@ class Runner:
         if is_same_process(record):
             terminate_group(record["pgid"], STOP_GRACE_SECONDS)
             return
-        print("runner: старый процесс хода %s не найден: %r" % (thread, record), file=sys.stderr)
-        board.post_message(thread, "system", LEFTOVER_MISSING_TEXT)
+        print("runner: old turn process of %s not found: %r" % (thread, record), file=sys.stderr)
+        board.post_message(thread, "system", msg("run.leftover_missing"))
 
     def _recover(self) -> None:
         for slug in list_projects():
@@ -406,7 +387,7 @@ class Runner:
                 if task.agent_state == "running":
                     self._kill_leftover(board, key, task.turn_process)
                     board.update_task(key, "system", {"agent_state": "idle", "turn_process": None})
-                    board.post_message(key, "system", INTERRUPTED_TEXT)
+                    board.post_message(key, "system", msg("run.interrupted"))
                     board.record("agent_wake", {"key": key, "reason": "interrupted"})
                     woken.add(key)
                 elif task.agent_state == "waiting_turn":
@@ -417,7 +398,7 @@ class Runner:
             if meta.get("project_agent_state") == "running":
                 self._kill_leftover(board, PROJECT_THREAD, meta.get("project_turn_process"))
                 self._update_project_meta(board, {"project_agent_state": "idle", "project_turn_process": None})
-                board.post_message(PROJECT_THREAD, "system", INTERRUPTED_TEXT)
+                board.post_message(PROJECT_THREAD, "system", msg("run.interrupted"))
                 board.record("agent_wake", {"key": PROJECT_THREAD, "reason": "interrupted"})
                 woken.add(PROJECT_THREAD)
             elif config.stage == "work" and not config.project_session_id:
@@ -498,12 +479,28 @@ class Runner:
             board = self._board(slug)
             reason = self._ctx.enrich(slug, board.store, event)
             key = str(d.get("key"))
+            if reason.get("reason") == "retry":
+                self._retry_now((slug, key), reason)
+                return
             if reason.get("reason") in ("answer", "review") or (
                     reason.get("reason") == "message" and reason.get("author") == "user"):
                 self._reset_failures((slug, key))
             if self._park_agent_loop((slug, key), reason):
                 return
             self._wake(slug, key, reason)
+
+    def _retry_now(self, k: Key, reason: dict) -> None:
+        """Повтор упавшего хода по просьбе пользователя: счётчик неудач сбрасывается, а сообщение о прерывании
+        идёт агенту перед причинами, которые прошлый ход не выполнил."""
+        self._reset_failures(k)
+        self._unpark(k)
+        if k[1] != PROJECT_THREAD:
+            task = self._board(k[0]).store.load_tasks().get(k[1])
+            if task is None or task.status == Status.CANCELLED:
+                return
+        self._pending[k] = [reason] + [r for r in self._pending.get(k, []) if r.get("reason") != "retry"]
+        if k not in self._turns and k not in self._waiting:
+            self._schedule(k)
 
     @staticmethod
     def _by_agent(reason: dict) -> bool:
@@ -549,17 +546,17 @@ class Runner:
         if k not in self._parked:
             self._parked.add(k)
             self._set_parked(k, True)
-            self._board(k[0]).post_message(k[1], "system", AGENTS_LOOP_TEXT)
+            self._board(k[0]).post_message(k[1], "system", msg("run.agents_loop"))
         return True
 
     def _own_worktree(self, config, task: Task) -> Path:
         try:
             repo, _ = self._repo(config, task)
         except _PrepareError as e:
-            raise _ForeignWorktree("не удалось проверить worktree %s: %s" % (task.worktree, e))
+            raise _ForeignWorktree(msg("run.worktree_check_failed", path=task.worktree, error=error_text(e)))
         expected = worktree_path(repo, task.key)
         if not task.worktree or Path(task.worktree).resolve() != expected.resolve():
-            raise _ForeignWorktree("worktree %s не совпадает с ожидаемым %s" % (task.worktree, expected))
+            raise _ForeignWorktree(msg("run.worktree_mismatch", path=task.worktree, expected=str(expected)))
         return Path(task.worktree)
 
     def _commit(self, slug: str, key: str) -> None:
@@ -573,7 +570,7 @@ class Runner:
         except GitError as e:
             # без коммита зависимые стартовали бы без кода задачи: возвращаем её на ревью до следующих событий
             board.transition_if(key, Status.APPROVED, Status.IN_REVIEW, "system")
-            board.post_message(key, "system", "Не удалось закоммитить одобренную работу, задача возвращена на ревью: %s" % e)
+            board.post_message(key, "system", msg("run.commit_failed", error=error_text(e)))
             return
         if sha:
             board.record("task_committed", {"key": key, "sha": sha})
@@ -719,10 +716,10 @@ class Runner:
                 traceback.print_exc(file=sys.stderr)
             if k in self._turns:
                 return
-            message = str(e) if isinstance(e, _PrepareError) else "ошибка раннера: %r" % e
+            message = error_text(e) if isinstance(e, _PrepareError) else msg("run.internal_error", error=repr(e))
             try:
                 self._set_state(k, "error", message)
-                self._board(k[0]).post_message(k[1], "system", "Агент не запущен: %s" % message)
+                self._board(k[0]).post_message(k[1], "system", msg("run.not_started", error=message))
             except Exception:
                 traceback.print_exc(file=sys.stderr)
 
@@ -752,7 +749,7 @@ class Runner:
         if task.session_id and task.worktree:
             self._resume_task(k, board, task, tasks, config, deliver)
         elif task.session_id:
-            raise _PrepareError("у задачи есть сессия, но нет worktree")
+            raise _PrepareError(msg("run.no_worktree"))
         else:
             self._start_task(k, board, task, tasks, config, deliver)
 
@@ -761,11 +758,11 @@ class Runner:
         if task.repo:
             repo = next((r for r in repos if r.get("name") == task.repo), None)
             if repo is None:
-                raise _PrepareError("репозиторий %s не найден в настройках проекта" % task.repo)
+                raise _PrepareError(msg("run.repo_missing", repo=task.repo))
         elif len(repos) == 1:
             repo = repos[0]
         else:
-            raise _PrepareError("у задачи не указан репозиторий, а в проекте их %d" % len(repos))
+            raise _PrepareError(msg("run.repo_ambiguous", count=len(repos)))
         return Path(repo["path"]), repo.get("base") or "main"
 
     def _start_task(self, k: Key, board: Board, task: Task, tasks, config, deliver: List[dict]) -> None:
@@ -783,7 +780,7 @@ class Runner:
             except GitError:
                 conflicts = []
             if not conflicts:
-                raise _PrepareError("не удалось подготовить worktree: %s" % e)
+                raise _PrepareError(msg("run.worktree_failed", error=error_text(e)))
         harness = self._harness(board)
         session_id = harness.new_session_id()
         board.update_task(key, "system", {
@@ -809,7 +806,7 @@ class Runner:
         try:
             path = self._own_worktree(config, task)
         except _ForeignWorktree as e:
-            raise _PrepareError(str(e))
+            raise _PrepareError(error_text(e))
         reasons = deliver
         rebases = [r for r in deliver if r.get("reason") == "rebase"]
         if rebases:
@@ -835,14 +832,14 @@ class Runner:
         try:
             outcome = rebase_carrying_changes(self._own_worktree(config, task), base, carry_ref(task.key))
         except GitError as e:
-            board.post_message(task.key, "system", "Не удалось перенести работу на %s: %s" % (base, e))
+            board.post_message(task.key, "system", msg("run.rebase_failed", base=base, error=error_text(e)))
             outcome = RebaseOutcome(False)
         ok = outcome.ok
         reason.update(base=base, rebase_ok=ok, conflict_files=outcome.conflict_files)
         if outcome.carried_ref:
             reason["carried_ref"] = outcome.carried_ref
             ref = outcome.carried_ref
-            board.post_message(task.key, "system", CARRIED_TEXT % (base, ref, ref, ref))
+            board.post_message(task.key, "system", msg("run.carried", base=base, ref=ref))
         if ok and task.base_branch != base:
             board.update_task(task.key, "system", {"base_branch": base})
         return reason
@@ -891,7 +888,7 @@ class Runner:
             try:
                 result = harness.finish(proc, log)
             except Exception as e:
-                result = TurnResult(session_id=turn.session_id, ok=False, error="ошибка раннера: %r" % e, exit_code=-1)
+                result = TurnResult(session_id=turn.session_id, ok=False, error=msg("run.internal_error", error=repr(e)), exit_code=-1)
             self._inbox.put(("done", k, turn, result))
 
         # процесс уже запущен: при любом сбое до передачи хода ожидающему потоку его нужно остановить,
@@ -942,14 +939,14 @@ class Runner:
             state, error, event = "idle", "", ("turn_finished", {"key": k[1], "session_lost": True})
             session_id = None
             self._pending[k] = turn.reasons + self._pending.get(k, [])
-            board.post_message(k[1], "system", LOST_SESSION_TEXT % turn.session_id)
+            board.post_message(k[1], "system", msg("run.lost_session", session=turn.session_id))
         elif result.ok:
             self._failures.pop(k, None)
             state, error, event = "idle", "", ("turn_finished", {"key": k[1]})
             session_id = result.session_id or turn.session_id
         else:
             self._failures[k] = self._failures.get(k, 0) + 1
-            error = result.error or "ход завершился с ошибкой"
+            error = result.error or msg("run.turn_failed")
             state, event = "error", ("turn_failed", {"key": k[1], "error": error})
             # неудачный первый ход начнётся заново новой сессией, причины вернутся в следующий ход
             session_id = None if turn.fresh else (result.session_id or turn.session_id)
@@ -962,7 +959,7 @@ class Runner:
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])
         if state == "error" and self._failures.get(k, 0) >= MAX_FAILURES:
-            board.post_message(k[1], "system", FAILURES_TEXT % (MAX_FAILURES, error))
+            board.post_message(k[1], "system", msg("run.failures", count=MAX_FAILURES, error=error, key=k[1]))
 
     def _update_task_after_turn(self, board: Board, key: str, state: str, error: str, session_id: Optional[str]) -> None:
         task = board.store.load_tasks()[key]
@@ -1007,7 +1004,7 @@ class Runner:
             reviewer = make_review(config.review)
             if not reviewer.interactive:
                 if isinstance(task.review, dict) and task.review.get("state") == "open":
-                    text = REVIEW_TOOL_OFF_TEXT % int(task.review.get("round") or 0)
+                    text = msg("run.review_tool_off", round=int(task.review.get("round") or 0))
                     self._set_review(board, key, state="idle", process=None, error=text)
                     board.post_message(key, "system", text)
                 return
@@ -1024,7 +1021,7 @@ class Runner:
         except Exception as e:
             if not isinstance(e, (ValueError, GitError)):
                 traceback.print_exc(file=sys.stderr)
-            self._review_error(board, key, str(e) or repr(e))
+            self._review_error(board, key, error_text(e) or repr(e))
             return
         if not proc.pid:
             self._review_error(board, key, proc.error)
@@ -1037,7 +1034,7 @@ class Runner:
             try:
                 result = reviewer.watch(proc, log, lambda url, sid: self._inbox.put(("review_url", k, rv, url, sid)))
             except Exception as e:
-                result = RoundResult("failed", error="ошибка раннера: %r" % e)
+                result = RoundResult("failed", error=msg("run.internal_error", error=repr(e)))
             self._inbox.put(("review_done", k, rv, result))
 
         try:
@@ -1054,9 +1051,9 @@ class Runner:
         board.update_task(key, "system", {"review": state})
 
     def _review_error(self, board: Board, key: str, error: str) -> None:
-        error = error[-REVIEW_ERROR_CHARS:]
+        error = _tail(error, REVIEW_ERROR_CHARS)
         self._set_review(board, key, state="idle", error=error, process=None)
-        board.post_message(key, "system", REVIEW_FAILED_TEXT % error)
+        board.post_message(key, "system", msg("run.review_failed", error=error))
 
     @staticmethod
     def _kill_leftover_review(record) -> None:
@@ -1147,11 +1144,11 @@ class Runner:
                 {"round": rv.round, "state": result.outcome, "comments": len(result.comments), "at": self._clock()}]
         if result.outcome == "approved" and k in self._turns:
             # раунд мог завершить сам агент: одобрение во время его хода оставляем пользователю
-            state.update(state="idle", error=REVIEW_DURING_TURN_TEXT)
+            state.update(state="idle", error=msg("run.review_during_turn"))
             board.update_task(key, "system", {"review": state})
-            board.post_message(key, "system", REVIEW_DURING_TURN_TEXT)
+            board.post_message(key, "system", msg("run.review_during_turn"))
         elif result.outcome == "approved" and task.status != Status.IN_REVIEW:
-            text = REVIEW_NOT_IN_REVIEW_TEXT % (rv.round, task.status.value)
+            text = msg("run.review_not_in_review", round=rv.round, status=task.status.value)
             state.update(state="idle", error=text)
             board.update_task(key, "system", {"review": state})
             board.post_message(key, "system", text)
@@ -1160,10 +1157,10 @@ class Runner:
             board.update_task(key, "system", {"review": state})
             # завершение раунда без замечаний — решение самого пользователя в crit
             try:
-                board.approve(key, "user", REVIEW_APPROVED_TEXT % rv.round)
+                board.approve(key, "user", msg("run.review_approved", round=rv.round))
             except ValueError as e:
-                self._set_review(board, key, state="idle", error=str(e))
-                board.post_message(key, "system", REVIEW_NOT_IN_REVIEW_TEXT % (rv.round, e))
+                self._set_review(board, key, state="idle", error=error_text(e))
+                board.post_message(key, "system", msg("run.review_not_in_review", round=rv.round, status=error_text(e)))
         elif result.outcome == "changes":
             state.update(state="changes", error="")
             board.update_task(key, "system", {"review": state})
@@ -1172,10 +1169,10 @@ class Runner:
                 "key": key, "reason": "review", "round": rv.round, "comments": result.comments,
                 "binary": getattr(reviewer, "binary", "crit"), "crit_dir": str(self._crit_dir(board))})
         else:
-            error = (result.error or result.outcome)[-REVIEW_ERROR_CHARS:]
+            error = _tail(result.error or result.outcome, REVIEW_ERROR_CHARS)
             state.update(state="idle", error=error)
             board.update_task(key, "system", {"review": state})
-            board.post_message(key, "system", REVIEW_ABORTED_TEXT % (rv.round, error))
+            board.post_message(key, "system", msg("run.review_aborted", round=rv.round, error=error))
 
     def _maybe_next_round(self, k: Key) -> None:
         """Агент закончил правки по ревью: раннер открывает следующий раунд."""
@@ -1200,7 +1197,7 @@ class Runner:
         was_running = state.get("state") == "running"
         state.update(state="interrupted", process=None)
         board.update_task(task.key, "system", {"ship": state})
-        board.post_message(task.key, "system", SHIP_INTERRUPTED_TEXT if was_running else SHIP_NOT_STARTED_TEXT)
+        board.post_message(task.key, "system", msg("run.ship_interrupted" if was_running else "run.ship_not_started"))
 
     def _cancel_ship(self, k: Key) -> None:
         """Отмена задачи останавливает идущую отправку (группу процессов команды)."""
@@ -1212,7 +1209,7 @@ class Runner:
         board = self._board(k[0])
         self._ship_set(board, k[1], state="cancelled", at=self._clock(), output_tail=sh.scrub(ship.tail_of(sh.log)),
                        exit_code=None, process=None)
-        board.post_message(k[1], "system", SHIP_CANCELLED_TEXT)
+        board.post_message(k[1], "system", msg("run.ship_cancelled"))
         self._ship_next(sh.batch)
 
     def _start_ship(self, slug: str, keys: List[str]) -> None:
@@ -1225,7 +1222,7 @@ class Runner:
                 started = self._ship_task(batch, key)
             except Exception as e:
                 traceback.print_exc(file=sys.stderr)
-                self._ship_fail(batch, key, SHIP_ERROR_TEXT % repr(e))
+                self._ship_fail(batch, key, repr(e))
                 started = False
             if started:
                 return
@@ -1238,7 +1235,7 @@ class Runner:
         board = self._board(batch.slug)
         batch.failed.add(key)
         self._ship_set(board, key, state="error", at=self._clock(), error=error, output_tail="", exit_code=None)
-        board.post_message(key, "system", SHIP_ERROR_TEXT % error if not error.startswith("Отправка") else error)
+        board.post_message(key, "system", msg("run.ship_error", error=error))
 
     def _ship_skip(self, batch: _ShipBatch, key: str, reason: str) -> None:
         batch.failed.add(key)
@@ -1250,11 +1247,11 @@ class Runner:
             return default_base
         unmerged = [tasks[d] for d in task.deps if d in tasks and tasks[d].status in (Status.APPROVED, Status.SENT)]
         if len(unmerged) > 1:
-            raise ValueError(SHIP_MULTI_DEPS_TEXT)
+            raise ValueError(msg("run.ship_multi_deps"))
         if not unmerged:
             return default_base
         if not unmerged[0].branch:
-            raise ValueError("у зависимости %s нет ветки" % unmerged[0].key)
+            raise ValueError(msg("run.ship_dep_no_branch", key=unmerged[0].key))
         return unmerged[0].branch
 
     def _ship_task(self, batch: _ShipBatch, key: str) -> bool:
@@ -1268,10 +1265,10 @@ class Runner:
             return False
         blockers = [d for d in task.deps if d in batch.failed]
         if blockers:
-            self._ship_skip(batch, key, "зависимость %s не отправлена" % ", ".join(blockers))
+            self._ship_skip(batch, key, msg("run.ship_dep_failed", keys=", ".join(blockers)))
             return False
         if task.status != Status.APPROVED:
-            self._ship_skip(batch, key, "задача уже не одобрена (%s)" % task.status.value)
+            self._ship_skip(batch, key, msg("run.ship_not_approved", status=task.status.value))
             return False
         try:
             config = board.store.load_config()
@@ -1280,23 +1277,23 @@ class Runner:
             repo, default_base = self._repo(config, task)
             base = self._ship_base(config, task, tasks, default_base)
             if not task.branch:
-                raise ValueError("у задачи нет ветки")
+                raise ValueError(msg("run.ship_no_branch"))
             rendered = ship.render(command, {
                 "key": key, "title": task.title, "branch": task.branch, "base": base,
                 "worktree": str(path), "repo": str(repo)})
             sha = commit_all(path, "%s %s" % (key, task.title))
             if sha:
                 board.record("task_committed", {"key": key, "sha": sha})
-                board.post_message(key, "system", SHIP_COMMITTED_TEXT % sha[:10])
+                board.post_message(key, "system", msg("run.ship_committed", sha=sha[:10]))
         except (ValueError, GitError, _PrepareError) as e:
-            self._ship_fail(batch, key, str(e))
+            self._ship_fail(batch, key, error_text(e))
             return False
         log = board.store.root / "logs" / (key + ".ship.log")
         scrub = _scrubber(config)
         try:
             proc = ship.start(rendered, path, log, key, scrub=scrub)
         except OSError as e:
-            self._ship_fail(batch, key, "не удалось запустить команду: %s" % e)
+            self._ship_fail(batch, key, msg("run.ship_start_failed", error=error_text(e)))
             return False
         sh = _Ship(proc, batch, log, timeout, scrub)
         k = (slug, key)
@@ -1340,11 +1337,11 @@ class Runner:
         ok = code == 0 and not timed_out
         if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system"):
             ok = False
-            error = "команда отправки выполнена, но задача уже не одобрена — статус не изменён"
+            error = msg("run.ship_status_changed")
             sh.batch.failed.add(key)
             self._ship_set(board, key, state="error", at=self._clock(), error=error, output_tail=tail,
                            exit_code=0, process=None)
-            board.post_message(key, "system", SHIP_ERROR_TEXT % error)
+            board.post_message(key, "system", msg("run.ship_error", error=error))
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": 0})
         elif ok:
             self._ship_set(board, key, state="done", at=self._clock(), output_tail=tail, exit_code=0, process=None)
@@ -1354,8 +1351,9 @@ class Runner:
             exit_code = None if timed_out else code
             self._ship_set(board, key, state="error", at=self._clock(), output_tail=tail, exit_code=exit_code,
                            process=None)
-            head = SHIP_TIMEOUT_TEXT % int(sh.timeout) if timed_out else SHIP_FAILED_TEXT % code
-            text = head + ("\n" + tail.strip()[-SHIP_TEXT_CHARS:] if tail.strip() else "")
+            output = "\n" + tail.strip()[-SHIP_TEXT_CHARS:] if tail.strip() else ""
+            text = (msg("run.ship_timeout", seconds=int(sh.timeout), output=output) if timed_out
+                    else msg("run.ship_failed", code=code, output=output))
             board.post_message(key, "system", text)
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": exit_code})
         self._ship_next(sh.batch)
