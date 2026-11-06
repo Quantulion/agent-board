@@ -19,6 +19,26 @@ Or install the package (`pip install -e .`) and use the `agent-board` command.
 
 `serve` prints a link like `http://127.0.0.1:8737/?token=...`. The token is stored in `<home>/token` and stays the same across restarts; the default port is the first free one in 8737–8746 (`--port N` sets it explicitly). Only one board runs per data directory: a second `serve` exits with code 3.
 
+## Installing and updating
+
+When the board runs straight from the repository checkout, every uncommitted edit lands in the running board at once, and conflict markers left by a merge break the CLI for every agent. To avoid that, install the board from a fixed commit:
+
+```bash
+python3 scripts/install.py            # the main branch HEAD (main, else master, else HEAD)
+python3 scripts/install.py --ref v1   # a specific commit, branch or tag; --repo PATH, --home DIR
+```
+
+The script copies `board/agent_board` from the commit (via `git archive`, so the working tree does not matter) into `<home>/runtime/<commit>` and atomically switches the wrapper `<home>/bin/agent-board` to it; add `<home>/bin` to `PATH`. The wrapper ignores the current directory and the repository state, and uses the Python interpreter the script was run with. The skill wrapper (`skills/agent-board/scripts/agent-board`) also prefers the installed version when it exists; `AGENT_BOARD_FROM_REPO=1` makes it run the code from the repository instead.
+
+Update to a new commit:
+
+```bash
+agent-board self-update               # the same repository and ref as the last install
+agent-board self-update --ref <sha>   # another commit, or back to an earlier one
+```
+
+The running server keeps the code it was started with; after an update restart it: `agent-board stop && agent-board serve --detach`. Old `<home>/runtime/<commit>` directories are kept (a running server may still use one) and can be deleted by hand.
+
 ## Installing the skill
 
 The `skills/agent-board` skill lays a plan out on the board and starts the board. It needs python3 ≥ 3.9 and git; [crit](https://github.com/tomasz-tomczyk/crit) is optional, for reviews.

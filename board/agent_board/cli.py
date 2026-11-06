@@ -136,6 +136,15 @@ def cmd_version(args):
     return None
 
 
+def cmd_self_update(args):
+    from . import install
+
+    code = install.run(args.repo, args.ref)
+    if code:
+        raise ExitWith(code)
+    return None
+
+
 def cmd_stop(args):
     result = lifecycle.stop_server()
     if result["code"]:
@@ -389,6 +398,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--detach", action="store_true", help=msg("help.detach"))
     add("stop", cmd_stop, help=msg("help.stop"))
     add("version", cmd_version, help=msg("help.version"))
+    sp = add("self-update", cmd_self_update, help=msg("help.self_update"))
+    sp.add_argument("--ref", help=msg("help.ref"))
+    sp.add_argument("--repo", help=msg("help.repo"))
     sp = add("init", cmd_init, help=msg("help.init"))
     sp.add_argument("slug")
     sp.add_argument("--title", required=True)

@@ -105,11 +105,11 @@ def write_board_cli(bin_dir: Path) -> Path:
     bin_dir.mkdir(parents=True, exist_ok=True)
     path = bin_dir / "agent-board"
     pkg_parent = str(Path(__file__).resolve().parent.parent)
+    # пакет ищется только в каталоге сервера: одноимённый пакет в текущем каталоге агента его не подменит
+    boot = "import runpy, sys; sys.path[0] = sys.argv.pop(1); runpy.run_module('agent_board', run_name='__main__')"
     text = (
         "#!/bin/sh\n"
-        "PYTHONPATH=%s\"${PYTHONPATH:+:$PYTHONPATH}\"\n"
-        "export PYTHONPATH\n"
-        "exec %s -m agent_board \"$@\"\n" % (shlex.quote(pkg_parent), shlex.quote(sys.executable))
+        "exec %s -c %s %s \"$@\"\n" % (shlex.quote(sys.executable), shlex.quote(boot), shlex.quote(pkg_parent))
     )
     if not path.exists() or path.read_text(encoding="utf-8") != text:
         path.write_text(text, encoding="utf-8")

@@ -126,8 +126,9 @@ def start_detached(port: Optional[int], no_runner: bool, no_tracker_sync: bool) 
     env = {k: v for k, v in os.environ.items() if k not in AGENT_ENV}
     env["PYTHONPATH"] = package_root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
     with open(str(log), "ab") as out:
+        # из каталога пакета: одноимённый пакет в текущем каталоге вызывающего его не подменит
         child = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=out, stderr=out, env=env,
-                                 start_new_session=True)
+                                 cwd=package_root, start_new_session=True)
     deadline = time.monotonic() + START_WAIT_SECONDS
     while time.monotonic() < deadline:
         info = read_discovery()
