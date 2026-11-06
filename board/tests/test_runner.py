@@ -682,6 +682,84 @@ def test_rebase_request_conflict_keeps_work_in_carry_ref_with_card_message(make_
 
 
 
+# --- влив в базовую ветку ---
+
+def approve_with_work(store, srv, key, **extra):
+    add(srv, key, script({"write": {"path": key + ".txt", "text": "работа " + key + "\n"}}), **extra)
+    wait_events(store, "turn_finished", key)
+    srv.board_for("pay").transition(key, Status.APPROVED, "user")
+    wait_events(store, "task_committed", key)
+
+
+def test_approved_task_merged_into_base_becomes_done_and_dependent_rebases(make_project, start_server, calls,
+                                                                         git_repo, monkeypatch):
+    # arrange
+    monkeypatch.setattr(runner_mod, "MERGE_CHECK_SECONDS", 0.1)
+    store = make_project(language="ru")
+    srv = start_server()
+    approve_with_work(store, srv, "A")
+    add(srv, "B", deps=["A"])
+    wait_events(store, "turn_finished", "B")
+    # act
+    run_git(git_repo, "merge", "--no-ff", "--no-edit", "A")
+    wait_for(lambda: task(store, "A").status == Status.DONE, what="A в done")
+    # assert
+    changed = events(store, "status_changed", "A")[-1].data
+    assert (changed["from"], changed["actor"]) == ("approved", "system")
+    assert thread_texts(store, "A")[-1] == "Влито в main"
+    wait_for(lambda: [e for e in events(store, "agent_wake", "B") if e.data.get("reason") == "rebase"],
+             what="перенос B на базу")
+
+
+def test_sent_task_merged_while_board_stopped_becomes_done_on_start(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project(language="en")
+    srv = start_server()
+    approve_with_work(store, srv, "A")
+    srv.board_for("pay").transition("A", Status.SENT, "system")
+    srv.stop()
+    run_git(git_repo, "merge", "--no-ff", "--no-edit", "A")
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.DONE
+    assert thread_texts(store, "A")[-1] == "Merged into main"
+
+
+def test_approved_task_not_merged_stays_approved(make_project, start_server, calls, git_repo, monkeypatch):
+    # arrange
+    monkeypatch.setattr(runner_mod, "MERGE_CHECK_SECONDS", 0.05)
+    store = make_project()
+    srv = start_server()
+    approve_with_work(store, srv, "A")
+    commit_to_main(git_repo, "other.txt", "чужая работа\n")
+    # act
+    time.sleep(0.5)
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.APPROVED
+    assert not [m for m in store.read_thread("A") if m.author == "system" and "main" in m.text]
+
+
+def test_approved_branch_without_commits_is_not_taken_as_merged(make_project, start_server, calls, git_repo,
+                                                               monkeypatch):
+    # arrange
+    monkeypatch.setattr(runner_mod, "MERGE_CHECK_SECONDS", 0.05)
+    store = make_project()
+    srv = start_server()
+    add(srv, "A")
+    wait_events(store, "turn_finished", "A")
+    srv.board_for("pay").transition("A", Status.APPROVED, "user")
+    # act
+    time.sleep(0.5)
+    runner_sync(srv)
+    # assert
+    assert not events(store, "task_committed", "A")
+    assert run_git(git_repo, "merge-base", "--is-ancestor", "A", "main") == ""
+    assert task(store, "A").status == Status.APPROVED
+
+
 # --- перезапуск ---
 
 def restart(srv, start_server):

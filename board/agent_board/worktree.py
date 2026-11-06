@@ -37,6 +37,17 @@ def run_git(repo: Path, *args: str) -> str:
     return res.stdout
 
 
+def is_ancestor(repo: Path, commit: str, ref: str) -> bool:
+    """Есть ли коммит в истории ref; несуществующий коммит или ref — не в истории."""
+    res = _git(repo, "merge-base", "--is-ancestor", commit, ref)
+    if res.returncode in (0, 1):
+        return res.returncode == 0
+    if _git(repo, "rev-parse", "--verify", "--quiet", commit + "^{commit}").returncode != 0 \
+            or _git(repo, "rev-parse", "--verify", "--quiet", ref + "^{commit}").returncode != 0:
+        return False
+    raise GitError("git merge-base --is-ancestor failed: " + (res.stdout + res.stderr).strip())
+
+
 def worktree_path(repo: Path, key: str) -> Path:
     return Path(repo) / WORKTREES_DIR / key
 
@@ -54,7 +65,7 @@ def _ensure_excluded(repo: Path) -> None:
         f.write(prefix + line + "\n")
 
 
-def _branch_exists(repo: Path, branch: str) -> bool:
+def branch_exists(repo: Path, branch: str) -> bool:
     return _git(repo, "rev-parse", "--verify", "--quiet", "refs/heads/" + branch).returncode == 0
 
 
@@ -73,7 +84,7 @@ def ensure_worktree(repo: Path, key: str, branch: str, base: str, merge: List[st
     else:
         _ensure_excluded(repo)
         run_git(repo, "worktree", "prune")
-        if _branch_exists(repo, branch):
+        if branch_exists(repo, branch):
             run_git(repo, "worktree", "add", str(path), branch)
         else:
             run_git(repo, "worktree", "add", "-b", branch, str(path), base)

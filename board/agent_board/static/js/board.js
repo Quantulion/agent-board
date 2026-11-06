@@ -171,6 +171,7 @@ export function cardModel(task, ctx) {
     proposal: ctx.proposalKeys.has(task.key),
     review: reviewChip(task),
     ship: shipChip(task),
+    unmerged: SHIPPED.has(status) && task.kind !== 'research' ? base : null,
     tracker: trackerLink(task),
   };
 }
@@ -456,6 +457,7 @@ export function mountBoard(root, store, ctx) {
     if (m.proposal) chips.push(h('span', { class: 'chip pa', title: T.proposalTitle }, icon('spark'), T.proposalChip));
     if (m.review) chips.push(h('span', { class: 'chip rvw ' + m.review.cls }, icon('eye'), m.review.text));
     if (m.ship) chips.push(h('span', { class: 'chip shp ' + m.ship.cls }, icon('send'), m.ship.text));
+    if (m.unmerged) chips.push(h('span', { class: 'chip unmerged', title: T.unmergedTitle }, icon('branch'), T.unmerged(m.unmerged)));
     if (m.tracker) chips.push(trackerChip(m.tracker));
     if (chips.length) parts.push(h('div', { class: 'meta' }, chips));
     return parts;

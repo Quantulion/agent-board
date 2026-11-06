@@ -193,6 +193,10 @@ Besides the tasks, the project snapshot (`state`) contains `project_agent: {stat
 - Full output — `<project>/logs/<KEY>.ship.log` (each send starts the log over), the card shows the last 4 KB. The project's tracker secrets (token, cookie) are masked as `***` in the log before it is written to disk, in the tail on the card and in the thread message; do not print other secrets and do not put them into the command: it is stored in `project.json`.
 - `task.ship`: `{state: queued|running|done|error|skipped|interrupted|cancelled, at, output_tail, exit_code, error, reason}`; events `ship_requested`, `ship_started`, `ship_finished {ok, exit_code}`.
 
+### Merging into the base branch
+
+At server start and every 5 minutes the runner checks tasks in `approved` and `sent` (except research tasks and tasks being sent right now): are they merged into their repository's base branch (`base` in `repos`, `main` by default; the local branch is checked, the board does not run `git fetch`/`pull`). A task is merged when its approval commit (`task_committed`) and the tip of the task branch (if the branch still exists) are in the base history (`git merge-base --is-ancestor`). A merged task moves to `done` as `system`, the thread gets "Merged into <base>", and dependent tasks with a session are moved onto the base, as after a manual move to `done`. A branch without its own commits (nothing to commit on approval) does not differ from the base by history, so it is never taken as merged: the user closes such a task. Cards of tasks in `approved`/`sent` show a "not merged into <base>" mark.
+
 ## Tracker
 
 Jira (Server/DC and Cloud, REST v2) and GitHub Issues are supported. Settings are the `tracker` key in `project.json` (the full list of keys is in the table above), default `{"type": "none"}`.

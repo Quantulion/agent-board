@@ -200,6 +200,20 @@ test('cardModel: ожидание слота с упёршимся лимито�
   assert.equal(running.slot, null);
 });
 
+test('cardModel: одобренная или отправленная задача помечена «не влито в» базу своего репозитория', () => {
+  // arrange
+  const ctx = { byKey: new Map(), proposalKeys: new Set(), repoBase: new Map([['api', 'develop']]) };
+  const approved = task('A', { status: 'approved', repo: 'api' });
+  const sent = task('B', { status: 'sent', repo: 'other' });
+  const done = task('C', { status: 'done', repo: 'api' });
+  const research = task('D', { status: 'approved', repo: 'api', kind: 'research' });
+  // act / assert
+  assert.equal(cardModel(approved, ctx).unmerged, 'develop');
+  assert.equal(cardModel(sent, ctx).unmerged, 'main', 'база по умолчанию');
+  assert.equal(cardModel(done, ctx).unmerged, null, 'влитая задача уже в «Готово»');
+  assert.equal(cardModel(research, ctx).unmerged, null, 'исследование не вливается');
+});
+
 test('stepperModel: пройденные стадии, текущая и пропущенный трекер', () => {
   const states = (stage, tracker) => stepperModel(stage, tracker).map(s => s.id + ':' + s.state).join(' ');
   assert.equal(states('decomposition', 'jira'), 'decomposition:cur tracker:todo work:todo done:todo');
