@@ -1,5 +1,6 @@
 // Английский интерфейс: проект с language=en и английскими данными, на основных экранах не должно быть кириллицы —
-// список проектов, разбивка, доска, карточка (все вкладки), меню статуса, граф, панель «Проект», окно новой задачи.
+// список проектов, разбивка, доска, карточка (все вкладки), меню статуса, граф, панель «Проект», окна новой задачи
+// и настроек проекта.
 // Запуск из корня репозитория: node ui-tests/english.mjs
 import path from 'node:path';
 import puppeteer from 'puppeteer';
@@ -120,6 +121,12 @@ try {
   await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent === 'New task').click());
   await page.waitForSelector('.modal input', { timeout: 10000 });
   await check('newTask');
+  await page.keyboard.press('Escape');
+
+  // окно настроек проекта
+  await page.click('[data-action="settings"]');
+  await page.waitForSelector('#st-max_agents', { timeout: 10000 });
+  await check('settings');
 
   results.errors = errors;
   ok = Object.entries(results).every(([, v]) => Array.isArray(v) && v.length === 0);

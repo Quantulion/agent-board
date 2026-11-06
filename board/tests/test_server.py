@@ -2290,6 +2290,26 @@ def test_config_get__not_user__is_forbidden(server, query):
     assert r.status == 403
 
 
+def test_config_schema__returns_settable_fields_with_descriptions(server):
+    # act
+    r = get(server, "/api/p/pay/config/schema")
+    # assert
+    assert r.status == 200
+    body = r.json()
+    by_name = {f["name"]: f for f in body["fields"]}
+    assert by_name["max_agents"]["type"] == "integer" and by_name["max_agents"]["default"] == 3
+    assert by_name["repos"]["type"] == "array" and by_name["repos"]["shape"]["required"] == ["name", "path"]
+    assert all(f["description"] for f in body["fields"])
+    assert {"slug", "stage"} <= set(body["not_settable"]) and not {"slug", "stage"} & set(by_name)
+
+
+def test_config_schema__unknown_project__not_found(server):
+    # act
+    r = get(server, "/api/p/nope/config/schema")
+    # assert
+    assert r.status == 404
+
+
 def test_config_set__valid_fields__saved_and_event_written(server, git_repo):
     # arrange
     fields = {"max_agents": 2, "repos": [{"name": "app", "path": str(git_repo), "base": "main"}],

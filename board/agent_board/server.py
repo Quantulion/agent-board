@@ -21,6 +21,7 @@ from .board import Board, ConfigConflict, new_task_from_dict
 from .messages import LANG_HEADER, localize, msg, normalize, reason
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
+from .schema import config_schema
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
 from .worktree import GitError, changed_files, diff as worktree_diff, worktree_path
 
@@ -342,6 +343,9 @@ class _Handler(BaseHTTPRequestHandler):
             if (query.get("actor") or [""])[0] != "user":
                 raise PermissionError(msg("api.config_read_user_only"))
             return self._send_json(200, {"config": board.store.load_config().to_dict()})
+        if rest == ["config", "schema"]:
+            # описание полей настроек одинаково для всех проектов и данных проекта не содержит
+            return self._send_json(200, config_schema())
         if len(rest) == 2 and rest[0] == "threads":
             messages = board.store.read_thread(rest[1])
             return self._send_json(200, {"messages": [m.to_dict() for m in messages]})

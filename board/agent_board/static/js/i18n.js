@@ -1,5 +1,25 @@
 // Все строки интерфейса на двух языках; язык выбирается по config.language проекта.
 
+// описания полей настроек по-русски; в английском интерфейсе описания берутся из схемы настроек
+const RU_HELP = {
+  title: 'Название проекта на доске.',
+  chains: 'Зависимая задача стартует, как только её зависимость одобрена, — от ветки зависимости; выключено — только после «Готово».',
+  max_agents: 'Сколько ходов агентов одновременно идёт в этом проекте.',
+  global_max_agents: 'Сколько ходов агентов одновременно идёт на всём сервере.',
+  language: 'Язык интерфейса и сообщений агентов (например, ru, en).',
+  repos: 'Репозитории проекта: имя, абсолютный путь к рабочей копии git, базовая ветка.',
+  tracker: 'Трекер задач для заведения задач и чтения их статусов; секреты — только именем переменной окружения или путём к файлу.',
+  review: 'Инструмент ревью кода для раундов ревью готовых задач.',
+  ship: 'Команда, которая отправляет одобренную ветку задачи на ревью (push, PR/MR); запускается только по запросу пользователя.',
+  resources: 'Общие ресурсы с монопольным доступом для agent-board lock-run (тестовые стенды, функциональные тесты).',
+  agent_rules: 'Дополнительные правила в промпте каждого агента задачи и агента проекта (ссылки на CLAUDE.md/AGENTS.md, команды сборки и тестов).',
+  harness: 'CLI, которым запускаются фоновые сессии агентов, и режим разрешений.',
+  branch_template: 'Шаблон имени ветки задачи.',
+  project_brief: 'Описание проекта для агента проекта: цель, ключевые решения, ограничения.',
+  links: 'Ссылки проекта в интерфейсе (план, спека, макеты).',
+  decomposition_rules: 'Правила, которым должна следовать каждая задача разбивки (размер, один репозиторий на задачу, тесты); агент проекта сверяет с ними задачи.',
+};
+
 const RU = {
   statusLabels: {
     not_started: 'Не начата', blocked: 'Заблокирована', in_progress: 'В работе', waiting_answer: 'Ждёт ответа',
@@ -358,6 +378,35 @@ const RU = {
     rejectedToast: 'Предложение отклонено',
   },
   // новая задача
+  settings: {
+    open: 'Настройки проекта',
+    title: 'Настройки проекта',
+    loadFailed: msg => 'Не удалось загрузить настройки: ' + msg,
+    slug: 'Имя проекта',
+    stage: 'Стадия',
+    stageHint: 'Меняется кнопками на шкале этапов',
+    simple: 'Основное',
+    compound: 'Составные настройки',
+    jsonHint: 'Значения в формате JSON; перед сохранением их проверяет сервер.',
+    labels: {
+      title: 'Название', language: 'Язык', max_agents: 'Агентов в проекте', global_max_agents: 'Агентов на сервере',
+      chains: 'Цепочки задач', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
+      agent_rules: 'Правила для агентов', decomposition_rules: 'Правила разбивки', repos: 'Репозитории',
+      tracker: 'Трекер', review: 'Ревью', ship: 'Отправка в ревью', harness: 'CLI агентов', resources: 'Общие ресурсы',
+      links: 'Ссылки',
+    },
+    help: name => RU_HELP[name] || '',
+    example: 'Пример',
+    needInt: 'Нужно целое число не меньше 1',
+    badJson: msg => 'Некорректный JSON: ' + msg,
+    needObject: 'Нужен JSON-объект: {…}',
+    needArray: 'Нужен JSON-список: […]',
+    save: 'Сохранить',
+    checking: 'Проверка…',
+    saved: names => 'Настройки сохранены: ' + names.join(', '),
+    noChanges: 'Изменений нет',
+    footer: 'Сохраняется от вашего имени после проверки',
+  },
   nt: {
     key: 'Ключ',
     keyHint: 'Следующий свободный номер, можно изменить',
@@ -825,6 +874,36 @@ const EN = {
     rejected: 'Rejected — the graph did not change',
     appliedToast: what => 'Applied: ' + what,
     rejectedToast: 'Proposal rejected',
+  },
+  settings: {
+    open: 'Project settings',
+    title: 'Project settings',
+    loadFailed: msg => 'Could not load settings: ' + msg,
+    slug: 'Project name',
+    stage: 'Stage',
+    stageHint: 'Changed with the buttons on the stage bar',
+    simple: 'General',
+    compound: 'Structured settings',
+    jsonHint: 'Values in JSON; the server checks them before saving.',
+    labels: {
+      title: 'Title', language: 'Language', max_agents: 'Agents in project', global_max_agents: 'Agents on server',
+      chains: 'Task chains', branch_template: 'Branch template', project_brief: 'Project brief',
+      agent_rules: 'Agent rules', decomposition_rules: 'Decomposition rules', repos: 'Repositories',
+      tracker: 'Tracker', review: 'Review', ship: 'Ship to review', harness: 'Agent CLI', resources: 'Shared resources',
+      links: 'Links',
+    },
+    // описания полей по-английски приходят из схемы настроек
+    help: () => '',
+    example: 'Example',
+    needInt: 'Must be a whole number of at least 1',
+    badJson: msg => 'Invalid JSON: ' + msg,
+    needObject: 'Must be a JSON object: {…}',
+    needArray: 'Must be a JSON list: […]',
+    save: 'Save',
+    checking: 'Checking…',
+    saved: names => 'Settings saved: ' + names.join(', '),
+    noChanges: 'No changes',
+    footer: 'Saved on your behalf after a check',
   },
   nt: {
     key: 'Key',
