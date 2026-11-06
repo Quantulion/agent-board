@@ -2257,7 +2257,7 @@ def test_config_set__valid_fields__saved_and_event_written(server, git_repo):
     # arrange
     fields = {"max_agents": 2, "repos": [{"name": "app", "path": str(git_repo), "base": "main"}],
               "links": [{"title": "Спека", "href": " https://example.com/spec "}],
-              "ship": {"command": "git push origin {branch}", "timeout": 120},
+              "ship": {"command": "git push origin {branch} {tracker_key}", "timeout": 120, "on_approve": True},
               "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
                           "auth": {"type": "token_env", "env": "JIRA_TOKEN"}, "statuses": {"Done": "done"}},
               "harness": {"type": "fake"}, "review": {"tool": "none"}}
@@ -2305,6 +2305,9 @@ JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "PROJ",
     ({"ship": {"command": "cat <<EOF\n{title}\nEOF"}}, "<<"),
     ({"ship": {"command": "run {secret}"}}, "плейсхолдер"),
     ({"ship": {"command": "true", "timeout": 0}}, "timeout"),
+    ({"ship": {"command": None, "on_approve": True}}, "ship.command"),
+    ({"ship": {"command": "  ", "on_approve": True}}, "ship.command"),
+    ({"ship": {"command": "true", "on_approve": "yes"}}, "on_approve"),
     ({"tracker": dict(JIRA_OK, auth={"type": "token_env", "env": "X", "token": "s3cret"})}, "auth"),
     ({"tracker": dict(JIRA_OK, password="x")}, "Недопустимые ключи"),
     ({"tracker": dict(JIRA_OK, statuses={"Review": "approved"})}, "approved"),

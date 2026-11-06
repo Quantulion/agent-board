@@ -1906,6 +1906,141 @@ def test_ship_output_is_scrubbed_of_tracker_secrets(make_project, start_server, 
     assert SHIP_SECRET not in "\n".join(p.read_text(errors="replace") for p in store.root.rglob("*") if p.is_file())
 
 
+# --- отправка в ревью сразу после одобрения ---
+
+def test_on_approve__approve_button__commits_then_ships_with_tracker_values(make_project, start_server, calls,
+                                                                           tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"on_approve": True, "command": "printf '%s|%s|%s|%s\\n' {tracker_key} {tracker_url} "
+                                                              "\"$AGENT_BOARD_TRACKER_KEY\" \"$AGENT_BOARD_TRACKER_URL\" > "
+                                                              + str(out)})
+    srv = start_server()
+    add(srv, "T-1", script({"write": {"path": "f.txt", "text": "x"}}, {"cli": ["status", "T-1", "in_review"]}))
+    srv.board_for("pay").update_task("T-1", "user", {"tracker_key": "PROJ-7",
+                                                     "tracker_url": "https://tracker.example.com/PROJ-7"})
+    wait_events(store, "turn_finished", "T-1")
+    # act
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
+    state = wait_ship(store, "T-1")
+    # assert
+    assert state["state"] == "done" and task(store, "T-1").status == Status.SENT
+    assert out.read_text().strip() == "PROJ-7|https://tracker.example.com/PROJ-7|PROJ-7|https://tracker.example.com/PROJ-7"
+    assert events(store, "task_committed", "T-1")[0].seq < events(store, "ship_started", "T-1")[0].seq
+    assert [e.data for e in events(store, "ship_requested")] == [{"keys": ["T-1"], "auto": True}]
+
+
+def test_on_approve__no_tracker_link__placeholders_and_env_are_empty(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"on_approve": True, "command": "printf '[%s][%s][%s][%s]' {tracker_key} {tracker_url} "
+                                                              "\"$AGENT_BOARD_TRACKER_KEY\" \"$AGENT_BOARD_TRACKER_URL\" > "
+                                                              + str(out)})
+    srv = start_server()
+    # act
+    approved(srv, store, "T-1")
+    wait_ship(store, "T-1")
+    # assert
+    assert out.read_text() == "[][][][]"
+
+
+def test_on_approve__disabled__approval_does_not_ship(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"command": "touch " + str(out), "on_approve": False})
+    srv = start_server()
+    # act
+    approved(srv, store, "T-1")
+    runner_sync(srv)
+    # assert
+    assert task(store, "T-1").status == Status.APPROVED and task(store, "T-1").ship is None
+    assert not events(store, "ship_requested") and not out.exists()
+
+
+def test_on_approve__review_round_approval__ships(make_project, start_server, calls, crit_bin, tmp_path):
+    # arrange
+    store = review_project(make_project, crit_bin, ship={"command": "true", "on_approve": True})
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    # act
+    fake_crit.finish(crit_dir(store), first["session"])
+    state = wait_ship(store, "A")
+    # assert
+    assert state["state"] == "done" and task(store, "A").status == Status.SENT
+
+
+def test_on_approve__commit_fails__no_ship(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"command": "touch " + str(out), "on_approve": True})
+    srv = start_server()
+    add(srv, "A", script({"write": {"path": "x.txt", "text": "<<<<<<< ours\nmine\n"}}, {"cli": ["status", "A", "in_review"]}))
+    wait_events(store, "turn_finished", "A")
+    # act
+    srv.board_for("pay").transition("A", Status.APPROVED, "user")
+    wait_for(lambda: task(store, "A").status == Status.IN_REVIEW, what="A вернулась на ревью")
+    runner_sync(srv)
+    # assert
+    assert not events(store, "ship_requested") and task(store, "A").ship is None and not out.exists()
+
+
+def test_on_approve__dependency_still_shipping__dependent_goes_after_it(make_project, start_server, calls, tmp_path):
+    # arrange: отправка A ждёт флага, пока одобряется B
+    flag, out = tmp_path / "go", tmp_path / "order.txt"
+    store = make_project(ship={"on_approve": True, "command": "if [ {key} = A ]; then while [ ! -e %s ]; do sleep 0.05; "
+                                                              "done; fi; echo {key} {base} >> %s" % (flag, out)})
+    srv = start_server()
+    approved(srv, store, "A")
+    wait_ship(store, "A", states=("running",))
+    # act
+    approved(srv, store, "B", deps=["A"])
+    wait_ship(store, "B", states=("queued",))
+    runner_sync(srv)
+    flag.write_text("")
+    wait_ship(store, "B")
+    # assert
+    assert out.read_text().splitlines() == ["A main", "B A"]
+    assert task(store, "A").status == task(store, "B").status == Status.SENT
+
+
+def test_on_approve__dependency_ship_fails__dependent_skipped(make_project, start_server, calls, tmp_path):
+    # arrange
+    flag = tmp_path / "go"
+    store = make_project(ship={"on_approve": True, "command": "if [ {key} = A ]; then while [ ! -e %s ]; do sleep 0.05; "
+                                                              "done; exit 3; fi" % flag})
+    srv = start_server()
+    approved(srv, store, "A")
+    wait_ship(store, "A", states=("running",))
+    approved(srv, store, "B", deps=["A"])
+    wait_ship(store, "B", states=("queued",))
+    runner_sync(srv)
+    # act
+    flag.write_text("")
+    state = wait_ship(store, "B")
+    # assert
+    assert task(store, "A").ship["state"] == "error"
+    assert state["state"] == "skipped" and "A" in state["reason"] and task(store, "B").status == Status.APPROVED
+
+
+def test_on_approve__dependency_approved_but_not_shipped__error_in_thread(make_project, start_server, calls, tmp_path):
+    # arrange: A одобрена, пока автоотправка была выключена
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"command": "echo {key} >> " + str(out)})
+    srv = start_server()
+    approved(srv, store, "A")
+    srv.board_for("pay").update_config({"ship": {"command": "echo {key} >> " + str(out), "on_approve": True}})
+    # act
+    approved(srv, store, "B", deps=["A"])
+    state = wait_ship(store, "B", states=("error",))
+    runner_sync(srv)
+    # assert
+    assert "A" in state["error"] and task(store, "B").status == Status.APPROVED
+    assert any("Автоматическая отправка" in t and "A" in t for t in thread_texts(store, "B"))
+    assert not out.exists()
+
+
 # --- уборка: логи ревью и данные crit закрытых задач ---
 
 def test_review_round__large_log__trimmed_to_limit(make_project, start_server, calls, crit_bin, monkeypatch):

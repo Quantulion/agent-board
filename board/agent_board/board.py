@@ -13,7 +13,7 @@ from .config import (
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
-from .ship import check_request, order as ship_order, settings as ship_settings
+from .ship import check_auto, check_request, is_shipping, order as ship_order, settings as ship_settings
 from .tracker import is_http_url, validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
@@ -448,12 +448,22 @@ class Board:
             ship_settings(self.store.load_config())
             check_request(keys, tasks)
             for key in keys:
-                if isinstance(tasks[key].ship, dict) and tasks[key].ship.get("state") in ("queued", "running"):
+                if is_shipping(tasks[key]):
                     raise ValueError("Задача %s уже отправляется" % key)
             ordered = ship_order(keys, tasks)
             for key in ordered:
                 self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
             return [self._emit("ship_requested", {"keys": ordered})]
+
+    def request_auto_ship(self, key: str) -> List[Event]:
+        """Отправка одобренной задачи по настройке ship.on_approve: та же очередь, что у запроса пользователя."""
+        with self._lock:
+            tasks = self.store.load_tasks()
+            self._get(tasks, key)
+            ship_settings(self.store.load_config())
+            check_auto(key, tasks)
+            self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
+            return [self._emit("ship_requested", {"keys": [key], "auto": True})]
 
     def approve(self, key: str, actor: str, note: Optional[str] = None) -> List[Event]:
         """Одобрение задачи на ревью; note — системное сообщение в тред (например, откуда одобрение)."""

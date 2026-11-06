@@ -19,7 +19,7 @@ class ProjectConfig(_Serializable):
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
     review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
-    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600})
+    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600, "on_approve": False})
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
@@ -190,15 +190,21 @@ def _check_ship(config: ProjectConfig) -> None:
 
     ship = config.ship
     if not isinstance(ship, dict):
-        raise ValueError("ship должен быть объектом {command, timeout}")
+        raise ValueError("ship должен быть объектом {command, timeout, on_approve}")
     if ship.get("command") is not None:
         _text(ship["command"], "ship.command")
-    if isinstance(ship.get("command"), str) and ship["command"].strip():
+    has_command = isinstance(ship.get("command"), str) and bool(ship["command"].strip())
+    if has_command:
         ship_settings(config)
     else:
         timeout = ship.get("timeout", 600)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError("ship.timeout должен быть положительным числом секунд")
+    on_approve = ship.get("on_approve", False)
+    if not isinstance(on_approve, bool):
+        raise ValueError("ship.on_approve должен быть true или false")
+    if on_approve and not has_command:
+        raise ValueError("ship.on_approve требует команду отправки: задайте ship.command")
 
 
 def _check_harness(config: ProjectConfig) -> None:
@@ -282,7 +288,7 @@ def validate_structure(config: ProjectConfig) -> None:
     if not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS:
         raise ValueError("Неизвестный инструмент ревью: review.tool должен быть одним из: %s" % ", ".join(REVIEW_TOOLS))
     if not isinstance(config.ship, dict):
-        raise ValueError("ship должен быть объектом {command, timeout}")
+        raise ValueError("ship должен быть объектом {command, timeout, on_approve}")
     if not isinstance(config.resources, list):
         raise ValueError("resources должен быть списком ресурсов")
     harness = config.harness

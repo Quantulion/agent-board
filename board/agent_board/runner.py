@@ -88,6 +88,7 @@ SHIP_ERROR_TEXT = "Отправка в ревью не выполнена: %s"
 SHIP_NOT_STARTED_TEXT = "Отправка в ревью не была запущена из-за перезапуска сервера — отправьте задачу снова."
 SHIP_COMMITTED_TEXT = "Перед отправкой закоммичены оставшиеся изменения (%s)."
 SHIP_CANCELLED_TEXT = "Задача отменена, отправка в ревью остановлена."
+SHIP_AUTO_ERROR_TEXT = "Автоматическая отправка в ревью после одобрения не запущена: %s"
 SHIP_MULTI_DEPS_TEXT = "несколько незавершённых зависимостей — отправьте их сначала"
 
 Key = Tuple[str, str]
@@ -485,7 +486,7 @@ class Runner:
         elif event.type == "review_requested":
             self._start_review(slug, str(d.get("key")), reconnect=False)
         elif event.type == "ship_requested":
-            self._start_ship(slug, [str(x) for x in d.get("keys") or []])
+            self._start_ship(slug, [str(x) for x in d.get("keys") or []], bool(d.get("auto")))
         elif event.type == "stage_changed":
             if d.get("to") == "work":
                 self._start_work(slug)
@@ -574,6 +575,20 @@ class Runner:
             return
         if sha:
             board.record("task_committed", {"key": key, "sha": sha})
+        self._auto_ship(board, task)
+
+    def _auto_ship(self, board: Board, task: Task) -> None:
+        """По настройке ship.on_approve закоммиченная одобренная задача сразу встаёт в очередь отправки."""
+        if task.kind == "research" or not ship.on_approve(board.store.load_config()):
+            return
+        try:
+            board.request_auto_ship(task.key)
+        except ValueError as e:
+            current = board.store.load_tasks().get(task.key)
+            if current is not None and not ship.is_shipping(current):
+                self._ship_set(board, task.key, state="error", at=self._clock(), error=str(e), output_tail="",
+                               exit_code=None)
+            board.post_message(task.key, "system", SHIP_AUTO_ERROR_TEXT % e)
 
     def _interrupt_turn(self, k: Key) -> None:
         """Останавливает идущий ход и ждёт конца процесса; накопленные причины остаются."""
@@ -1212,8 +1227,23 @@ class Runner:
         board.post_message(k[1], "system", SHIP_CANCELLED_TEXT)
         self._ship_next(sh.batch)
 
-    def _start_ship(self, slug: str, keys: List[str]) -> None:
+    def _start_ship(self, slug: str, keys: List[str], auto: bool = False) -> None:
+        if auto:
+            batch = self._dep_batch(slug, keys)
+            if batch is not None:
+                # зависимость ещё отправляется: задача уйдёт следом в той же очереди и будет пропущена при её ошибке
+                batch.queue.extend(keys)
+                return
         self._ship_next(_ShipBatch(slug, keys))
+
+    def _dep_batch(self, slug: str, keys: List[str]) -> Optional[_ShipBatch]:
+        """Идущая очередь отправки, в которой есть зависимость одной из задач."""
+        tasks = self._board(slug).store.load_tasks()
+        deps = {d for key in keys if key in tasks for d in tasks[key].deps}
+        for (s, key), sh in self._ships.items():
+            if s == slug and (key in deps or deps & set(sh.batch.queue)):
+                return sh.batch
+        return None
 
     def _ship_next(self, batch: _ShipBatch) -> None:
         while batch.queue:
@@ -1263,7 +1293,9 @@ class Runner:
         if task is None:
             batch.failed.add(key)
             return False
-        blockers = [d for d in task.deps if d in batch.failed]
+        # одобренная, но не отправленная зависимость: её отправка не удалась или не запускалась
+        blockers = sorted(d for d in task.deps if d in batch.failed
+                          or (d in tasks and tasks[d].status == Status.APPROVED))
         if blockers:
             self._ship_skip(batch, key, "зависимость %s не отправлена" % ", ".join(blockers))
             return False
@@ -1280,7 +1312,8 @@ class Runner:
                 raise ValueError("у задачи нет ветки")
             rendered = ship.render(command, {
                 "key": key, "title": task.title, "branch": task.branch, "base": base,
-                "worktree": str(path), "repo": str(repo)})
+                "worktree": str(path), "repo": str(repo),
+                "tracker_key": task.tracker_key or "", "tracker_url": task.tracker_url or ""})
             sha = commit_all(path, "%s %s" % (key, task.title))
             if sha:
                 board.record("task_committed", {"key": key, "sha": sha})
@@ -1291,7 +1324,7 @@ class Runner:
         log = board.store.root / "logs" / (key + ".ship.log")
         scrub = _scrubber(config)
         try:
-            proc = ship.start(rendered, path, log, key, scrub=scrub)
+            proc = ship.start(rendered, path, log, key, scrub=scrub, extra_env=ship.tracker_env(task))
         except OSError as e:
             self._ship_fail(batch, key, "не удалось запустить команду: %s" % e)
             return False

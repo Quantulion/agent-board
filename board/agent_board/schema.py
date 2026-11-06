@@ -18,7 +18,8 @@ DESCRIPTIONS = {
     "tracker": "Issue tracker for creating issues and reading their statuses; secrets only by env var name or "
                "file path.",
     "review": "Code review tool for review rounds of finished tasks.",
-    "ship": "Command that sends an approved task branch to review (push, PR/MR); runs only on user request.",
+    "ship": "Command that sends an approved task branch to review (push, PR/MR); runs on user request, "
+            "or right after approval with on_approve.",
     "resources": "Shared resources with exclusive access for `agent-board lock-run` (test stands, functional tests).",
     "agent_rules": "Extra rules added to every task agent and project agent prompt (links to CLAUDE.md/AGENTS.md, "
                    "build and test commands).",
@@ -76,12 +77,16 @@ def _shapes() -> dict:
         "review": {"tool": {"enum": list(REVIEW_TOOLS)}, "binary": "review CLI binary, default crit"},
         "ship": {
             "keys": {"command": "shell command template or null (shipping disabled)",
-                     "timeout": "seconds, default %g" % ship.DEFAULT_TIMEOUT},
+                     "timeout": "seconds, default %g" % ship.DEFAULT_TIMEOUT,
+                     "on_approve": "true: queue the command right after the approval commit (button or review round), "
+                                   "as `agent-board ship <KEY>` would; default false; requires command"},
             "placeholders": list(ship.PLACEHOLDERS),
             "rules": ["Placeholder values are shell-escaped already: never put a placeholder inside quotes.",
                       "ANSI-C quotes $'...' are not supported.",
                       "Heredocs (<<) are not supported: move long text into a script.",
-                      "{base} is the branch of the only unfinished dependency, else the repo base branch."],
+                      "{base} is the branch of the only unfinished dependency, else the repo base branch.",
+                      "{tracker_key} and {tracker_url} are the linked tracker issue, empty without a link; also in "
+                      "env AGENT_BOARD_TRACKER_KEY and AGENT_BOARD_TRACKER_URL."],
             "example": "gh pr create --base {base} --head {branch} --title {title} --fill",
         },
         "harness": {
