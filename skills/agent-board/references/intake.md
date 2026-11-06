@@ -1,0 +1,66 @@
+# Intake: from plan to tasks
+
+Turn the user's input into board tasks with dependencies. `<slug>` is the project slug.
+
+## Inputs
+
+| Input | What to do |
+|---|---|
+| Plan or spec file (writing-plans, brainstorming, grilling output) | Read it whole. Decompose into tasks |
+| Free text in the chat | Same as a plan; ask about gaps before creating anything |
+| Ready list or table of tasks | Do not re-split. Keep the user's tasks, fill missing fields and dependencies |
+| Tracker keys (`PRJ-123`) | Treat as ready tasks; read their text only from what the user gives you |
+
+Tracker keys are not a board field you can set: the board links tasks to the tracker itself at the tracker stage.
+Put the key in the description (`Tracker: PRJ-123`) and tell the user linking happens after approval.
+
+## Task fields
+
+`add-task` accepts exactly these keys; anything else is rejected.
+
+| Field | Rule |
+|---|---|
+| `key` | `<PREFIX>-<n>`: PREFIX is a short upper-case form of the slug (`PAY`), or the prefix existing tasks use. Unique, never starts with `_` |
+| `title` | What the task delivers, ≤ 80 characters, imperative ("Add PG schema for payments") |
+| `description` | What to do: scope, files or components, decisions from the plan that apply. Enough for an agent who has not read the plan |
+| `done_when` | A checkable criterion: tests pass, endpoint returns X, report answers Y. Not "done" or "implemented" |
+| `repo` | One `name` from `config get --json` → `repos`. A task touching two repos is two tasks |
+| `kind` | `code`, or `research` when the result is a report, not a change |
+| `estimate` | Days, a number, only if the plan gives one. Otherwise omit |
+| `deps` | Keys of tasks whose code or result this task needs. Order of work alone is not a dependency |
+
+One task = one reviewable, deployable unit. Follow the project's `decomposition_rules` while splitting
+(`references/decomposition-rules.md`).
+
+## Steps
+
+1. Read existing tasks: `agent-board --project <slug> state`. A plan task matches an existing one by key,
+   or by the same title (ignore case and punctuation).
+2. Draft the list and the graph in memory. Never invent work the plan does not contain. Ambiguity that changes
+   the split (unclear scope, which repo) → ask the user, one question at a time. The rest → "open questions"
+   in the final summary.
+3. Show the user a compact table (key, title, repo, deps, estimate) and get a yes before writing.
+4. Create new tasks in topological order (dependencies first), one call each:
+```
+agent-board --project <slug> add-task --json '{"key": "PAY-2", "title": "Add PG schema for payments", "description": "Tables payments, refunds; migrations only.", "done_when": "Migrations apply to an empty database in tests", "repo": "api", "kind": "code", "estimate": 2, "deps": ["PAY-1"]}'
+```
+5. Existing task that matches but whose text or dependencies changed in the plan (stage `decomposition` only).
+   Change only what differs; `AGENT_BOARD_ACTOR=user` makes the edit the user's (agents may not change task text):
+```
+AGENT_BOARD_ACTOR=user agent-board --project <slug> update PAY-2 --description 'Tables payments, refunds' --done-when 'Migrations apply in tests' --estimate 2
+agent-board --project <slug> deps PAY-3 --json '["PAY-1", "PAY-2"]'
+```
+   `--title` works the same way. `deps` replaces the whole list. `repo` or `kind` changed → tell the user;
+   they cancel the old task on the board and you add a new one with a new key.
+6. Errors:
+   - "Зависимость от неизвестной задачи" → you broke topological order; create the dependency first.
+   - "Зависимости образуют цикл" → the plan has a cycle. Find which edge is only order, not a real need, drop it;
+     if unsure, ask the user. Never create a task without its real dependency to get past the error.
+   - "Задача уже существует" → it is a match from step 1: skip it.
+   - Field or JSON error → fix the payload, retry. Put JSON in single quotes; write `'` as `'\''`.
+7. Run `agent-board --project <slug> state` again and check: every plan task is there once, deps match the plan.
+
+## Summary for the user
+
+Created (keys), updated, skipped as duplicates, open questions. No agent has started: work starts when the user
+approves the decomposition on the page.
