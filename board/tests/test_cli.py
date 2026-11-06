@@ -878,6 +878,31 @@ def test_update__tracker_link_by_user__is_saved(srv, capsys):
     assert (task["tracker_key"], task["tracker_url"]) == ("PRJ-1", "https://tracker.example/PRJ-1")
 
 
+def test_update__empty_tracker_link_by_user__clears_link(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1", "--tracker-url", "https://tracker.example/PRJ-1")
+    # act
+    run_json(capsys, "update", "T-1", "--tracker-key", "", "--tracker-url", "")
+    # assert
+    task = run_json(capsys, "show", "T-1")
+    assert (task["tracker_key"], task["tracker_url"]) == (None, None)
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent"])
+def test_update__empty_tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
+    # act
+    code, _, err = run(capsys, "update", "T-1", "--tracker-key", "")
+    # assert
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "show", "T-1")["tracker_key"] == "PRJ-1"
+
+
 @pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
 def test_update__tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
     # arrange
