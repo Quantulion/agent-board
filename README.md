@@ -281,3 +281,7 @@ Scripts one by one (`node ui-tests/<name>.mjs` from the root or `npm run <name>`
 - `decomposition` — the decomposition page.
 
 The task card opens at `#/p/<slug>?task=<KEY>`; the panel width is stored in `localStorage`, message and answer drafts in `sessionStorage`. The board view (columns or graph) and whether the "Project" panel is collapsed are also stored in `localStorage`.
+
+## License
+
+MIT, full text in [LICENSE](LICENSE).
