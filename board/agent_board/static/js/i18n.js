@@ -211,7 +211,18 @@ const RU = {
   queuePos: (resource, pos) => resource + ' · ' + pos + '-й в очереди',
   holds: resource => 'держит ресурс «' + resource + '»',
   agentRunning: 'идёт ход агента',
-  agentWaitingTurn: 'ждёт свободного слота',
+  slot: {
+    chip: { project: 'ждёт слот · лимит проекта', global: 'ждёт слот · общий лимит' },
+    chipUnknown: 'ждёт свободный слот',
+    title: 'Ждёт свободный слот',
+    reason: {
+      project: n => 'В проекте уже работает агентов: ' + (n ?? 'сколько позволяет лимит') + ' — упёрся лимит проекта.',
+      global: n => 'На сервере уже работает агентов: ' + (n ?? 'сколько позволяет лимит') + ' — упёрся общий лимит.',
+    },
+    unknown: 'Упёрся лимит одновременных ходов агентов.',
+    auto: 'Ход начнётся сам, как только освободится слот.',
+    raise: field => 'Поднять лимит ' + field + ': ',
+  },
   agentError: 'ошибка агента',
   chainFrom: branch => 'от ' + branch,
   proposalChip: 'предложение',
@@ -327,7 +338,7 @@ const RU = {
   // панель «Проект»
   project: {
     agent: 'Агент проекта',
-    state: { running: 'работает', idle: 'ждёт', error: 'ошибка хода', parked: 'переписка агентов остановлена' },
+    state: { running: 'работает', idle: 'ждёт', waiting_turn: 'ждёт свободный слот', error: 'ошибка хода', parked: 'переписка агентов остановлена' },
     parked: 'Агенты переписываются без участия пользователя — остановлено. Напишите агенту проекта, чтобы он продолжил.',
     composer: 'Спросить агента проекта…',
     composerHint: 'Изменения графа агент только предлагает',
@@ -684,7 +695,18 @@ const EN = {
   queuePos: (resource, pos) => resource + ' · #' + pos + ' in queue',
   holds: resource => 'holds resource “' + resource + '”',
   agentRunning: 'agent turn in progress',
-  agentWaitingTurn: 'waiting for a free slot',
+  slot: {
+    chip: { project: 'waiting for a slot · project limit', global: 'waiting for a slot · server limit' },
+    chipUnknown: 'waiting for a free slot',
+    title: 'Waiting for a free slot',
+    reason: {
+      project: n => 'Agents already running in this project: ' + (n ?? 'as many as allowed') + ' — the project limit is reached.',
+      global: n => 'Agents already running on the server: ' + (n ?? 'as many as allowed') + ' — the server limit is reached.',
+    },
+    unknown: 'The limit of concurrent agent turns is reached.',
+    auto: 'The turn starts by itself as soon as a slot frees up.',
+    raise: field => 'Raise the ' + field + ' limit: ',
+  },
   agentError: 'agent error',
   chainFrom: branch => 'from ' + branch,
   proposalChip: 'proposal',
@@ -796,7 +818,7 @@ const EN = {
   graphParallel: n => (n > 1 ? 'in parallel: ' + n : 'one task'),
   project: {
     agent: 'Project agent',
-    state: { running: 'working', idle: 'waiting', error: 'turn error', parked: 'agent conversation stopped' },
+    state: { running: 'working', idle: 'waiting', waiting_turn: 'waiting for a free slot', error: 'turn error', parked: 'agent conversation stopped' },
     parked: 'Agents are messaging each other without the user — stopped. Write to the project agent to let it continue.',
     composer: 'Ask the project agent…',
     composerHint: 'The agent only proposes graph changes',

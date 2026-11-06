@@ -90,6 +90,7 @@ test('proposalsTouching: открытые предложения, затраги
 test('agentStateLine: состояние агента проекта человеческим текстом', () => {
   // act + assert
   assert.deepEqual(agentStateLine({ state: 'running' }), { cls: 'run', text: 'работает' });
+  assert.deepEqual(agentStateLine({ state: 'waiting_turn', wait_reason: 'global' }), { cls: 'wait', text: 'ждёт свободный слот' });
   assert.deepEqual(agentStateLine({ state: 'idle' }), { cls: 'idle', text: 'ждёт' });
   assert.deepEqual(agentStateLine({ state: 'error', turn_error: 'boom' }), { cls: 'err', text: 'ошибка хода' });
   assert.deepEqual(agentStateLine({ state: 'idle', parked: true }), { cls: 'err', text: 'переписка агентов остановлена' });

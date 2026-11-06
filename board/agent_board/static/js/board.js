@@ -8,6 +8,7 @@ import { openNewTaskDialog } from './newtask.js';
 import { requestMove, statusMenu } from './status.js';
 import { mountProjectPanel, proposalsTouching } from './project.js';
 import { reviewChip, reviewOf } from './review.js';
+import { raiseCommand, slotWait } from './slot.js';
 import { openShipDialog, shipChip, shippable } from './ship.js';
 import { mountTrackerStage, mountTrackerSync, syncModel, trackerChip, trackerLink } from './tracker.js';
 
@@ -140,7 +141,7 @@ function agentLine(task, status) {
   const m = task.last_message;
   const text = firstLine(task.summary)
     || (m && m.author === 'agent' ? firstLine(m.text) : '')
-    || (live ? T.agentRunning : task.agent_state === 'waiting_turn' ? T.agentWaitingTurn : '');
+    || (live ? T.agentRunning : '');
   return text ? { live, text } : null;
 }
 
@@ -161,6 +162,7 @@ export function cardModel(task, ctx) {
     queue: waiting ? { resource: waiting.resource, position: waiting.position } : null,
     holds: locks.filter(l => l.position === 0).map(l => l.resource),
     agent: agentLine(task, status),
+    slot: slotWait(task.agent_state, task.wait_reason, ctx.config),
     error: task.agent_state === 'error' ? (task.turn_error || T.agentError) : null,
     questions: task.open_questions || 0,
     unread: task.unread || 0,
@@ -434,6 +436,11 @@ export function mountBoard(root, store, ctx) {
           h('i', { class: i === Math.min(m.queue.position, MAX_SLOTS - 1) ? 'me' : null })))));
     }
     for (const r of m.holds) parts.push(h('div', { class: 'qline' }, icon('lock'), T.holds(r)));
+    if (m.slot) {
+      const cmd = raiseCommand(m.slot);
+      parts.push(h('div', { class: 'qline turnwait', title: cmd ? T.slot.raise(m.slot.field) + cmd : null },
+        icon('clock'), m.slot.reason ? T.slot.chip[m.slot.reason] : T.slot.chipUnknown));
+    }
     if (m.agent) {
       parts.push(h('div', { class: 'ag' }, m.agent.live ? h('span', { class: 'live' }) : null, h('span', null, m.agent.text)));
     }
@@ -485,6 +492,7 @@ export function mountBoard(root, store, ctx) {
       byKey,
       proposalKeys: new Set(snap.tasks.filter(t => proposalsTouching(snap.proposals, t.key).length).map(t => t.key)),
       repoBase: new Map((snap.config.repos || []).map(r => [r.name, r.base || DEFAULT_BASE])),
+      config: snap.config,
     };
     for (const c of columnsOf(snap, prefs)) {
       const ref = columns.get(c.id);

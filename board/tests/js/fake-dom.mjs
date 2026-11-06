@@ -60,7 +60,8 @@ class FakeFragment extends FakeNode {
 
 export function installFakeDocument() {
   globalThis.document = {
-    createElement: tag => new FakeElement(tag),
+    // разметку шаблона (иконки) не разбираем: содержимое шаблона пустое
+    createElement: tag => Object.assign(new FakeElement(tag), tag === 'template' ? { content: new FakeFragment() } : {}),
     createTextNode: text => new FakeText(text),
     createDocumentFragment: () => new FakeFragment(),
   };

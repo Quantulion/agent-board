@@ -407,10 +407,13 @@ class Runner:
                     board.record("agent_wake", {"key": key, "reason": "interrupted"})
                     woken.add(key)
                 elif task.agent_state == "waiting_turn":
-                    board.update_task(key, "system", {"agent_state": "idle"})
+                    board.update_task(key, "system", {"agent_state": "idle", "wait_reason": ""})
                     reason = "queued_restart" if task.session_id else "ready"
                     board.record("agent_wake", {"key": key, "reason": reason})
                     woken.add(key)
+            if meta.get("project_agent_state") == "waiting_turn" and PROJECT_THREAD not in restored:
+                # ожидание слота без накопленных пробуждений после перезапуска ждать нечего
+                self._update_project_meta(board, {"project_agent_state": "idle", "project_wait_reason": ""})
             if meta.get("project_agent_state") == "running":
                 self._kill_leftover(board, PROJECT_THREAD, meta.get("project_turn_process"))
                 self._update_project_meta(board, {"project_agent_state": "idle", "project_turn_process": None})
@@ -491,6 +494,10 @@ class Runner:
                 self._start_work(slug)
         elif event.type == "agent_stop":
             self._stop(slug, str(d.get("key")))
+        elif event.type == "config_changed":
+            # поднятый лимит одновременных ходов сразу освобождает слоты для очереди
+            if {"max_agents", "global_max_agents"} & set(d.get("fields") or []):
+                self._drain()
         elif event.type == "agent_wake":
             board = self._board(slug)
             reason = self._ctx.enrich(slug, board.store, event)
@@ -524,7 +531,8 @@ class Runner:
     def _update_project_meta(board: Board, fields: dict) -> None:
         """Состояние агента проекта живёт в meta без событий: изменение отмечается в журнале, чтобы его увидел UI."""
         def visible(meta: dict) -> dict:
-            return {"state": meta.get("project_agent_state") or "idle", "parked": bool(meta.get("project_agent_parked"))}
+            return {"state": meta.get("project_agent_state") or "idle", "parked": bool(meta.get("project_agent_parked")),
+                    "wait_reason": meta.get("project_wait_reason") or ""}
 
         before = visible(board.store.load_meta())
         board.update_meta(fields)
@@ -646,30 +654,43 @@ class Runner:
                 if task.agent_state == "waiting_turn":
                     self._set_state(k, "idle")
                 return
-        if self._has_capacity(k):
+        limit = self._limit_reached(k)
+        if limit is None:
             self._run(k)
         else:
             self._waiting.append(k)
-            self._set_state(k, "waiting_turn")
+            self._set_state(k, "waiting_turn", wait_reason=limit)
 
-    def _has_capacity(self, k: Key) -> bool:
+    def _limit_reached(self, k: Key) -> Optional[str]:
+        """Какой лимит одновременных ходов не даёт начать ход: global, project или None, если слот есть."""
         config = self._board(k[0]).store.load_config()
         if len(self._turns) >= config.global_max_agents:
-            return False
+            return "global"
         # агент проекта учитывается только в общем лимите, чтобы эскалации не ждали задач проекта
         if k[1] == PROJECT_THREAD:
-            return True
+            return None
         in_project = sum(1 for s, key in self._turns if s == k[0] and key != PROJECT_THREAD)
-        return in_project < config.max_agents
+        return None if in_project < config.max_agents else "project"
 
     def _drain(self) -> None:
         for k in list(self._waiting):
             if k in self._parked:
                 self._waiting.remove(k)
                 self._set_state(k, "idle")
-            elif k in self._waiting and self._has_capacity(k):
-                self._waiting.remove(k)
-                self._run(k)
+            elif k in self._waiting:
+                limit = self._limit_reached(k)
+                if limit is None:
+                    self._waiting.remove(k)
+                    self._run(k)
+                elif limit != self._wait_reason(k):
+                    self._set_state(k, "waiting_turn", wait_reason=limit)
+
+    def _wait_reason(self, k: Key) -> str:
+        board = self._board(k[0])
+        if k[1] == PROJECT_THREAD:
+            return board.store.load_meta().get("project_wait_reason") or ""
+        task = board.store.load_tasks().get(k[1])
+        return task.wait_reason if task is not None else ""
 
     def _retry_later(self, k: Key) -> None:
         delays = RETRY_DELAYS or (0.0,)
@@ -687,17 +708,17 @@ class Runner:
         if self._pending.get(k) and k not in self._turns and k not in self._waiting:
             self._schedule(k)
 
-    def _set_state(self, k: Key, state: str, error: Optional[str] = None) -> None:
+    def _set_state(self, k: Key, state: str, error: Optional[str] = None, wait_reason: str = "") -> None:
         board = self._board(k[0])
         if k[1] == PROJECT_THREAD:
-            fields = {"project_agent_state": state}
+            fields = {"project_agent_state": state, "project_wait_reason": wait_reason}
             if error is not None:
                 fields["project_turn_error"] = error
             self._update_project_meta(board, fields)
             return
         if k[1] not in board.store.load_tasks():
             return
-        fields = {"agent_state": state}
+        fields = {"agent_state": state, "wait_reason": wait_reason}
         if error is not None:
             fields["turn_error"] = error
         board.update_task(k[1], "system", fields)
@@ -905,9 +926,10 @@ class Runner:
         record = turn_process_record(proc, turn.session_id)
         if k[1] == PROJECT_THREAD:
             self._update_project_meta(board, {"project_agent_state": "running", "project_turn_error": "",
-                                              "project_turn_process": record})
+                                              "project_wait_reason": "", "project_turn_process": record})
         else:
-            board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "turn_process": record})
+            board.update_task(k[1], "system", {"agent_state": "running", "turn_error": "", "wait_reason": "",
+                                               "turn_process": record})
             if any(r.get("reason") == "review" for r in delivered):
                 self._set_review(board, k[1], state="fixing", only_from=("changes",))
         board.record("turn_started", {"key": k[1]})
