@@ -101,14 +101,14 @@ and ask the user to rename keys to their workflow's real status names:
 Save the confirmed mapping inside the full `tracker` object.
 
 ### 6. Ship command → `ship`
-The command that pushes a task branch and opens a PR/MR. It runs in the task worktree only when the user presses
-"Ship". Placeholders: `{key} {title} {branch} {base} {worktree} {repo}`. Values are shell-escaped already:
+Pushes a task branch and opens a PR/MR, in the task worktree, on "Ship" (or on approval with `on_approve`).
+Placeholders: `{key} {title} {branch} {base} {worktree} {repo} {tracker_key} {tracker_url}`. Values are shell-escaped already:
 never put a placeholder in quotes (`"{title}"` is rejected); `$'…'` and heredocs `<<` are rejected too.
 Examples to offer:
 - GitHub: `git push -u origin {branch} && gh pr create --base {base} --head {branch} --title {title} --body ''`
 - Own script: `/abs/path/ship.sh {key} {branch} {base}`
 
-No secrets in the command: it is stored in the settings. Default: none (shipping disabled, can be set later).
+No secrets in the command (it is stored in the settings). Default: none. Ask about `on_approve` (default false).
 ```
 agent-board --project <slug> config set --json '{"ship": {"command": "/abs/path/ship.sh {key} {branch} {base}", "timeout": 600}}' --dry-run
 ```

@@ -19,7 +19,7 @@ OUTPUT_TAIL_BYTES = 4096
 COPY_LINE_LIMIT = 64 * 1024
 COPY_KEEP = 16 * 1024
 COPY_JOIN_SECONDS = 5.0
-PLACEHOLDERS = ("key", "title", "branch", "base", "worktree", "repo")
+PLACEHOLDERS = ("key", "title", "branch", "base", "worktree", "repo", "tracker_key", "tracker_url")
 # зависимость уже влита или отменена: отправлять её не нужно
 SHIPPED = (Status.SENT, Status.DONE, Status.CANCELLED)
 
@@ -35,6 +35,18 @@ def settings(config) -> Tuple[str, float]:
         raise ValueError(msg("ship.timeout"))
     validate_template(command)
     return command, float(timeout)
+
+
+def on_approve(config) -> bool:
+    """Отправлять ли задачу в ревью сразу после одобрения."""
+    ship = config.ship if isinstance(config.ship, dict) else {}
+    command = ship.get("command")
+    return ship.get("on_approve") is True and isinstance(command, str) and bool(command.strip())
+
+
+def tracker_env(task: Task) -> Dict[str, str]:
+    """Привязка задачи к трекеру для команды отправки; без привязки — пустые строки."""
+    return {"AGENT_BOARD_TRACKER_KEY": task.tracker_key or "", "AGENT_BOARD_TRACKER_URL": task.tracker_url or ""}
 
 
 def check_quotes(command: str) -> None:
@@ -125,6 +137,28 @@ def check_request(keys: List[str], tasks: Dict[str, Task]) -> None:
             raise ValueError(msg("ship.dep_not_approved", key=key, dep=dep, status=dep_task.status.value))
 
 
+def is_shipping(task: Task) -> bool:
+    return isinstance(task.ship, dict) and task.ship.get("state") in ("queued", "running")
+
+
+def check_auto(key: str, tasks: Dict[str, Task]) -> None:
+    """Отправка после одобрения: задача одобрена, а каждая незавершённая зависимость уже отправлена или
+    стоит в очереди отправки — тогда задача уйдёт следом за ней."""
+    task = tasks[key]
+    if task.status != Status.APPROVED:
+        raise ValueError("задача уже не одобрена (%s)" % task.status.value)
+    if is_shipping(task):
+        raise ValueError("задача уже отправляется")
+    for dep in sorted(task.deps):
+        dep_task = tasks.get(dep)
+        if dep_task is None or dep_task.status in SHIPPED:
+            continue
+        if dep_task.status != Status.APPROVED:
+            raise ValueError("зависимость %s ещё не одобрена (%s)" % (dep, dep_task.status.value))
+        if not is_shipping(dep_task):
+            raise ValueError("зависимость %s ещё не отправлена — отправьте её, затем эту задачу" % dep)
+
+
 def tail_of(path: Path, limit: int = OUTPUT_TAIL_BYTES) -> str:
     try:
         with path.open("rb") as f:
@@ -169,11 +203,12 @@ def copy_output(src, log: Path, scrub: Callable[[str], str]) -> None:
 
 
 def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict] = None,
-          scrub: Optional[Callable[[str], str]] = None) -> "subprocess.Popen":
+          scrub: Optional[Callable[[str], str]] = None, extra_env: Optional[Dict[str, str]] = None) -> "subprocess.Popen":
     """Запускает команду в своей группе процессов, вывод пишется в лог (с scrub — через маскирование секретов;
     поток записи — proc.copier)."""
     log.parent.mkdir(parents=True, exist_ok=True)
     full_env = dict(os.environ if env is None else env, AGENT_BOARD_TASK=task_key)
+    full_env.update(extra_env or {})
     if scrub is None:
         with log.open("wb") as out:
             proc = subprocess.Popen(["bash", "-lc", rendered], cwd=str(cwd), env=full_env, stdin=subprocess.DEVNULL,

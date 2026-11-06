@@ -8,7 +8,7 @@ import { stateClass } from './review.js';
 import { confirmDialog, openModal, toast } from './ui.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
-const PLACEHOLDERS = ['key', 'title', 'branch', 'base', 'worktree', 'repo'];
+const PLACEHOLDERS = ['key', 'title', 'branch', 'base', 'worktree', 'repo', 'tracker_key', 'tracker_url'];
 // зависимость уже влита или отменена: отправлять её не нужно
 const SHIPPED = new Set(['sent', 'done', 'cancelled']);
 const ACTIVE = new Set(['queued', 'running']);
@@ -129,7 +129,10 @@ export function shipValues(snapshot, task) {
       base = unmerged[0].branch || '';
     }
   }
-  const all = { key: task.key, title: task.title, branch: task.branch || '', base, worktree: task.worktree || '', repo: repo ? repo.path : '' };
+  const all = {
+    key: task.key, title: task.title, branch: task.branch || '', base, worktree: task.worktree || '', repo: repo ? repo.path : '',
+    tracker_key: task.tracker_key || '', tracker_url: task.tracker_url || '',
+  };
   const seen = new Set();
   const values = [];
   for (const p of commandParts(command)) {

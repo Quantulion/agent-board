@@ -20,7 +20,7 @@ class ProjectConfig(_Serializable):
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
     review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
-    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600})
+    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600, "on_approve": False})
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
@@ -192,12 +192,18 @@ def _check_ship(config: ProjectConfig) -> None:
         raise ValueError(msg("config.ship_object"))
     if ship.get("command") is not None:
         _text(ship["command"], "ship.command")
-    if isinstance(ship.get("command"), str) and ship["command"].strip():
+    has_command = isinstance(ship.get("command"), str) and bool(ship["command"].strip())
+    if has_command:
         ship_settings(config)
     else:
         timeout = ship.get("timeout", 600)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
             raise ValueError(msg("ship.timeout"))
+    on_approve = ship.get("on_approve", False)
+    if not isinstance(on_approve, bool):
+        raise ValueError(msg("ship.on_approve_bool"))
+    if on_approve and not has_command:
+        raise ValueError(msg("ship.on_approve_command"))
 
 
 def _check_harness(config: ProjectConfig) -> None:
