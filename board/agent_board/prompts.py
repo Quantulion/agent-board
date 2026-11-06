@@ -143,8 +143,6 @@ def _wake_line(r: dict, cli: str) -> str:
     if reason == "review":
         return _review_line(r, cli, key)
     if reason == "rebase":
-        base = r.get("base") or "the new base"
-        files = r.get("conflict_files") or []
         if r.get("by") and not r.get("from"):
             who = "The user" if r["by"] == "user" else "The project agent"
             cause = "%s asked to bring your branch up to date with its base branch" % who
@@ -152,25 +150,9 @@ def _wake_line(r: dict, cli: str) -> str:
             dep = "dependency %s" % r["from"] if r.get("from") else \
                 "a dependency (which one: see `%s show %s`)" % (cli, key)
             cause = "The branch of %s changed" % dep
-        if r.get("merge_branches"):
-            return ("%s. Your branch is based on several dependency branches: %s. The board does not merge several "
-                    "dependency branches into your worktree by itself. Do not run any git commands; ask the user on "
-                    "the card to merge them." % (cause, ", ".join(r["merge_branches"])))
-        if r.get("carried_ref"):
-            moved = "moved your branch onto %s" % base if r.get("rebase_ok") is not False else \
-                "could not move your branch onto %s" % base
-            return ("%s; the board %s, but could not put your uncommitted work back into "
-                    "the files. Your work is not lost: it is saved in git at `%s`. Do not run any git commands and "
-                    "do not redo the work; ask the user on the card with `%s ask %s` to restore it from that ref, "
-                    "then continue." % (cause, moved, r["carried_ref"], cli, key))
-        if r.get("rebase_ok") is False:
-            return ("%s; the board could not move your work onto %s. "
-                    "Do not run any git commands; ask a question on the card." % (cause, base))
-        if files:
-            return ("%s; the board moved your work onto %s, but these files "
-                    "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
-                    % (cause, base, ", ".join(files)))
-        return ("%s; the board moved your work onto %s. Continue." % (cause, base))
+        return _rebase_outcome(r, cause, cli, key, " Continue.")
+    if reason == "ship_failed":
+        return _ship_failed_line(r, cli, key)
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
@@ -201,6 +183,50 @@ def _wake_line(r: dict, cli: str) -> str:
     if reason in ("ready", "manual"):
         return "Start working on the task."
     return "Woken: %s." % (reason or "unknown reason")
+
+
+def _rebase_outcome(r: dict, cause: str, cli: str, key: str, ok_tail: str = "") -> str:
+    """Итог переноса ветки на базу для агента; ok_tail дописывается, когда перенос прошёл чисто."""
+    base = r.get("base") or "the new base"
+    files = r.get("conflict_files") or []
+    if r.get("merge_branches"):
+        return ("%s. Your branch is based on several dependency branches: %s. The board does not merge several "
+                "dependency branches into your worktree by itself. Do not run any git commands; ask the user on "
+                "the card to merge them." % (cause, ", ".join(r["merge_branches"])))
+    if r.get("carried_ref"):
+        moved = "moved your branch onto %s" % base if r.get("rebase_ok") is not False else \
+            "could not move your branch onto %s" % base
+        return ("%s; the board %s, but could not put your uncommitted work back into "
+                "the files. Your work is not lost: it is saved in git at `%s`. Do not run any git commands and "
+                "do not redo the work; ask the user on the card with `%s ask %s` to restore it from that ref, "
+                "then continue." % (cause, moved, r["carried_ref"], cli, key))
+    if r.get("rebase_ok") is False:
+        return ("%s; the board could not move your work onto %s. "
+                "Do not run any git commands; ask a question on the card." % (cause, base))
+    if files:
+        return ("%s; the board moved your work onto %s, but these files "
+                "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
+                % (cause, base, ", ".join(files)))
+    return "%s; the board moved your work onto %s.%s" % (cause, base, ok_tail)
+
+
+def _ship_failed_line(r: dict, cli: str, key: str) -> str:
+    code = " with exit code %s" % r["exit_code"] if r.get("exit_code") is not None else ""
+    output = str(r.get("output") or "").strip()
+    out = "Sending the approved task to review failed: the ship command exited%s." % code
+    if output:
+        out += " The tail of its output, verbatim:\n%s\n" % _quote(output)
+    else:
+        out += " Its output is missing here; see the ship output on the card with `%s show %s`.\n" % (cli, key)
+    if "rebase_ok" in r or r.get("merge_branches"):
+        out += _rebase_outcome(r, "The board returned the task to work (in_progress)", cli, key)
+    else:
+        out += "The board returned the task to work (in_progress)."
+    return out + (
+        "\nFind the cause in the output. If it is a conflict with the base branch, resolve it by editing the files so "
+        "the work fits on top of the current base; if the cause is in your code, fix it in the worktree; otherwise "
+        "ask the user on the card. Do not run any git commands. Run the tests, then return the task to review with "
+        "`%s status %s in_review`; after the user approves it again, the board sends it again." % (cli, key))
 
 
 def _review_line(r: dict, cli: str, key: str) -> str:
@@ -234,6 +260,7 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
       message -> message_id, text, task (комментарий пользователя к этой задаче для агента проекта); answer -> question_id, question, choice, comment;
       returned -> from, text (комментарий пользователя к возврату); review -> round, comments, binary, crit_dir;
       rebase -> from (или by при ручном переносе), base, rebase_ok, conflict_files, merge_branches, carried_ref;
+      ship_failed -> exit_code, output (хвост вывода команды отправки) и поля переноса на базу, как у rebase;
       escalation -> from, text; proposal_rejected -> id;
       retry -> error; interrupted, queued_restart, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».

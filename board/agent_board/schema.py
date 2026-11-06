@@ -82,7 +82,11 @@ def _shapes() -> dict:
             "keys": {"command": "shell command template or null (shipping disabled)",
                      "timeout": "seconds, default %g" % ship.DEFAULT_TIMEOUT,
                      "on_approve": "true: queue the command right after the approval commit (button or review round), "
-                                   "as `agent-board ship <KEY>` would; default false; requires command"},
+                                   "as `agent-board ship <KEY>` would; default false; requires command",
+                     "on_failure": "stay (default): a failed command keeps the task approved and only posts to the "
+                                   "thread; return: a non-zero exit (not a timeout or cancel) moves the task back to "
+                                   "in_progress, moves its branch onto the fresh base and wakes the agent with the "
+                                   "command output to resolve conflicts, run tests and return the task to review"},
             "placeholders": list(ship.PLACEHOLDERS),
             "rules": ["Placeholder values are shell-escaped already: never put a placeholder inside quotes.",
                       "ANSI-C quotes $'...' are not supported.",

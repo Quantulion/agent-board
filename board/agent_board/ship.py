@@ -44,6 +44,12 @@ def on_approve(config) -> bool:
     return ship.get("on_approve") is True and isinstance(command, str) and bool(command.strip())
 
 
+def returns_on_failure(config) -> bool:
+    """Возвращать ли агенту задачу, отправка которой не удалась."""
+    ship = config.ship if isinstance(config.ship, dict) else {}
+    return ship.get("on_failure") == "return"
+
+
 def tracker_env(task: Task) -> Dict[str, str]:
     """Привязка задачи к трекеру для команды отправки; без привязки — пустые строки."""
     return {"AGENT_BOARD_TRACKER_KEY": task.tracker_key or "", "AGENT_BOARD_TRACKER_URL": task.tracker_url or ""}

@@ -1879,6 +1879,92 @@ def test_ship_timeout_kills_process_group(make_project, start_server, calls, tmp
     assert any("таймаут" in t for t in thread_texts(store, "T-1"))
 
 
+def test_ship_failure__on_failure_return__conflict_returns_task_to_agent_then_reapproval_ships(
+        make_project, start_server, calls, git_repo, tmp_path):
+    # arrange: команда падает один раз, а в выводе — сценарий следующего хода агента
+    flag = tmp_path / "shipped-once"
+    resume = script({"write": {"path": "shared.txt", "text": "работа T поверх базы\n"}},
+                    {"cli": ["status", "T", "in_review"]})
+    command = tmp_path / "ship.sh"
+    command.write_text("if [ -e %s ]; then echo sent; exit 0; fi\ntouch %s\necho 'CONFLICT shared.txt'\necho '%s'\n"
+                       "exit 1\n" % (flag, flag, resume))
+    store = make_project(ship={"command": "bash " + str(command), "on_approve": True, "on_failure": "return"})
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T", script({"write": {"path": "shared.txt", "text": "работа T\n"}}, {"cli": ["status", "T", "in_review"]}))
+    wait_events(store, "turn_finished", "T")
+    commit_to_main(git_repo, "shared.txt", "версия базы\n")
+    main_tip = run_git(git_repo, "rev-parse", "main")
+    # act
+    board.transition("T", Status.APPROVED, "user")
+    wait_events(store, "turn_finished", "T", count=2)
+    # assert: задача у агента, ветка на свежей базе, конфликт — маркерами в файлах
+    wake = [e.data for e in events(store, "agent_wake", "T") if e.data.get("reason") == "ship_failed"]
+    assert len(wake) == 1 and wake[0]["exit_code"] == 1 and "CONFLICT shared.txt" in wake[0]["output"]
+    assert [e.data for e in events(store, "status_changed", "T")][-2]["actor"] == "system"
+    text = calls[-1]["text"]
+    assert calls[-1]["kind"] == "resume" and "exit code 1" in text and "CONFLICT shared.txt" in text
+    assert "conflict markers: shared.txt" in text and "status T in_review" in text
+    assert task(store, "T").status == Status.IN_REVIEW
+    wt = Path(task(store, "T").worktree)
+    assert run_git(wt, "rev-parse", "HEAD") == main_tip
+    assert any("возвращена в работу" in t for t in thread_texts(store, "T"))
+    assert any("разобраны в незакоммиченные" in t for t in thread_texts(store, "T"))
+    # act: повторное одобрение отправляет задачу как обычно
+    board.transition("T", Status.APPROVED, "user")
+    wait_for(lambda: task(store, "T").status == Status.SENT, what="T отправлена")
+    # assert
+    assert run_git(wt, "rev-parse", "HEAD^") == main_tip
+    assert run_git(wt, "show", "HEAD:shared.txt") == "работа T поверх базы\n"
+
+
+def test_ship_failure__on_failure_stay__task_stays_approved_without_wake(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "exit 2", "on_failure": "stay"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    runner_sync(srv)
+    # assert
+    assert state["state"] == "error" and state["exit_code"] == 2
+    assert task(store, "T-1").status == Status.APPROVED
+    assert not [e for e in events(store, "agent_wake", "T-1") if e.data.get("reason") == "ship_failed"]
+
+
+def test_ship_timeout__on_failure_return__task_stays_approved(make_project, start_server, calls):
+    # arrange
+    store = make_project(ship={"command": "sleep 300", "timeout": 1, "on_failure": "return"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    runner_sync(srv)
+    # assert
+    assert state["state"] == "error" and state["exit_code"] is None
+    assert task(store, "T-1").status == Status.APPROVED
+    assert not [e for e in events(store, "agent_wake", "T-1") if e.data.get("reason") == "ship_failed"]
+
+
+def test_cancel_during_ship__on_failure_return__task_is_not_returned(make_project, start_server, calls, tmp_path):
+    # arrange
+    started = tmp_path / "started"
+    store = make_project(ship={"command": "touch %s; sleep 300" % started, "on_failure": "return"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_for(started.exists, what="команда стартовала")
+    # act
+    srv.board_for("pay").transition("T-1", Status.CANCELLED, "user")
+    wait_ship(store, "T-1", states=("cancelled",))
+    runner_sync(srv)
+    # assert
+    assert task(store, "T-1").status == Status.CANCELLED
+    assert not [e for e in events(store, "agent_wake", "T-1") if e.data.get("reason") == "ship_failed"]
+
+
 def _alive(pid):
     try:
         os.kill(pid, 0)

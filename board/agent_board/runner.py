@@ -42,6 +42,7 @@ from .worktree import (
     ensure_worktree,
     is_ancestor,
     rebase_carrying_changes,
+    uncommit_onto,
     unmerged_files,
     worktree_path,
 )
@@ -70,6 +71,10 @@ HOUSEKEEPING_SECONDS = 24 * 3600
 # как часто проверяется, влиты ли одобренные и отправленные задачи в базовую ветку
 MERGE_CHECK_SECONDS = 300
 SHIP_TEXT_CHARS = 500
+# сколько вывода упавшей команды отправки получает агент
+SHIP_WAKE_CHARS = 3000
+# причины пробуждения, перед которыми ветка задачи переносится на свежую базу
+REBASE_REASONS = ("rebase", "ship_failed")
 
 Key = Tuple[str, str]
 
@@ -902,10 +907,12 @@ class Runner:
         except _ForeignWorktree as e:
             raise _PrepareError(error_text(e))
         reasons = deliver
-        rebases = [r for r in deliver if r.get("reason") == "rebase"]
+        rebases = [r for r in deliver if r.get("reason") in REBASE_REASONS]
         if rebases:
-            # несколько ребейзов подряд сводятся к одному — на актуальную базу
-            reasons = [r for r in deliver if r.get("reason") != "rebase"] + [self._rebase(board, task, tasks, config, rebases[-1])]
+            # несколько переносов подряд сводятся к одному — на актуальную базу; ошибки отправки агент получает все
+            last = rebases[-1]
+            moved = self._rebase(board, task, tasks, config, last)
+            reasons = [r for r in deliver if r.get("reason") != "rebase" and r is not last] + [moved]
         harness = self._harness(board, task)
         if hasattr(harness, "system_prompt"):
             harness.system_prompt = prompts.task_system(config, BOARD_CLI)
@@ -924,7 +931,14 @@ class Runner:
             reason.update(base=base, rebase_ok=False, merge_branches=list(merges))
             return reason
         try:
-            outcome = rebase_carrying_changes(self._own_worktree(config, task), base, carry_ref(task.key))
+            path = self._own_worktree(config, task)
+            outcome = rebase_carrying_changes(path, base, carry_ref(task.key))
+            if reason.get("reason") == "ship_failed" and not outcome.ok and not outcome.carried_ref:
+                # отправка упала на конфликте с базой: без коммитов перенос оставит конфликты маркерами в файлах
+                head = uncommit_onto(path, base)
+                if head:
+                    board.post_message(task.key, "system", msg("run.ship_uncommitted", base=base, head=head[:10]))
+                    outcome = rebase_carrying_changes(path, base, carry_ref(task.key))
         except GitError as e:
             board.post_message(task.key, "system", msg("run.rebase_failed", base=base, error=error_text(e)))
             outcome = RebaseOutcome(False)
@@ -1438,6 +1452,17 @@ class Runner:
         board.record("ship_started", {"key": key})
         return True
 
+    def _return_after_ship(self, board: Board, key: str, code: int, tail: str) -> None:
+        """По настройке ship.on_failure=return упавшая отправка возвращает задачу агенту: он переносит ветку
+        на свежую базу, разбирается с ошибкой и снова отдаёт задачу на ревью."""
+        if not ship.returns_on_failure(board.store.load_config()):
+            return
+        if not board.transition_if(key, Status.APPROVED, Status.IN_PROGRESS, "system"):
+            return
+        board.post_message(key, "system", msg("run.ship_returned"))
+        board.record("agent_wake", {"key": key, "reason": "ship_failed", "exit_code": code,
+                                    "output": tail.strip()[-SHIP_WAKE_CHARS:]})
+
     def _on_ship_done(self, k: Key, sh: _Ship, code: Optional[int], timed_out: bool) -> None:
         if self._ships.get(k) is not sh:
             return
@@ -1469,4 +1494,6 @@ class Runner:
                     else msg("run.ship_failed", code=code, output=output))
             board.post_message(key, "system", text)
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": exit_code})
+            if exit_code is not None:
+                self._return_after_ship(board, key, exit_code, tail)
         self._ship_next(sh.batch)

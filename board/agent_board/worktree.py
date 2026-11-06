@@ -269,6 +269,18 @@ def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcom
     return RebaseOutcome(ok, conflicts)
 
 
+def uncommit_onto(path: Path, base: str) -> Optional[str]:
+    """Превращает коммиты ветки после общей с base точки в незакоммиченные изменения, чтобы перенос на base
+    оставил конфликты маркерами в файлах; возвращает прежнюю вершину ветки или None, если коммитов нет."""
+    _check_no_rebase(path)
+    head = run_git(path, "rev-parse", "HEAD").strip()
+    fork = run_git(path, "merge-base", "HEAD", base).strip()
+    if fork == head:
+        return None
+    run_git(path, "reset", "-q", "--soft", fork)
+    return head
+
+
 def _untracked(path: Path) -> List[str]:
     out = run_git(path, "ls-files", "--others", "--exclude-standard", "-z")
     return [p for p in out.split("\0") if p]
