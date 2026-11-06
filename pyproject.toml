@@ -7,6 +7,7 @@ name = "agent-board"
 version = "0.2.0"
 description = "Локальная доска задач для AI-агентов"
 requires-python = ">=3.9"
+license = {text = "MIT"}
 dependencies = []
 
 [project.scripts]
