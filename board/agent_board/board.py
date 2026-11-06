@@ -57,7 +57,7 @@ STAGE_TRANSITIONS = {
 # Словарь событий журнала: тип -> поля data. Клиенты (UI, оркестратор агентов) опираются на него.
 EVENT_TYPES: Dict[str, str] = {
     "task_added": "key",
-    "status_changed": "key, from, to, actor",
+    "status_changed": "key, from, to, actor; auto — одобрено доской по настройке auto_approve",
     "task_updated": "key, fields (список изменённых полей)",
     "deps_changed": "key, deps",
     "task_unblocked": "key — задача стала готова к работе",
@@ -376,10 +376,11 @@ class Board:
             return events
 
     def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None,
-                   fields: Optional[dict] = None) -> List[Event]:
+                   fields: Optional[dict] = None, auto: bool = False) -> List[Event]:
         """wake_extra — поля для пробуждения returned (например, комментарий пользователя к возврату).
 
-        fields — служебные поля раннера, которые меняются вместе со статусом, чтобы их не видели порознь."""
+        fields — служебные поля раннера, которые меняются вместе со статусом, чтобы их не видели порознь.
+        auto — одобрение доской по настройке auto_approve: действует как одобрение пользователя."""
         with self._lock:
             to = self._check_transition(key, to, actor)
             fields = dict(fields or {})
@@ -395,7 +396,10 @@ class Board:
                 setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
-            events = [self._emit("status_changed", {"key": key, "from": prev.value, "to": to.value, "actor": actor})]
+            change = {"key": key, "from": prev.value, "to": to.value, "actor": actor}
+            if auto:
+                change["auto"] = True
+            events = [self._emit("status_changed", change)]
             if fields:
                 events.append(self._emit("task_updated", {"key": key, "fields": sorted(fields)}))
 
@@ -413,10 +417,14 @@ class Board:
             if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
                 events.append(self._emit("agent_wake", dict(wake_extra or {}, key=key, reason="returned",
                                                             **{"from": prev.value})))
-            if actor in ("user", "tracker") and to in (Status.APPROVED, Status.DONE):
+            if (actor in ("user", "tracker") or auto) and to in (Status.APPROVED, Status.DONE):
                 events.extend(self._rebase_wakes(key, affected))
             if actor == "user":
                 events.extend(self._manual_wake(task, prev))
+            if actor == "agent" and to == Status.IN_REVIEW and task.kind != "research" \
+                    and self.store.load_config().auto_approve is True:
+                events.extend(self.transition(key, Status.APPROVED, "system", auto=True))
+                events.extend(self.post_message(key, "system", msg("board.auto_approved")))
             return events
 
     def _check_transition(self, key: str, to: Status, actor: str) -> Status:

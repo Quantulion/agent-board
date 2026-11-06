@@ -338,6 +338,7 @@ CATALOG: Dict[str, tuple] = {
     "config.allowed_tools": ("harness.allowed_tools must be a list of strings",
                              "harness.allowed_tools должен быть списком строк"),
     "config.chains": ("chains must be true or false", "chains должен быть true или false"),
+    "config.auto_approve": ("auto_approve must be true or false", "auto_approve должен быть true или false"),
     "config.tracker_object": ("tracker must be an object with a type field",
                               "tracker должен быть объектом с полем type"),
     # --- трекер ---
@@ -514,6 +515,7 @@ CATALOG: Dict[str, tuple] = {
     "run.worktree_failed": ("failed to prepare the worktree: {error}", "не удалось подготовить worktree: {error}"),
     "run.rebase_failed": ("Failed to move the work onto {base}: {error}", "Не удалось перенести работу на {base}: {error}"),
     "run.turn_failed": ("the turn ended with an error", "ход завершился с ошибкой"),
+    "board.auto_approved": ("Approved automatically (auto_approve)", "Одобрено автоматически (auto_approve)"),
     "run.review_approved": ("Approved in review (round {round})", "Одобрено в ревью (раунд {round})"),
     "run.review_failed": ("Review was not started: {error}", "Ревью не запущено: {error}"),
     "run.review_aborted": ("Review round {round} was interrupted: {error}. Open the review again.",

@@ -11,6 +11,9 @@ DESCRIPTIONS = {
     "title": "Project title shown on the board.",
     "chains": "Start a dependent task once its dependency is approved, from the dependency branch; "
               "false: only after it is done.",
+    "auto_approve": "Approve a code task as soon as its agent moves it to in_review, with no review round: "
+                    "commit, rebase of dependents and ship.on_approve as on user approval; research tasks are "
+                    "not auto-approved.",
     "max_agents": "Max concurrent task agent turns in this project; the project agent is not counted.",
     "global_max_agents": "Max concurrent task agent turns on the whole server; project agents run on top of it, one turn per project.",
     "language": "Language of the UI and agent messages (e.g. ru, en).",

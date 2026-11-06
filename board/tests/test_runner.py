@@ -2342,3 +2342,65 @@ def test_retry_of_running_agent_is_rejected_without_second_turn(make_project, st
     runner_sync(srv)
     # assert
     assert len(calls) == 1 and len(events(store, "turn_started", "T-1")) == 1
+
+
+# --- автоодобрение по настройке auto_approve ---
+
+def test_auto_approve__agent_moves_to_review__commits_and_ships_without_user(make_project, start_server, calls,
+                                                                              git_repo, tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(auto_approve=True, ship={"command": "echo {key} > " + str(out), "on_approve": True})
+    srv = start_server()
+    # act
+    add(srv, "A", script({"write": {"path": "a-file.txt", "text": "from A"}}, {"cli": ["status", "A", "in_review"]}))
+    state = wait_ship(store, "A")
+    # assert
+    committed = events(store, "task_committed", "A")
+    assert state["state"] == "done" and task(store, "A").status == Status.SENT
+    assert run_git(git_repo, "show", "A:a-file.txt") == "from A"
+    assert out.read_text().strip() == "A"
+    approvals = [e.data for e in events(store, "status_changed", "A") if e.data["to"] == "approved"]
+    assert approvals == [{"key": "A", "from": "in_review", "to": "approved", "actor": "system", "auto": True}]
+    assert committed[0].seq < events(store, "ship_started", "A")[0].seq
+    assert "Одобрено автоматически (auto_approve)" in thread_texts(store, "A")
+    assert task(store, "A").review is None
+
+
+def test_auto_approve__disabled__task_waits_in_review(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    # act
+    add(srv, "A", script({"write": {"path": "a.txt", "text": "A"}}, {"cli": ["status", "A", "in_review"]}))
+    wait_events(store, "turn_finished", "A")
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.IN_REVIEW and not events(store, "task_committed", "A")
+
+
+def test_auto_approve__research_task__waits_in_review(make_project, start_server, calls):
+    # arrange
+    store = make_project(auto_approve=True)
+    srv = start_server()
+    # act
+    add(srv, "R", script({"write": {"path": "reports/r.md", "text": "отчёт"}}, {"cli": ["status", "R", "in_review"]}),
+        kind="research")
+    wait_events(store, "turn_finished", "R")
+    runner_sync(srv)
+    # assert
+    assert task(store, "R").status == Status.IN_REVIEW and not events(store, "task_committed", "R")
+
+
+def test_auto_approve__commit_fails__task_back_in_review_with_message(make_project, start_server, calls):
+    # arrange
+    store = make_project(auto_approve=True)
+    srv = start_server()
+    # act
+    add(srv, "A", script({"write": {"path": "x.txt", "text": "<<<<<<< ours\nmine\n"}}, {"cli": ["status", "A", "in_review"]}))
+    wait_for(lambda: any("x.txt" in t for t in thread_texts(store, "A")), what="сообщение о неудачном коммите")
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.IN_REVIEW
+    assert not events(store, "task_committed", "A")
+    assert len([e for e in events(store, "status_changed", "A") if e.data["to"] == "approved"]) == 1
