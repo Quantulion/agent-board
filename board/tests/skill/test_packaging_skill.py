@@ -12,7 +12,9 @@ SKILL_DIR = ROOT / "skills" / "agent-board"
 
 
 def _version():
-    return re.search(r'^version = "([^"]+)"', (ROOT / "pyproject.toml").read_text(encoding="utf-8"), re.M).group(1)
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    section = re.search(r"^\[project\]\s*$(.*?)(?=^\[|\Z)", text, re.M | re.S).group(1)
+    return re.search(r'^version\s*=\s*"([^"]+)"', section, re.M).group(1)
 
 
 def test_plugin_manifest_has_required_fields_and_skill_resolves():
@@ -39,6 +41,7 @@ def test_marketplace_lists_the_plugin_with_local_source():
     # assert
     assert market["name"] and market["owner"]["name"]
     assert entry["name"] == "agent-board" and entry["source"] == "./"
+    assert entry["version"] == _version()
     assert (ROOT / entry["source"] / ".claude-plugin" / "plugin.json").is_file()
 
 
@@ -73,7 +76,7 @@ def test_install_codex_links_is_idempotent_and_uninstalls(tmp_path):
     assert _run(tmp_path, "--uninstall").returncode == 0
 
 
-def test_install_codex_refuses_foreign_path_unless_forced(tmp_path):
+def test_install_codex_refuses_foreign_dir_then_force_backs_it_up(tmp_path):
     # arrange
     link = tmp_path / "skills" / "agent-board"
     link.mkdir(parents=True)
@@ -81,9 +84,31 @@ def test_install_codex_refuses_foreign_path_unless_forced(tmp_path):
 
     # act
     refused = _run(tmp_path)
+    refused_state = ((link / "mine.txt").is_file(), link.is_symlink())
     forced = _run(tmp_path, "--force")
 
     # assert
     assert refused.returncode == 1 and "--force" in refused.stderr
-    assert (link / "mine.txt").exists() is False or link.is_symlink()
+    assert refused_state == (True, False)
     assert forced.returncode == 0 and link.is_symlink()
+    backups = list((tmp_path / "skills").glob("agent-board.bak.*"))
+    assert len(backups) == 1 and (backups[0] / "mine.txt").read_text() == "x"
+    assert "moved existing" in forced.stdout
+
+
+def test_install_codex_force_replaces_foreign_symlink_without_touching_target(tmp_path):
+    # arrange
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "keep.txt").write_text("k")
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    (skills / "agent-board").symlink_to(other)
+
+    # act
+    forced = _run(tmp_path, "--force")
+
+    # assert
+    assert forced.returncode == 0
+    assert os.path.realpath(skills / "agent-board") == str(SKILL_DIR.resolve())
+    assert (other / "keep.txt").read_text() == "k"

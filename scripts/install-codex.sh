@@ -46,7 +46,13 @@ if [ -e "$target" ] || [ -h "$target" ]; then
         echo "install-codex.sh: $target already exists and is not this skill; use --force to replace it" >&2
         exit 1
     fi
-    rm -rf "$target"
+    if [ -h "$target" ]; then
+        rm "$target"
+    else
+        backup="$target.bak.$(date +%Y%m%d%H%M%S)"
+        mv "$target" "$backup"
+        echo "moved existing $target to $backup"
+    fi
 fi
 
 mkdir -p "$skills_dir"

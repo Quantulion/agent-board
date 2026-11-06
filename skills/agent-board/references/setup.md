@@ -8,7 +8,7 @@ Configure a board project by asking the user short questions and writing the ans
 - Source of truth for fields, types, defaults and allowed values: `agent-board config schema --json`. Read it first.
 - Ask ONE question per message, in the user's language, with a recommended default the user can accept by "ok".
 - The skill starts the board before setup. If `agent-board status` shows it is not running,
-  run `agent-board serve --detach`. Codex: if the sandbox blocks localhost, run board commands outside the sandbox.
+  run `agent-board serve --detach`. Codex: sandbox problems → `harness-codex.md`.
 - Read the current settings: `agent-board --project <slug> config get --json`. A field that differs from its schema
   default is already configured: skip it unless the user asks to change it.
 - User says "don't know" or "skip": keep the default (or leave the key unset), move on, and list the field under

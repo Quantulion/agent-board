@@ -24,14 +24,15 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 **Claude Code** (плагин из локального маркетплейса):
 
 ```
-/plugin marketplace add /путь/к/agent-board
+/plugin marketplace add ~/путь/к/agent-board   # абсолютный путь или ~
 /plugin install agent-board@agent-board-local
 ```
 
 **Codex** (символическая ссылка в `${CODEX_HOME:-~/.codex}/skills`, без копий):
 
 ```bash
-sh scripts/install-codex.sh              # установить; --force заменяет чужой путь
+cd /путь/к/agent-board                   # скрипты запускаются из корня репозитория
+sh scripts/install-codex.sh              # установить; --force заменяет чужую ссылку, а каталог откладывает в .bak.<время>
 sh scripts/install-codex.sh --uninstall  # удалить ссылку
 ```
 

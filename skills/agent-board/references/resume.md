@@ -38,6 +38,6 @@ On no: keep using the running board (give its URL from `status`) and mention it 
 |---|---|---|
 | `python3 not found` / `Python 3.9+ is required`, exit 127 | No suitable Python | Ask the user to install Python 3.9+ or set `AGENT_BOARD_PYTHON` to one |
 | `serve --detach` fails, port in the log | Ports 8737–8746 busy | Show the log tail it printed; ask what holds the ports, or start with `--port N` |
-| Exit 2 "доска не запущена" right after a successful start | Codex sandbox blocks localhost | Run board commands outside the sandbox |
+| Exit 2 "доска не запущена" right after a successful start | Codex sandbox may block localhost | See `harness-codex.md` |
 | `stop`: pid "не похож на сервер доски" | Stale `server.json` | Do not kill processes; show the message to the user |
 | Project listed with "не удалось прочитать проект" | Damaged project files | Do not edit files; show the path, ask the user |
