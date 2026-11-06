@@ -653,14 +653,14 @@ class Runner:
             self._set_state(k, "waiting_turn")
 
     def _has_capacity(self, k: Key) -> bool:
-        config = self._board(k[0]).store.load_config()
-        if len(self._turns) >= config.global_max_agents:
-            return False
-        # агент проекта учитывается только в общем лимите, чтобы эскалации не ждали задач проекта
+        # агент проекта — разговор с пользователем: запускается сверх лимитов и не занимает слоты задач
         if k[1] == PROJECT_THREAD:
             return True
-        in_project = sum(1 for s, key in self._turns if s == k[0] and key != PROJECT_THREAD)
-        return in_project < config.max_agents
+        config = self._board(k[0]).store.load_config()
+        task_turns = [s for s, key in self._turns if key != PROJECT_THREAD]
+        if len(task_turns) >= config.global_max_agents:
+            return False
+        return task_turns.count(k[0]) < config.max_agents
 
     def _drain(self) -> None:
         for k in list(self._waiting):

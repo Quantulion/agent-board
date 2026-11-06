@@ -778,17 +778,31 @@ def test_worker_exception_is_reported_on_the_card(make_project, start_server, ca
 
 # --- лимиты и повторы ---
 
-def test_project_agent_counts_in_global_limit(make_project, start_server, calls):
+def test_project_agent_runs_over_full_global_limit(make_project, start_server, calls):
     # arrange
     store = make_project(global_max_agents=1)
     srv = start_server()
-    add(srv, "A", script({"sleep": 1}))
+    add(srv, "A", script({"sleep": 2}))
     wait_events(store, "turn_started", "A")
     # act
     srv.board_for("pay").post_message("_project", "user", "привет")
     wait_events(store, "turn_finished", "_project")
     # assert
-    assert events(store, "turn_started", "_project")[0].seq > events(store, "turn_finished", "A")[0].seq
+    assert not events(store, "turn_finished", "A")
+
+
+def test_task_waits_for_global_limit_while_project_agent_runs(make_project, start_server, calls):
+    # arrange
+    store = make_project(global_max_agents=1)
+    srv = start_server()
+    srv.board_for("pay").post_message("_project", "user", script({"sleep": 2}))
+    add(srv, "A", script({"sleep": 2}))
+    wait_events(store, "turn_started", "A")
+    # act
+    add(srv, "B")
+    wait_events(store, "turn_finished", "B")
+    # assert
+    assert events(store, "turn_started", "B")[0].seq > events(store, "turn_finished", "A")[0].seq
 
 
 def test_project_agent_not_counted_in_project_limit(make_project, start_server, calls):
