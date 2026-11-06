@@ -7,6 +7,7 @@ import { reportHref } from './changes.js';
 import { copyButton, isResearch, md, region, sec } from './pane-kit.js';
 import { proposalNote, proposalSignature, proposalsTouching } from './project.js';
 import { shipSection } from './ship.js';
+import { slotNote, slotWait } from './slot.js';
 import { externalBlockerDialog } from './status.js';
 import { formatTime } from './thread.js';
 import { toast } from './ui.js';
@@ -16,11 +17,11 @@ export function overviewPane(pc) {
   const questions = h('div', { class: 'qlist' });
   const proposals = h('div', { class: 'qlist' });
   const parts = {
-    error: region('div'), ship: region('div'), violations: region('div'), task: region('div'), summary: region('div'),
+    slot: region('div'), error: region('div'), ship: region('div'), violations: region('div'), task: region('div'), summary: region('div'),
     deps: region('div'), work: region('div'), tracker: region('div'),
   };
   const el = h('div', { class: 'dgrid' },
-    h('main', null, questions, proposals, parts.error.el, parts.ship.el, parts.violations.el, parts.task.el, parts.summary.el),
+    h('main', null, questions, proposals, parts.slot.el, parts.error.el, parts.ship.el, parts.violations.el, parts.task.el, parts.summary.el),
     h('aside', null, parts.deps.el, parts.work.el, parts.tracker.el));
   return {
     el,
@@ -33,6 +34,8 @@ export function overviewPane(pc) {
       // узел пересоздаётся только при смене описания: состояние кнопок переживает прочие обновления снимка
       patchList(proposals, touching, p => proposalSignature(p, byKey), p => proposalNote(ctx, p, byKey));
       proposals.hidden = !touching.length;
+      const wait = slotWait(t.agent_state, t.wait_reason, snap.config);
+      parts.slot.paint(wait, () => wait ? slotNote(wait) : null);
       parts.error.paint(t.turn_error, () => t.turn_error ? h('section', { class: 'sec err' },
         h('h3', null, icon('warn'), T.card.turnError), h('pre', { class: 'errtext' }, t.turn_error)) : null);
       parts.ship.paint(t.ship || null, () => shipSection(t));

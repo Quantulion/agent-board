@@ -26,11 +26,12 @@ UPDATABLE_FIELDS = {
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
     "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations", "agent_parked",
+    "wait_reason",
 }
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process", "agent_parked", "review", "ship",
+    "turn_process", "agent_parked", "review", "ship", "wait_reason",
 }
 # привязку к задаче в трекере ставит доска при заведении задач или пользователь для уже существующей задачи
 TRACKER_LINK_FIELDS = {"tracker_key", "tracker_url"}
@@ -81,7 +82,7 @@ EVENT_TYPES: Dict[str, str] = {
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
     "config_changed": "fields [имена изменённых настроек] — пользователь изменил настройки проекта",
     "config_migrated": "field, to, moved — устаревшее поле настроек перенесено на новое место при чтении",
-    "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
+    "project_agent_changed": "state, parked, wait_reason — раннер изменил состояние агента проекта",
     "review_requested": "key — пользователь попросил открыть раунд ревью",
     "ship_requested": "keys — пользователь попросил отправить задачи в ревью (в порядке отправки)",
     "ship_started": "key — раннер запустил команду отправки",
@@ -334,6 +335,7 @@ class Board:
                 "project_agent": {
                     "state": meta.get("project_agent_state") or "idle",
                     "turn_error": meta.get("project_turn_error") or "",
+                    "wait_reason": meta.get("project_wait_reason") or "",
                     "session_id": config.project_session_id,
                     "parked": bool(meta.get("project_agent_parked")),
                 },

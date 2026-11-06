@@ -46,11 +46,13 @@ def test_snapshot_contains_project_agent_state(board):
     # act
     snap = board.snapshot()
     # assert
-    assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1", "parked": False}
+    assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1", "parked": False,
+                                     "wait_reason": ""}
 
 
 def test_snapshot_project_agent_defaults(board):
-    assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None, "parked": False}
+    assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None, "parked": False,
+                                                   "wait_reason": ""}
 
 
 def test_snapshot_project_agent_parked_flag(board):

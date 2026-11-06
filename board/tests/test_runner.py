@@ -225,12 +225,14 @@ def test_max_agents_limit_queues_second_task(make_project, start_server, calls):
     wait_events(store, "turn_started", "A")
     add(srv, "B")
     wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
+    waiting_reason = task(store, "B").wait_reason
     wait_events(store, "turn_finished", "B")
     # assert
     a_done = events(store, "turn_finished", "A")[0].seq
     b_started = events(store, "turn_started", "B")[0].seq
     assert b_started > a_done
-    assert task(store, "B").agent_state == "idle"
+    assert waiting_reason == "project"
+    assert (task(store, "B").agent_state, task(store, "B").wait_reason) == ("idle", "")
 
 
 def test_failing_turn_sets_error_and_stops_after_three_failures(make_project, start_server, calls):
@@ -453,7 +455,8 @@ def test_project_agent_state_changes_are_journaled(make_project, start_server, c
     runner_sync(srv)
     # assert
     changes = [e.data for e in events(store, "project_agent_changed")]
-    assert changes[-2:] == [{"state": "running", "parked": False}, {"state": "idle", "parked": False}]
+    assert changes[-2:] == [{"state": "running", "parked": False, "wait_reason": ""},
+                            {"state": "idle", "parked": False, "wait_reason": ""}]
 
 
 def test_project_agent_changed_only_when_state_or_parking_changes(board):
@@ -469,7 +472,22 @@ def test_project_agent_changed_only_when_state_or_parking_changes(board):
     write(board, {"project_agent_parked": True})
 
     # assert
-    assert changes() == [{"state": "running", "parked": False}, {"state": "running", "parked": True}]
+    assert changes() == [{"state": "running", "parked": False, "wait_reason": ""},
+                         {"state": "running", "parked": True, "wait_reason": ""}]
+
+
+def test_project_agent_waiting_without_pending_is_reset_on_restart(make_project, start_server):
+    # arrange
+    store = make_project(stage="decomposition", project_session_id="p-1")
+    meta = store.load_meta()
+    meta.update({"project_agent_state": "waiting_turn", "project_wait_reason": "global"})
+    store.save_meta(meta)
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    assert srv.board_for("pay").snapshot()["project_agent"]["state"] == "idle"
+    assert srv.board_for("pay").snapshot()["project_agent"]["wait_reason"] == ""
 
 
 def test_project_agent_parking_is_journaled(make_project, start_server):
@@ -482,7 +500,7 @@ def test_project_agent_parking_is_journaled(make_project, start_server):
     srv = start_server()
     runner_sync(srv)
     # assert
-    assert {"state": "idle", "parked": False} in [e.data for e in events(store, "project_agent_changed")]
+    assert {"state": "idle", "parked": False, "wait_reason": ""} in [e.data for e in events(store, "project_agent_changed")]
 
 
 def test_work_stage_starts_project_agent_on_runner_start(make_project, start_server, calls):
@@ -855,6 +873,7 @@ def test_project_agent_runs_over_full_global_limit(make_project, start_server, c
     # act
     srv.board_for("pay").post_message("_project", "user", "привет")
     wait_events(store, "turn_finished", "_project")
+    runner_sync(srv)
     # assert
     assert not events(store, "turn_finished", "A")
 
@@ -871,6 +890,41 @@ def test_task_waits_for_global_limit_while_project_agent_runs(make_project, star
     wait_events(store, "turn_finished", "B")
     # assert
     assert events(store, "turn_started", "B")[0].seq > events(store, "turn_finished", "A")[0].seq
+
+
+def test_raised_limit_starts_queued_task_without_waiting_for_running_turn(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 5}))
+    wait_events(store, "turn_started", "A")
+    add(srv, "B")
+    wait_for(lambda: task(store, "B").wait_reason == "project", what="B в очереди")
+    # act
+    srv.board_for("pay").set_config("user", {"max_agents": 2})
+    wait_events(store, "turn_finished", "B")
+    # assert
+    assert not events(store, "turn_finished", "A")
+
+
+
+def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1, global_max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 4}))
+    wait_events(store, "turn_started", "A")
+    add(srv, "B")
+    wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
+    first = task(store, "B").wait_reason
+    # act
+    srv.board_for("pay").set_config("user", {"global_max_agents": 2})
+    wait_for(lambda: task(store, "B").wait_reason == "project", what="B упёрся в лимит проекта")
+    wait_events(store, "turn_finished", "B")
+    # assert
+    assert first == "global"
+    assert events(store, "turn_started", "B")[0].seq > events(store, "turn_finished", "A")[0].seq
+    assert task(store, "B").wait_reason == ""
 
 
 def test_project_agent_not_counted_in_project_limit(make_project, start_server, calls):

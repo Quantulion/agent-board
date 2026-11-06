@@ -188,6 +188,18 @@ test('cardModel собирает очередь, агента, цепочку и
   assert.equal(e.proposal, false);
 });
 
+test('cardModel: ожидание слота с упёршимся лимитом, текст агента его не дублирует', () => {
+  // arrange
+  const ctx = { byKey: new Map(), proposalKeys: new Set(), repoBase: new Map(), config: { max_agents: 2, global_max_agents: 6 } };
+  // act
+  const waiting = cardModel(task('W-1', { status: 'in_progress', agent_state: 'waiting_turn', wait_reason: 'project' }), ctx);
+  const running = cardModel(task('W-2', { status: 'in_progress', agent_state: 'running', wait_reason: '' }), ctx);
+  // assert
+  assert.deepEqual(waiting.slot, { reason: 'project', field: 'max_agents', limit: 2 });
+  assert.equal(waiting.agent, null);
+  assert.equal(running.slot, null);
+});
+
 test('stepperModel: пройденные стадии, текущая и пропущенный трекер', () => {
   const states = (stage, tracker) => stepperModel(stage, tracker).map(s => s.id + ':' + s.state).join(' ');
   assert.equal(states('decomposition', 'jira'), 'decomposition:cur tracker:todo work:todo done:todo');

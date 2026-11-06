@@ -1,6 +1,7 @@
 // Панель «Проект»: тред с агентом проекта, его состояние и предложения по изменению графа задач.
 import { h, icon, patchList } from './dom.js';
 import { T } from './i18n.js';
+import { slotNote, slotWait } from './slot.js';
 import { createThread, draftsFor } from './thread.js';
 import { toast } from './ui.js';
 
@@ -102,6 +103,7 @@ export function agentStateLine(pa) {
   const state = pa && pa.state;
   if (state === 'error') return { cls: 'err', text: T.project.state.error };
   if (state === 'running') return { cls: 'run', text: T.project.state.running };
+  if (state === 'waiting_turn') return { cls: 'wait', text: T.project.state.waiting_turn };
   return { cls: 'idle', text: T.project.state.idle };
 }
 
@@ -297,6 +299,8 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     const notes = [];
     if (pa.turn_error) notes.push(h('div', { class: 'ferr' }, h('b', null, T.card.turnError + ': '), pa.turn_error));
     if (pa.parked) notes.push(h('div', { class: 'pa-note' }, T.project.parked));
+    const wait = slotWait(pa.state, pa.wait_reason, snap.config);
+    if (wait) notes.push(slotNote(wait));
     banners.replaceChildren(...notes);
     banners.hidden = !notes.length;
 

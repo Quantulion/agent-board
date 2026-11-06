@@ -109,6 +109,8 @@ class Task(_Serializable):
     report: Optional[str] = None
     unread: int = 0
     agent_state: str = "idle"
+    # какой лимит одновременных ходов держит агента в очереди: project или global; пусто, если не ждёт
+    wait_reason: str = ""
     agent_parked: bool = False
     turn_error: str = ""
     last_turn_at: str = ""
