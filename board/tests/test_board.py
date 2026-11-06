@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 import pytest
 from conftest import NOW, flat, make_board, make_task as mk, wake
 
@@ -251,6 +253,48 @@ def test_update_task__tracker_link_invalid__rejected(board, fields):
         board.update_task("A", "user", fields)
     task = board.store.load_tasks()["A"]
     assert (task.tracker_key, task.tracker_url) == (None, None)
+
+
+JIRA_TRACKER = {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
+                "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}
+GITHUB_TRACKER = {"type": "github", "repo": "owner/name", "auth": {"type": "token_env", "env": "GITHUB_TOKEN"}}
+
+
+@pytest.mark.parametrize("tracker, key", [(JIRA_TRACKER, "PROJ-123"), (JIRA_TRACKER, "AB2_X-7"),
+                                          (GITHUB_TRACKER, "#42")])
+def test_update_task__tracker_key_matches_tracker_format__is_saved(board, tracker, key):
+    # arrange
+    board.update_config({"tracker": tracker})
+    board.add_task(mk("A"), "user")
+    # act
+    board.update_task("A", "user", {"tracker_key": key})
+    # assert
+    assert board.store.load_tasks()["A"].tracker_key == key
+
+
+@pytest.mark.parametrize("tracker, key, example", [
+    (JIRA_TRACKER, "proj-123", "PROJ-123"), (JIRA_TRACKER, "PROJ123", "PROJ-123"), (JIRA_TRACKER, "#42", "PROJ-123"),
+    (JIRA_TRACKER, "PROJ-0", "PROJ-123"), (JIRA_TRACKER, "1PROJ-5", "PROJ-123"),
+    (GITHUB_TRACKER, "42", "#123"), (GITHUB_TRACKER, "PROJ-1", "#123"), (GITHUB_TRACKER, "#0", "#123"),
+    (GITHUB_TRACKER, "#4a", "#123"),
+])
+def test_update_task__tracker_key_wrong_format__rejected_with_example(board, tracker, key, example):
+    # arrange
+    board.update_config({"tracker": tracker})
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError, match="должен быть вида %s" % re.escape(example)):
+        board.update_task("A", "user", {"tracker_key": key})
+    assert board.store.load_tasks()["A"].tracker_key is None
+
+
+def test_update_task__tracker_key_without_tracker__any_format_saved(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    board.update_task("A", "user", {"tracker_key": "task/17"})
+    # assert
+    assert board.store.load_tasks()["A"].tracker_key == "task/17"
 
 
 def test_update_task_rejects_unknown_field(board):
