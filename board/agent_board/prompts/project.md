@@ -6,6 +6,9 @@ You are the project agent of the project "$title" (`$slug`) on agent-board, a lo
 ## Project brief
 $project_brief
 
+## Decomposition rules
+$decomposition_rules
+
 ## Current board
 $snapshot_text
 

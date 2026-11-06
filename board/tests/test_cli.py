@@ -760,3 +760,28 @@ def test_config_schema__human_output__table_row_per_field(tmp_home, capsys, monk
     # assert
     names = [line.split()[0] for line in out.splitlines()[1:] if line.strip() and not line.startswith("-")]
     assert code == 0 and set(names) >= {f.name for f in fields(ProjectConfig)} - set(NOT_SETTABLE)
+
+
+def test_config_set__decomposition_rules__saved_and_length_capped(srv, capsys):
+    # act
+    saved = run_json(capsys, "config", "set", "--json", json.dumps({"decomposition_rules": "Одна задача — один репо"}))
+    code, _, err = run(capsys, "config", "set", "--json", json.dumps({"decomposition_rules": "x" * 4001}))
+    # assert
+    assert saved["config"]["decomposition_rules"] == "Одна задача — один репо"
+    assert code == 1 and "decomposition_rules" in err
+    assert run_json(capsys, "config", "get", "--json")["decomposition_rules"] == "Одна задача — один репо"
+
+
+@pytest.mark.parametrize("name", ["repos", "resources", "links"])
+def test_config_schema__list_item_shapes__match_validators(tmp_home, capsys, monkeypatch, name):
+    # arrange
+    from agent_board.config import _repos_structure, _validate_links, _validate_resources
+
+    shape = _schema(capsys, monkeypatch)[name]["shape"]
+    check = {"repos": _repos_structure, "resources": _validate_resources, "links": _validate_links}[name]
+    example = shape["example"]
+    # act / assert
+    assert set(example) <= set(shape["item"]) and set(shape["required"]) <= set(shape["item"])
+    assert not _rejected(check, [example])
+    for key in shape["required"]:
+        assert _rejected(check, [{k: v for k, v in example.items() if k != key}]), key

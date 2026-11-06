@@ -347,3 +347,12 @@ def test_task_system_explains_review_rounds():
     # assert
     assert "## Review" in text and "crit comment --reply-to" in text
     assert "Never run crit" in text and "--resolve" in text
+
+
+def test_project_prompt__decomposition_rules__included_or_none():
+    # act
+    with_rules = project_prompt(_config(decomposition_rules="Одна задача — один репозиторий"), {"tasks": []}, CLI)
+    without = project_prompt(_config(), {"tasks": []}, CLI)
+    # assert
+    assert "## Decomposition rules\nОдна задача — один репозиторий" in with_rules
+    assert "## Decomposition rules\n(none)" in without

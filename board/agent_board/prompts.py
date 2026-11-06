@@ -88,6 +88,7 @@ def project_prompt(config: ProjectConfig, snapshot: dict, board_cli: str) -> str
         "slug": config.slug,
         "language": config.language,
         "project_brief": _or_none(config.project_brief),
+        "decomposition_rules": _or_none(config.decomposition_rules),
         "snapshot_text": _snapshot_text(snapshot),
         "agent_rules": _or_none(config.agent_rules),
     })

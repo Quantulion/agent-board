@@ -84,6 +84,9 @@ def test_setup__commands__exist_with_their_options(tmp_path):
     checked = set()
     # act / assert
     assert commands
+    if any("--project" in tokens for tokens in commands):
+        res = _cli(["--help"], tmp_path)
+        assert res.returncode == 0 and "--project" in res.stdout
     for tokens in commands:
         words, flags = _subcommand(tokens)
         assert words, tokens
@@ -139,7 +142,9 @@ def test_setup__inline_json__matches_schema(schema):
         elif "type" in value:
             assert set(value) <= set(tracker["auth"][value["type"]]["keys"]), value
         else:
+            # предлагаемый маппинг только двигает задачи вперёд: ранние статусы трекера не возвращают задачу назад
             assert all(v is None or v in tracker["statuses"]["targets"] for v in value.values()), value
+            assert not set(value.values()) & {"not_started", "in_progress"}, value
 
 
 def test_setup__named_fields__exist_in_schema(schema):
@@ -161,3 +166,31 @@ def test_setup__ship_examples__pass_template_validation():
     assert examples
     for command in examples:
         validate_template(command)
+
+
+def test_setup__config_set_examples__pass_dry_run(tmp_home, tmp_path, capsys, monkeypatch):
+    # arrange
+    from agent_board.cli import main
+    from agent_board.server import BoardServer
+
+    repo = tmp_path / "api"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, timeout=30)
+    monkeypatch.delenv("AGENT_BOARD_ACTOR", raising=False)
+    monkeypatch.delenv("AGENT_BOARD_PROJECT", raising=False)
+    assert main(["init", "pay", "--title", "Платежи"]) == 0
+    server = BoardServer(port=0, runner=False, tracker_sync=False)
+    server.start()
+    examples = [t for t in _commands() if "set" in t and "--dry-run" in t]
+    try:
+        # act / assert
+        assert examples
+        for tokens in examples:
+            args = [a.replace("<slug>", "pay").replace("/abs/path/api", str(repo)) for a in tokens[1:]]
+            capsys.readouterr()
+            code = main(args)
+            out = capsys.readouterr()
+            assert code == 0, (tokens, out.err)
+            assert json.loads(out.out)["saved"] is False
+    finally:
+        server.stop()

@@ -26,6 +26,8 @@ DESCRIPTIONS = {
     "branch_template": "Task branch name template.",
     "project_brief": "Project description for the project agent: goal, key decisions, decomposition rules.",
     "links": "Project links shown in the UI (plan, spec, mockups).",
+    "decomposition_rules": "Rules every task of the decomposition must follow (size, one repo per task, tests); "
+                           "the project agent checks tasks against them.",
 }
 
 _TYPES = {"str": "string", "int": "integer", "bool": "boolean", "dict": "object", "List[dict]": "array"}
@@ -56,8 +58,10 @@ def _shapes() -> dict:
                                "login, switches to Basic auth.",
                   "cookie_file": "path: file with the Cookie header value (Jira only)."}
     return {
-        "repos": {"item": {"name": "unique repo name (required)", "path": "absolute path to a git work tree (required)",
-                           "base": "base branch or null"}},
+        "repos": {"item": {"name": "unique repo name", "path": "absolute path to a git work tree",
+                           "base": "base branch or null"},
+                  "required": ["name", "path"],
+                  "example": {"name": "api", "path": "/abs/path/api", "base": "main"}},
         "tracker": {
             "types": list(tracker.TYPES),
             "variants": variants,
@@ -90,9 +94,13 @@ def _shapes() -> dict:
             "note": "Background agents cannot ask for permission interactively: the mode decides what they may do "
                     "unattended.",
         },
-        "resources": {"item": {"name": "letters, digits, '-', '_', '.' (required, unique)",
-                               "description": "how and when to use it"}},
-        "links": {"item": {"title": "link text", "href": "http(s) URL or file path"}},
+        "resources": {"item": {"name": "unique; letters, digits, '-', '_', '.'",
+                               "description": "how and when to use it"},
+                      "required": ["name"],
+                      "example": {"name": "functional-tests", "description": "Run with make ftest"}},
+        "links": {"item": {"title": "link text", "href": "http(s) URL or file path"},
+                  "required": ["title", "href"],
+                  "example": {"title": "Spec", "href": "https://example.com/spec"}},
         "branch_template": {"placeholders": ["key"]},
     }
 

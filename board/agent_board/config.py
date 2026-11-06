@@ -27,6 +27,7 @@ class ProjectConfig(_Serializable):
     branch_template: str = "{key}"
     global_max_agents: int = 6
     project_brief: str = ""
+    decomposition_rules: str = ""
     project_session_id: Optional[str] = None
     links: List[dict] = field(default_factory=list)
 
@@ -70,6 +71,8 @@ NOT_SETTABLE = {"slug": "имя проекта не меняется", "stage": 
                 "project_session_id": "сессию агента проекта ведёт раннер"}
 HARNESS_TYPES = ("claude", "codex", "fake")
 REVIEW_TOOLS = ("crit", "none")
+# правила декомпозиции целиком попадают в промпт агента проекта
+MAX_DECOMPOSITION_RULES_CHARS = 4000
 
 
 def _positive_int(value, name: str) -> None:
@@ -85,6 +88,12 @@ def _text(value, name: str, required: bool = False) -> None:
 def _optional_text(value, name: str) -> None:
     if value is not None and (not isinstance(value, str) or not value.strip()):
         raise ValueError("%s должен быть непустой строкой или null" % name)
+
+
+def _check_decomposition_rules(config: "ProjectConfig") -> None:
+    _text(config.decomposition_rules, "decomposition_rules")
+    if len(config.decomposition_rules) > MAX_DECOMPOSITION_RULES_CHARS:
+        raise ValueError("decomposition_rules длиннее %d символов" % MAX_DECOMPOSITION_RULES_CHARS)
 
 
 def _git_work_tree(path: str) -> bool:
@@ -223,6 +232,7 @@ FIELD_CHECKS = {
     "language": lambda c: _text(c.language, "language", required=True),
     "agent_rules": lambda c: _text(c.agent_rules, "agent_rules"),
     "project_brief": lambda c: _text(c.project_brief, "project_brief"),
+    "decomposition_rules": _check_decomposition_rules,
     "tracker": _check_tracker,
     "review": _check_review,
     "ship": _check_ship,
@@ -262,7 +272,7 @@ def validate_structure(config: ProjectConfig) -> None:
     _check_chains(config)
     _positive_int(config.max_agents, "max_agents")
     _positive_int(config.global_max_agents, "global_max_agents")
-    for name in ("language", "agent_rules", "project_brief", "branch_template"):
+    for name in ("language", "agent_rules", "project_brief", "decomposition_rules", "branch_template"):
         _text(getattr(config, name), name)
     _repos_structure(config.repos)
     tracker = config.tracker
