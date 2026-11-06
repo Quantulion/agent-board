@@ -282,6 +282,18 @@ Scripts one by one (`node ui-tests/<name>.mjs` from the root or `npm run <name>`
 
 The task card opens at `#/p/<slug>?task=<KEY>`; the panel width is stored in `localStorage`, message and answer drafts in `sessionStorage`. The board view (columns or graph) and whether the "Project" panel is collapsed are also stored in `localStorage`.
 
+## Publishing
+
+The script exports the current tree (tracked files and new non-ignored files, without `.superpowers/`) into a new repository as a single commit. The commit author comes only from the arguments, the machine's git settings are not used; the script pushes nothing:
+
+```bash
+.venv/bin/python -m pytest -q board/tests/test_publishability.py   # no internal names or personal paths
+python3 scripts/export-repo.py ../agent-board-public \
+    --author-name "Quantulion" --author-email "<id>+Quantulion@users.noreply.github.com"
+```
+
+Use GitHub's noreply address for the commit email (Settings → Emails → "Keep my email addresses private"): it does not reveal your real address. The repository URL in `.claude-plugin/plugin.json` and `marketplace.json` (`homepage`, `repository`) must match the repository created on GitHub.
+
 ## License
 
 MIT, full text in [LICENSE](LICENSE).

@@ -3,8 +3,11 @@
   "version": "0.2.0",
   "description": "Lay a plan out on a local task board and let background coding agents work on it",
   "author": {
-    "name": "agent-board"
+    "name": "Quantulion",
+    "url": "https://github.com/Quantulion"
   },
   "license": "MIT",
+  "homepage": "https://github.com/Quantulion/agent-board#readme",
+  "repository": "https://github.com/Quantulion/agent-board",
   "skills": ["./skills/"]
 }

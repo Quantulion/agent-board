@@ -2,14 +2,21 @@
   "name": "agent-board-local",
   "description": "Local marketplace for the agent-board skill",
   "owner": {
-    "name": "agent-board"
+    "name": "Quantulion",
+    "url": "https://github.com/Quantulion"
   },
   "plugins": [
     {
       "name": "agent-board",
       "description": "Lay a plan out on a local task board and let background coding agents work on it",
       "version": "0.2.0",
-      "source": "./"
+      "source": "./",
+      "author": {
+        "name": "Quantulion",
+        "url": "https://github.com/Quantulion"
+      },
+      "homepage": "https://github.com/Quantulion/agent-board#readme",
+      "repository": "https://github.com/Quantulion/agent-board"
     }
   ]
 }
