@@ -30,9 +30,10 @@ WAIT = 20.0
 class ServerProcess:
     """Доска в отдельном процессе: `python -m agent_board serve` с временным AGENT_BOARD_HOME."""
 
-    def __init__(self, home: Path, extra_env=None):
+    def __init__(self, home: Path, extra_env=None, extra_args=()):
         self.home = home
         self.extra_env = dict(extra_env or {})
+        self.extra_args = list(extra_args)
         self.proc = None
         self.launches = 0
 
@@ -41,7 +42,7 @@ class ServerProcess:
         env["PYTHONPATH"] = os.pathsep.join(filter(None, [PKG_ROOT, os.environ.get("PYTHONPATH")]))
         self.launches += 1
         out = open(str(self.home / ("server-%d.log" % self.launches)), "w")
-        self.proc = subprocess.Popen([sys.executable, "-m", "agent_board", "serve", "--port", "0"],
+        self.proc = subprocess.Popen([sys.executable, "-m", "agent_board", "serve", "--port", "0"] + self.extra_args,
                                      env=env, stdout=out, stderr=subprocess.STDOUT)
         out.close()
         wait_for(lambda: (read_discovery() or {}).get("pid") == self.proc.pid, WAIT, "discovery нового сервера")
@@ -155,7 +156,7 @@ def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, 
         tracker={"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task", "poll_seconds": 3600,
                  "auth": {"type": "token_env", "env": "E2E_JIRA_TOKEN"},
                  "statuses": {"Open": None, "Done": "done"}}))
-    server = ServerProcess(tmp_home, {"E2E_JIRA_TOKEN": token})
+    server = ServerProcess(tmp_home, {"E2E_JIRA_TOKEN": token}, ["--no-tracker-sync"])
     crit_dir = store.root / "crit"
 
     def review():
