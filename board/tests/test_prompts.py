@@ -270,6 +270,7 @@ def test_task_system_statuses_end_of_turn_and_research_rules():
     assert "Set only in_progress and in_review" in text and "never set other statuses" in text
     assert "approved only when" not in text
     assert "Before ending any turn" in text and "reports/" in text and "long tool timeout" in text
+    assert "report field, not into the repository" in text and "git-ignored directory" in text and "/tmp" in text
 
 
 def test_project_prompt_escalation_answered_to_task_thread():
