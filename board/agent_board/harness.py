@@ -14,6 +14,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from .messages import msg
+
 DEFAULT_SYSTEM_PROMPT = (
     "Ты работаешь над задачей доски agent-board. Не делай git commit и git push. "
     "Статусы, вопросы и отчёт передавай командой agent-board."
@@ -66,7 +68,7 @@ class Harness:
         full_env = dict(os.environ)
         full_env.update(env)
         if shutil.which(args[0], path=full_env.get("PATH")) is None:
-            return FailedProc("%s не найден в PATH" % args[0], session_hint)
+            return FailedProc(msg("harness.not_found", command=args[0]), session_hint)
         try:
             proc = subprocess.Popen(
                 args, cwd=str(cwd), env=full_env, stdin=subprocess.PIPE,
@@ -74,7 +76,7 @@ class Harness:
                 start_new_session=True,
             )
         except OSError as e:
-            return FailedProc("не удалось запустить %s: %s" % (args[0], e), session_hint)
+            return FailedProc(msg("harness.start_failed", command=args[0], error=str(e)), session_hint)
         proc.session_hint = session_hint
         # Промпт идёт через stdin отдельным потоком: большой ввод не должен блокировать чтение вывода.
         threading.Thread(target=_feed_stdin, args=(proc, stdin_text), daemon=True).start()
@@ -103,7 +105,7 @@ class Harness:
             raise
         error = state["error"]
         if not error and code != 0:
-            error = tail.strip() or "процесс завершился с кодом %d" % code
+            error = tail.strip() or msg("harness.exit_code", code=code)
         return TurnResult(
             session_id=state["session_id"], ok=not error and code == 0, error=error, exit_code=code, note=state["note"]
         )
@@ -284,14 +286,14 @@ class ClaudeHarness(Harness):
         try:
             system_file = self._write_system_file(log)
         except OSError as e:
-            return FailedProc("не удалось записать системный промпт: %s" % e, session_id)
+            return FailedProc(msg("harness.prompt_failed", error=str(e)), session_id)
         return self._spawn(self.build_start_args(session_id, system_file), cwd, env, session_id, prompt)
 
     def resume_turn(self, cwd, session_id, message, log, env):
         try:
             system_file = self._write_system_file(log)
         except OSError as e:
-            return FailedProc("не удалось записать системный промпт: %s" % e, session_id)
+            return FailedProc(msg("harness.prompt_failed", error=str(e)), session_id)
         return self._spawn(self.build_resume_args(session_id, system_file), cwd, env, session_id, message)
 
     def terminal_command(self, cwd, session_id):
@@ -301,12 +303,12 @@ class ClaudeHarness(Harness):
         kind = event.get("type")
         if kind == "system" and event.get("subtype") == "init" and event.get("session_id"):
             if state["session_id"] and state["session_id"] != event["session_id"]:
-                state["note"] = "id сессии в потоке (%s) отличается от переданного (%s)" % (event["session_id"], state["session_id"])
+                state["note"] = msg("harness.session_mismatch", got=event["session_id"], expected=state["session_id"])
             else:
                 state["session_id"] = event["session_id"]
         elif kind == "result":
             if event.get("is_error"):
-                state["error"] = str(event.get("result") or event.get("error") or "ошибка агента")
+                state["error"] = str(event.get("result") or event.get("error") or "") or msg("harness.agent_error")
             else:
                 state["error"] = ""
 
@@ -347,10 +349,10 @@ class CodexHarness(Harness):
             state["session_id"] = event["thread_id"]
         elif kind == "turn.failed":
             err = event.get("error")
-            msg = err.get("message") if isinstance(err, dict) else err
-            state["error"] = str(msg or event.get("message") or "ход завершился ошибкой")
+            text = err.get("message") if isinstance(err, dict) else err
+            state["error"] = str(text or event.get("message") or "") or msg("run.turn_failed")
         elif kind == "error" and not state["error"]:
-            state["error"] = str(event.get("message") or "ошибка агента")
+            state["error"] = str(event.get("message") or "") or msg("harness.agent_error")
         elif kind == "turn.completed":
             state["error"] = ""
 
@@ -388,4 +390,4 @@ def make_harness(config: dict) -> Harness:
         return CodexHarness(config.get("sandbox") or "workspace-write", config.get("model"))
     if kind == "fake":
         return FakeHarness()
-    raise ValueError("Неизвестный харнесс: %s" % kind)
+    raise ValueError(msg("harness.unknown", kind=kind))

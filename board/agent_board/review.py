@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Callable, List, Optional
 
 from .harness import signal_group
+from .messages import msg
 
 REVIEW_TOOLS = ("crit", "none")
 DEFAULT_BINARY = "crit"
@@ -104,7 +105,7 @@ class CritReview:
         full_env.update(QUIET_ENV)
         full_env.update(env or {})
         if shutil.which(self.binary, path=full_env.get("PATH")) is None:
-            return _NotStarted("%s не найден" % self.binary)
+            return _NotStarted(msg("review.not_found", binary=self.binary))
         try:
             Path(data_dir).mkdir(parents=True, exist_ok=True)
             proc = subprocess.Popen(
@@ -113,7 +114,7 @@ class CritReview:
                 text=True, encoding="utf-8", errors="replace", start_new_session=True,
             )
         except OSError as e:
-            return _NotStarted("не удалось запустить %s: %s" % (self.binary, e))
+            return _NotStarted(msg("review.start_failed", binary=self.binary, error=str(e)))
         proc.review_cwd = Path(cwd)
         proc.review_data_dir = Path(data_dir)
         return proc
@@ -153,13 +154,13 @@ class CritReview:
         if DAEMON_GONE_MARK in stdout:
             return RoundResult("aborted", error=stdout.strip(), url=url, session=session)
         if verdict is None:
-            error = tail.strip() or stdout.strip()[-OUTPUT_TAIL:] or "crit завершился с кодом %d" % code
+            error = tail.strip() or stdout.strip()[-OUTPUT_TAIL:] or msg("review.exit_code", code=code)
             return RoundResult("failed", error=error, url=url, session=session)
         if verdict:
             return RoundResult("approved", url=url, session=session)
         comments = self._round_comments(proc, stdout)
         if comments is None:
-            return RoundResult("failed", error="crit не одобрил раунд, но прочитать его комментарии не удалось",
+            return RoundResult("failed", error=msg("review.comments_unreadable"),
                                url=url, session=session)
         return RoundResult("approved" if not comments else "changes", comments=comments, url=url, session=session)
 
@@ -199,9 +200,9 @@ class CritReview:
         try:
             raw = json.loads(res.stdout or "[]")
         except ValueError as e:
-            raise ReviewError("crit comments: некорректный JSON: %s" % e)
+            raise ReviewError(msg("review.comments_bad_json", error=str(e)))
         if not isinstance(raw, list):
-            raise ReviewError("crit comments: ожидался список")
+            raise ReviewError(msg("review.comments_not_list"))
         return normalize_comments(raw)
 
 
@@ -270,7 +271,7 @@ def make_review(config: dict):
         return NoReview()
     if tool == "crit":
         return CritReview(config.get("binary") or DEFAULT_BINARY)
-    raise ValueError("Неизвестный инструмент ревью: %s" % tool)
+    raise ValueError(msg("review.unknown_tool", tool=tool))
 
 
 def port_of(url: Optional[str]) -> Optional[int]:

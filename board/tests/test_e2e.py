@@ -16,7 +16,7 @@ from fakes.fake_jira import FakeJira
 
 from agent_board.config import ProjectConfig
 from agent_board.harness import group_alive
-from agent_board.runner import LEFTOVER_MISSING_TEXT
+from agent_board.messages import CATALOG
 from agent_board.server import read_discovery
 from agent_board.store import ProjectStore
 from agent_board.worktree import run_git
@@ -125,7 +125,7 @@ def test_full_flow_with_server_crash_during_dependent_turn(tmp_home, git_repo):
         assert b.agent_state == "idle" and not b.turn_process
         wait_for(lambda: not group_alive(old_group), WAIT, "старый процесс B остановлен")
         texts = [m.text for m in store.read_thread("B")]
-        assert any("прерван" in t for t in texts) and LEFTOVER_MISSING_TEXT not in texts
+        assert any("прерван" in t for t in texts) and CATALOG["run.leftover_missing"][1] not in texts
         assert len([e for e in store.read_events() if e.type == "turn_started" and e.data.get("key") == "B"]) == 2
         assert not [e for e in store.read_events() if e.type == "turn_failed"]
     except BaseException:

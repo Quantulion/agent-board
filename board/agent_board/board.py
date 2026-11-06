@@ -12,7 +12,7 @@ from .config import (
     validate_fields, validate_structure,
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
-from .messages import msg
+from .messages import Msg, localize, msg, normalize
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_auto, check_request, is_shipping, order as ship_order, settings as ship_settings
 from .tracker import check_issue_key, is_http_url, validate_config as validate_tracker
@@ -198,6 +198,10 @@ class Board:
         self.locks_for: Optional[Callable[[str], List[dict]]] = None
         self._migrate_config()
 
+    def _localized(self, value):
+        """Сообщения каталога в сохраняемых данных переводятся на язык проекта в момент записи."""
+        return localize(value, normalize(self.store.load_config().language))
+
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
         if type not in EVENT_TYPES:
@@ -209,7 +213,7 @@ class Board:
         """Служебные поля meta.json (состояние агента проекта и т.п.), без событий."""
         with self._lock:
             meta = self.store.load_meta()
-            meta.update(fields)
+            meta.update(self._localized(fields))
             self.store.save_meta(meta)
 
     def update_config(self, fields: dict) -> ProjectConfig:
@@ -485,19 +489,19 @@ class Board:
     def retry(self, key: str, actor: str) -> List[Event]:
         """Пользователь повторяет упавший ход агента задачи или агента проекта; ход запускает раннер."""
         with self._lock:
-            self._require_user(actor, "Повторить ход агента может только пользователь")
+            self._require_user(actor, msg("board.retry_user_only"))
             if key == PROJECT_THREAD:
                 meta = self.store.load_meta()
                 state, error = meta.get("project_agent_state") or "idle", meta.get("project_turn_error") or ""
             else:
                 task = self._get(self.store.load_tasks(), key)
                 if task.status in (Status.CANCELLED, Status.APPROVED, Status.SENT):
-                    raise ValueError("Агент задачи на статусе %s не работает, повторять нечего" % task.status.value)
+                    raise ValueError(msg("board.retry_status", status=task.status.value))
                 if self.store.load_config().stage != "work":
-                    raise ValueError("Агенты задач работают только на стадии work")
+                    raise ValueError(msg("board.retry_stage"))
                 state, error = task.agent_state, task.turn_error
             if state != "error":
-                raise ValueError("Повторить можно только упавший ход: агент %s сейчас в состоянии %s" % (key, state))
+                raise ValueError(msg("board.retry_not_failed", key=key, state=state))
             return [self._emit("agent_wake", {"key": key, "reason": "retry", "error": error})]
 
     def request_rebase(self, key: str, actor: str) -> List[Event]:
@@ -505,17 +509,16 @@ class Board:
         поэтому идущий ход перенос дожидается."""
         with self._lock:
             if actor not in ACTORS and actor != "project_agent":
-                raise ValueError("Неизвестный актор: %r" % actor)
+                raise ValueError(msg("board.unknown_actor", actor=actor))
             if actor not in ("user", "project_agent"):
-                raise PermissionError("Перенести задачу на базу может только пользователь или агент проекта")
+                raise PermissionError(msg("board.rebase_actor"))
             task = self._get(self.store.load_tasks(), key)
             if task.status in (Status.APPROVED, Status.SENT, Status.DONE, Status.CANCELLED):
-                raise ValueError("Задача на статусе %s не переносится на базу: её работа уже принята или отменена"
-                                 % task.status.value)
+                raise ValueError(msg("board.rebase_status", status=task.status.value))
             if not task.session_id or not task.worktree:
-                raise ValueError("У задачи ещё нет рабочей копии: агент начнёт работу сразу от свежей базы")
+                raise ValueError(msg("board.rebase_no_worktree"))
             if self.store.load_config().stage != "work":
-                raise ValueError("Агенты задач работают только на стадии work")
+                raise ValueError(msg("board.retry_stage"))
             return [self._emit("agent_wake", {"key": key, "reason": "rebase", "by": actor})]
 
     def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
@@ -591,7 +594,7 @@ class Board:
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
-            for name, value in fields.items():
+            for name, value in self._localized(fields).items():
                 setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
@@ -685,7 +688,7 @@ class Board:
 
     def _append_message(self, thread: str, author: str, text: str):
         """Сообщение в тред без пробуждений: (сообщение, событие message_posted)."""
-        message = Message(id=uuid.uuid4().hex, author=author, text=text, at=self._clock())
+        message = Message(id=uuid.uuid4().hex, author=author, text=self._localized(text), at=self._clock())
         self.store.append_message(thread, message)
         if author != "user":
             if thread != PROJECT_THREAD:
@@ -739,7 +742,7 @@ class Board:
                 self._reopen_proposal(pid)
                 raise
             events.append(self._emit("proposal_applied", {"id": pid}))
-            text = "Применено предложение %s: %s" % (pid, self._describe_proposal(proposal))
+            text = msg("board.applied_proposal", id=pid, change=self._describe_proposal(proposal))
             for thread in (PROJECT_THREAD, affected):
                 events.extend(self.post_message(thread, "system", text))
             return events
@@ -838,13 +841,13 @@ class Board:
         return proposal
 
     @staticmethod
-    def _describe_proposal(proposal: Proposal) -> str:
+    def _describe_proposal(proposal: Proposal) -> Msg:
         p = proposal.payload
         if proposal.kind == "add_task":
-            return "добавлена задача %s" % p["task"]["key"]
+            return msg("board.applied_add_task", key=p["task"]["key"])
         if proposal.kind == "set_deps":
-            return "зависимости задачи %s: %s" % (p["key"], ", ".join(p["deps"]) or "нет")
-        return "отменена задача %s" % p["key"]
+            return msg("board.applied_set_deps", key=p["key"], deps=", ".join(p["deps"]) or msg("board.applied_no_deps"))
+        return msg("board.applied_cancel_task", key=p["key"])
 
     @staticmethod
     def _check_new_key(key: str, tasks) -> None:
@@ -870,7 +873,7 @@ class Board:
             raise PermissionError(msg("board.graph_via_proposals"))
 
     def _emit(self, type: str, data: dict) -> Event:
-        event = self.store.append_event(type, data, self._clock())
+        event = self.store.append_event(type, self._localized(data), self._clock())
         if self._on_event is not None:
             self._on_event(event)
         return event

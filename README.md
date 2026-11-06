@@ -139,7 +139,7 @@ Settings are changed with `agent-board config set`, the "Project settings" windo
 | `global_max_agents` | concurrent turns per server (6) |
 | `resources` | `[{"name", "description"}]` — resources for `lock-run` |
 | `links` | project links for the UI: `[{"title", "href"}]`, `href` is http(s) or a path to a local file: absolute or relative (to the first repository in `repos`, or, without repositories, to the project directory `<home>/projects/<slug>`). A file is served via `GET /api/p/<slug>/file?path=` only from inside the project directory, its repositories and the task worktrees; html is served with `Content-Security-Policy: sandbox`, files up to 2 MB |
-| `language` | language agents use with the user: summaries, questions, thread messages, reports (default `ru`) |
+| `language` | language agents use with the user: summaries, questions, thread messages, reports; the board's own system messages in threads and the log are written in it too (already saved messages are not rewritten when it changes) (default `ru`) |
 | `agent_rules` | extra project rules: they go into the starting prompt of tasks and of the project agent, not into the system prompt |
 | `project_brief` | project description for the project agent |
 | `decomposition_rules` | decomposition rules (text up to 4000 characters): they go into the project agent's prompt, and it checks the task graph against them |

@@ -146,17 +146,17 @@ def check_auto(key: str, tasks: Dict[str, Task]) -> None:
     стоит в очереди отправки — тогда задача уйдёт следом за ней."""
     task = tasks[key]
     if task.status != Status.APPROVED:
-        raise ValueError("задача уже не одобрена (%s)" % task.status.value)
+        raise ValueError(msg("run.ship_not_approved", status=task.status.value))
     if is_shipping(task):
-        raise ValueError("задача уже отправляется")
+        raise ValueError(msg("ship.auto_in_progress"))
     for dep in sorted(task.deps):
         dep_task = tasks.get(dep)
         if dep_task is None or dep_task.status in SHIPPED:
             continue
         if dep_task.status != Status.APPROVED:
-            raise ValueError("зависимость %s ещё не одобрена (%s)" % (dep, dep_task.status.value))
+            raise ValueError(msg("ship.auto_dep_not_approved", key=dep, status=dep_task.status.value))
         if not is_shipping(dep_task):
-            raise ValueError("зависимость %s ещё не отправлена — отправьте её, затем эту задачу" % dep)
+            raise ValueError(msg("ship.auto_dep_not_sent", key=dep))
 
 
 def tail_of(path: Path, limit: int = OUTPUT_TAIL_BYTES) -> str:
@@ -234,7 +234,7 @@ def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict
         os.killpg(proc.pid, signal.SIGKILL)
         proc.wait()
         stdout.close()
-        raise OSError("не удалось запустить запись вывода: %s" % e)
+        raise OSError(msg("ship.output_failed", error=str(e)))
     return proc
 
 

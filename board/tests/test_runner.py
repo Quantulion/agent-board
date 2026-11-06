@@ -15,6 +15,7 @@ from agent_board import ship as ship_module
 from agent_board.board import new_task_from_dict
 from agent_board.config import ProjectConfig
 from agent_board.harness import FakeHarness
+from agent_board.messages import CATALOG, msg
 from agent_board.model import Status
 from agent_board.server import BoardServer
 from agent_board.store import ProjectStore
@@ -376,6 +377,24 @@ def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_se
     assert task(store, "T-1").session_id == "s-1"
 
 
+@pytest.mark.parametrize("language, expected", [("en", "en"), ("ru", "ru")])
+def test_running_task_on_start__project_language__interruption_note_in_that_language(
+        make_project, start_server, calls, git_repo, monkeypatch, language, expected):
+    # arrange: язык процесса противоположен языку проекта — сообщение должно следовать проекту
+    monkeypatch.setenv("AGENT_BOARD_LANG", "ru" if language == "en" else "en")
+    store = make_project(language=language)
+    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
+    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
+    t.agent_state, t.harness = "running", "fake"
+    store.save_task(t)
+    # act
+    start_server()
+    wait_events(store, "turn_finished", "T-1")
+    # assert
+    assert msg("run.interrupted").render(expected) in thread_texts(store, "T-1")
+
+
 def test_escalation_wakes_project_agent_with_digest(make_project, start_server, calls):
     # arrange
     store = make_project(project_session_id="p-1")
@@ -695,7 +714,7 @@ def test_graceful_stop_terminates_turn_and_next_start_resumes_it(make_project, s
     wake = [e.data["reason"] for e in events(store, "agent_wake", "T-1")]
     assert wake.count("interrupted") == 1
     assert [c["kind"] for c in calls] == ["start", "resume"] and "interrupted" in calls[1]["text"]
-    assert runner_mod.LEFTOVER_MISSING_TEXT not in thread_texts(store, "T-1")
+    assert CATALOG["run.leftover_missing"][1] not in thread_texts(store, "T-1")
 
 
 def test_queued_task_pending_message_survives_restart(make_project, start_server, calls):
@@ -997,7 +1016,7 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     project_turns = lambda: len(events(store, "turn_started", "_project"))
     # act
     add(srv, "T-1", script({"pingpong": "T-1"}))
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "_project"), what="остановка переписки")
     runner_sync(srv)
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
@@ -1005,11 +1024,11 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
     # assert
     assert parked_turns == runner_mod.MAX_AGENT_WAKES
     assert len(events(store, "turn_started", "T-1")) == runner_mod.MAX_AGENT_WAKES + 1
-    assert thread_texts(store, "_project").count(runner_mod.AGENTS_LOOP_TEXT) == 1
+    assert thread_texts(store, "_project").count(CATALOG["run.agents_loop"][1]) == 1
     assert srv.board_for("pay").snapshot()["project_agent"]["parked"] is True
     # act: пользователь отвечает в треде — агент проекта снова работает
     srv.board_for("pay").post_message("_project", "user", "продолжайте")
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "T-1"), what="остановка у задачи")
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
     # assert
@@ -1023,9 +1042,9 @@ def test_agent_ping_pong_is_parked_after_five_wakes_until_user_acts(make_project
 def _park_task_agent(store, srv):
     """Доводит переписку агентов до остановки у задачи T-1."""
     add(srv, "T-1", script({"pingpong": "T-1"}))
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "_project"), what="остановка переписки")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "_project"), what="остановка переписки")
     srv.board_for("pay").post_message("_project", "user", "продолжайте")
-    wait_for(lambda: runner_mod.AGENTS_LOOP_TEXT in thread_texts(store, "T-1"), what="остановка у задачи")
+    wait_for(lambda: CATALOG["run.agents_loop"][1] in thread_texts(store, "T-1"), what="остановка у задачи")
     wait_for(lambda: not srv.runner._turns, what="ходы закончились")
     runner_sync(srv)
     assert store.load_tasks()["T-1"].agent_parked is True
@@ -1529,7 +1548,7 @@ def test_review_approved_during_agent_turn_is_left_to_the_user(make_project, sta
     busy_agent(srv, store)
     # act
     fake_crit.finish(crit_dir(store), first["session"])
-    wait_for(lambda: runner_mod.REVIEW_DURING_TURN_TEXT in thread_texts(store, "A"), what="сообщение на карточке")
+    wait_for(lambda: CATALOG["run.review_during_turn"][1] in thread_texts(store, "A"), what="сообщение на карточке")
     wait_events(store, "turn_finished", "A", count=2)
     runner_sync(srv)
     # assert
