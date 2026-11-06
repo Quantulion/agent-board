@@ -332,6 +332,11 @@ class _Handler(BaseHTTPRequestHandler):
     def _api_get(self, board: Board, slug: str, rest: List[str], query: dict) -> None:
         if rest == ["state"]:
             return self._send_json(200, board.snapshot())
+        if rest == ["config"]:
+            # снимок тоже содержит настройки, но запрос настроек — действие пользователя; секретов в них нет
+            if (query.get("actor") or [""])[0] != "user":
+                raise PermissionError("Настройки проекта читает только пользователь")
+            return self._send_json(200, {"config": board.store.load_config().to_dict()})
         if len(rest) == 2 and rest[0] == "threads":
             messages = board.store.read_thread(rest[1])
             return self._send_json(200, {"messages": [m.to_dict() for m in messages]})
@@ -446,6 +451,11 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_json(200, self.app.tracker_sync.sync_now(board, _need(body, "actor")))
         if rest == ["tracker", "check"]:
             return self._send_json(200, tracker.check_access(board, _need(body, "actor")))
+        if rest == ["config"]:
+            dry_run = body.get("dry_run", False)
+            if not isinstance(dry_run, bool):
+                raise ValueError("dry_run должен быть true или false")
+            return self._send_json(200, board.set_config(_need(body, "actor"), _need(body, "fields"), dry_run))
         if len(rest) == 3 and rest[0] == "threads" and rest[2] == "read":
             events = board.mark_read(rest[1])
         elif len(rest) == 3 and rest[0] == "threads" and rest[2] == "messages":

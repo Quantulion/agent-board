@@ -9,7 +9,7 @@ export const EVENT_TYPES = [
   'proposal_created', 'proposal_applied', 'proposal_rejected', 'turn_started', 'turn_finished',
   'turn_failed', 'task_committed', 'lock_waiting', 'lock_acquired', 'lock_released', 'stage_changed',
   'project_agent_changed', 'review_requested', 'ship_requested', 'ship_started', 'ship_finished',
-  'tracker_created', 'tracker_synced',
+  'tracker_created', 'tracker_synced', 'config_changed',
 ];
 
 export const COALESCE_MS = 150;

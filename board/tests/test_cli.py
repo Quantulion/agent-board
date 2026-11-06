@@ -537,3 +537,69 @@ def test_tracker_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, fake
     # assert
     assert code == 1 and "пользователь" in err
     assert fake_jira.requests == []
+
+
+# --- настройки проекта ---
+
+def test_config_get_json_prints_config(srv, capsys):
+    # act
+    config = run_json(capsys, "config", "get", "--json")
+    # assert
+    assert config["slug"] == "pay" and config["max_agents"] == 3
+
+
+def test_config_get_prints_key_per_line(srv, capsys):
+    # act
+    code, out, _ = run(capsys, "config", "get")
+    # assert
+    assert code == 0 and "max_agents: 3" in out.splitlines() and 'tracker: {"type": "none"}' in out.splitlines()
+
+
+def test_config_set_saves_and_dry_run_does_not(srv, capsys):
+    # act
+    dry = run_json(capsys, "config", "set", "--json", '{"max_agents": 2}', "--dry-run")
+    after_dry = run_json(capsys, "config", "get", "--json")["max_agents"]
+    saved = run_json(capsys, "config", "set", "--json", '{"max_agents": 2}')
+    # assert
+    assert dry["saved"] is False and dry["config"]["max_agents"] == 2 and after_dry == 3
+    assert saved["saved"] is True and run_json(capsys, "config", "get", "--json")["max_agents"] == 2
+
+
+def test_config_set_invalid_exits_1_with_reason(srv, capsys):
+    # act
+    code, _, err = run(capsys, "config", "set", "--json", '{"ship": {"command": "push \\"{branch}\\""}}')
+    # assert
+    assert code == 1 and "кавычки" in err
+
+
+def test_config_set_bad_json_exits_1(srv, capsys):
+    # act
+    code, _, err = run(capsys, "config", "set", "--json", "{")
+    # assert
+    assert code == 1 and "JSON" in err
+
+
+def test_config_validate_ok_and_broken_file(srv, capsys):
+    # arrange
+    ok = run_json(capsys, "config", "validate")
+    store = srv.board_for("pay").store
+    cfg = store.load_config()
+    cfg.max_agents = 0
+    store.save_config(cfg)
+    # act
+    code, _, err = run(capsys, "config", "validate")
+    # assert
+    assert ok["saved"] is False and code == 1 and "max_agents" in err
+
+
+@pytest.mark.parametrize("argv", [["config", "get"], ["config", "set", "--json", '{"max_agents": 1}'],
+                                  ["config", "validate"]])
+@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
+def test_config_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, argv, actor_env):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
+    # act
+    code, _, err = run(capsys, *argv)
+    # assert
+    assert code == 1 and "пользователь" in err
+    assert srv.board_for("pay").store.load_config().max_agents == 3

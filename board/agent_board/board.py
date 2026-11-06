@@ -6,6 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from .config import NOT_SETTABLE, ProjectConfig, clean_links, validate_config as validate_project_config
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
@@ -66,6 +67,7 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_acquired": "key, resource",
     "lock_released": "key, resource",
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
+    "config_changed": "fields [имена изменённых настроек] — пользователь изменил настройки проекта",
     "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
     "review_requested": "key — пользователь попросил открыть раунд ревью",
     "ship_requested": "keys — пользователь попросил отправить задачи в ревью (в порядке отправки)",
@@ -167,19 +169,44 @@ class Board:
             meta.update(fields)
             self.store.save_meta(meta)
 
-    def update_config(self, fields: dict) -> None:
+    def update_config(self, fields: dict, full_check: bool = False, dry_run: bool = False) -> ProjectConfig:
+        """Меняет поля настроек под блокировкой доски. full_check — все проверки сохранения (настройки от
+        пользователя); иначе проверяются только переданные команда отправки и трекер. dry_run — без сохранения."""
         with self._lock:
             config = self.store.load_config()
             for name, value in fields.items():
                 if not hasattr(config, name):
                     raise ValueError("Неизвестное поле конфига: %s" % name)
                 setattr(config, name, value)
-            ship = config.ship if isinstance(config.ship, dict) else {}
-            if "ship" in fields and ship.get("command"):
-                ship_settings(config)
-            if "tracker" in fields:
-                validate_tracker(config.tracker)
-            self.store.save_config(config)
+            if full_check:
+                validate_project_config(config)
+                config.links = clean_links(config.links)
+            else:
+                ship = config.ship if isinstance(config.ship, dict) else {}
+                if "ship" in fields and ship.get("command"):
+                    ship_settings(config)
+                if "tracker" in fields:
+                    validate_tracker(config.tracker)
+            if not dry_run:
+                self.store.save_config(config)
+            return config
+
+    def set_config(self, actor: str, fields: Any, dry_run: bool = False) -> dict:
+        """Настройки от пользователя: все проверки сохранения; dry_run только проверяет.
+        Возвращает {config, saved, events}."""
+        with self._lock:
+            self._require_user(actor, "Настройки проекта меняет только пользователь")
+            if not isinstance(fields, dict):
+                raise ValueError("fields должен быть объектом")
+            for name in fields:
+                if name in NOT_SETTABLE:
+                    raise ValueError("Поле %s нельзя менять в настройках: %s" % (name, NOT_SETTABLE[name]))
+            before = self.store.load_config().to_dict()
+            config = self.update_config(fields, full_check=True, dry_run=dry_run)
+            result = config.to_dict()
+            changed = sorted(k for k in fields if result.get(k) != before.get(k))
+            events = [] if dry_run or not changed else [self._emit("config_changed", {"fields": changed})]
+            return {"config": result, "saved": not dry_run, "events": [e.to_dict() for e in events]}
 
     def set_stage(self, stage: str, actor: str) -> List[Event]:
         """Переводит проект на следующую стадию; стадии меняет только пользователь."""

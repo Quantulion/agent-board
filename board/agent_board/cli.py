@@ -10,6 +10,7 @@ import subprocess
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import List, Optional
 
@@ -195,6 +196,22 @@ def cmd_tracker(args):
     return result
 
 
+def cmd_config(args):
+    actor = _user_actor()
+    if args.action == "get":
+        config = _request("GET", _p(args, "config?actor=" + urllib.parse.quote(actor)))["config"]
+        if args.json:
+            return config
+        for name, value in config.items():
+            print("%s: %s" % (name, value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)))
+        return None
+    if args.action == "set":
+        fields = _json_arg(args.fields_json, "--json")
+        return _request("POST", _p(args, "config"), {"actor": actor, "fields": fields, "dry_run": args.dry_run})
+    # validate: проверка сохранённого файла без изменений
+    return _request("POST", _p(args, "config"), {"actor": actor, "fields": {}, "dry_run": True})
+
+
 def cmd_propose(args):
     payload = _json_arg(args.json, "--json")
     return _request("POST", _p(args, "proposals"), {"kind": args.kind, "payload": payload, "reason": args.reason or ""})
@@ -338,6 +355,14 @@ def build_parser() -> argparse.ArgumentParser:
     add("tracker", cmd_tracker, help="завести задачи в трекере (create), проверить доступ (check) или "
                                      "синхронизировать статусы сейчас (sync); только пользователь").add_argument(
         "action", choices=["create", "check", "sync"])
+    sp = add("config", cmd_config, help="настройки проекта: показать, изменить или проверить (только пользователь)")
+    actions = sp.add_subparsers(dest="action", required=True)
+    actions.add_parser("get", help="показать настройки").add_argument("--json", action="store_true",
+                                                                       help="вывести JSON-объектом")
+    sp_set = actions.add_parser("set", help="изменить поля настроек (все проверки сохранения)")
+    sp_set.add_argument("--json", dest="fields_json", required=True, help="поля настроек JSON-объектом")
+    sp_set.add_argument("--dry-run", action="store_true", help="только проверить, не сохраняя")
+    actions.add_parser("validate", help="проверить сохранённые настройки")
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

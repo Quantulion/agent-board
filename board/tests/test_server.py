@@ -2215,3 +2215,146 @@ def test_sync__manual_sync_during_scheduled_tick__waits_and_applies_once(server,
     finally:
         gate.set()
         gated.stop()
+
+
+# --- настройки проекта ---
+
+def config_file(server):
+    return json.loads((server.board_for("pay").store.root / "project.json").read_text(encoding="utf-8"))
+
+
+def test_config_get__user_reads_config(server):
+    # act
+    r = get(server, "/api/p/pay/config?actor=user")
+    # assert
+    assert r.status == 200 and r.json()["config"]["slug"] == "pay" and r.json()["config"]["max_agents"] == 3
+
+
+@pytest.mark.parametrize("query", ["", "?actor=agent", "?actor=project_agent"])
+def test_config_get__not_user__is_forbidden(server, query):
+    # act
+    r = get(server, "/api/p/pay/config" + query)
+    # assert
+    assert r.status == 403
+
+
+def test_config_set__valid_fields__saved_and_event_written(server, git_repo):
+    # arrange
+    fields = {"max_agents": 2, "repos": [{"name": "app", "path": str(git_repo), "base": "main"}],
+              "links": [{"title": "Спека", "href": " https://example.com/spec "}],
+              "ship": {"command": "git push origin {branch}", "timeout": 120},
+              "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+                          "auth": {"type": "token_env", "env": "JIRA_TOKEN"}, "statuses": {"Done": "done"}},
+              "harness": {"type": "fake"}, "review": {"tool": "none"}}
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": fields})
+    # assert
+    assert r.status == 200 and r.json()["saved"] is True
+    stored = config_file(server)
+    assert stored["max_agents"] == 2 and stored["repos"] == fields["repos"] and stored["tracker"] == fields["tracker"]
+    assert stored["links"] == [{"title": "Спека", "href": "https://example.com/spec"}]
+    assert r.json()["config"] == get(server, "/api/p/pay/config?actor=user").json()["config"]
+    changed = [e["data"] for e in get(server, "/api/p/pay/events").json()["events"] if e["type"] == "config_changed"]
+    assert changed == [{"fields": sorted(fields)}]
+
+
+def test_config_set__dry_run__validates_without_saving(server):
+    # arrange
+    before = config_file(server)
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {"max_agents": 5,
+                                                                         "links": [{"title": "a", "href": " /x "}]},
+                                           "dry_run": True})
+    # assert
+    assert r.status == 200 and r.json()["saved"] is False
+    assert r.json()["config"]["max_agents"] == 5 and r.json()["config"]["links"] == [{"title": "a", "href": "/x"}]
+    assert config_file(server) == before
+    assert not [e for e in get(server, "/api/p/pay/events").json()["events"] if e["type"] == "config_changed"]
+
+
+def test_config_set__same_values__no_event(server):
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {"max_agents": 3}})
+    # assert
+    assert r.status == 200
+    assert not [e for e in get(server, "/api/p/pay/events").json()["events"] if e["type"] == "config_changed"]
+
+
+JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+           "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}
+
+
+@pytest.mark.parametrize("fields, message", [
+    ({"ship": {"command": 'git push "{branch}"'}}, "кавычки"),
+    ({"ship": {"command": "run $'x' {key}"}}, "$'"),
+    ({"ship": {"command": "cat <<EOF\n{title}\nEOF"}}, "<<"),
+    ({"ship": {"command": "run {secret}"}}, "плейсхолдер"),
+    ({"ship": {"command": "true", "timeout": 0}}, "timeout"),
+    ({"tracker": dict(JIRA_OK, auth={"type": "token_env", "env": "X", "token": "s3cret"})}, "auth"),
+    ({"tracker": dict(JIRA_OK, password="x")}, "Недопустимые ключи"),
+    ({"tracker": dict(JIRA_OK, statuses={"Review": "approved"})}, "approved"),
+    ({"links": [{"title": "x", "href": "javascript:alert(1)"}]}, "ссылк"),
+    ({"links": "https://x"}, "links"),
+    ({"repos": [{"name": "app", "path": "/nonexistent/repo/path"}]}, "не найден"),
+    ({"repos": [{"name": "app", "path": "relative/path"}]}, "абсолютн"),
+    ({"harness": {"type": "gpt"}}, "харнесс"),
+    ({"review": {"tool": "gerrit"}}, "ревью"),
+    ({"max_agents": 0}, "max_agents"),
+    ({"global_max_agents": "6"}, "global_max_agents"),
+    ({"chains": "yes"}, "chains"),
+    ({"branch_template": "feature/x"}, "{key}"),
+    ({"branch_template": "{key}-{title}"}, "branch_template"),
+    ({"resources": [{"name": "db"}, {"name": "db"}]}, "db"),
+    ({"title": ""}, "title"),
+    ({"unknown": 1}, "unknown"),
+    ({"stage": "work"}, "stage"),
+    ({"slug": "other"}, "slug"),
+    ({"project_session_id": "x"}, "project_session_id"),
+])
+def test_config_set__invalid__is_400_and_not_saved(server, fields, message):
+    # arrange
+    before = config_file(server)
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": fields})
+    dry = post(server, "/api/p/pay/config", {"actor": "user", "fields": fields, "dry_run": True})
+    # assert
+    assert r.status == 400 and message in r.json()["error"], r.json()
+    assert dry.status == 400
+    assert config_file(server) == before
+
+
+def test_config_set__repo_path_is_not_git__is_400(server, tmp_path):
+    # arrange
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {"repos": [{"name": "a", "path": str(plain)}]}})
+    # assert
+    assert r.status == 400 and "git" in r.json()["error"]
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system", "tracker"])
+def test_config_set__not_user__is_403(server, actor):
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": actor, "fields": {"max_agents": 1}})
+    # assert
+    assert r.status == 403 and config_file(server)["max_agents"] == 3
+
+
+def test_config_set__fields_not_object__is_400(server):
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": [1]})
+    # assert
+    assert r.status == 400
+
+
+def test_config_validate__stored_config_with_missing_repo__is_400(server):
+    # arrange: файл настроек поправлен вручную
+    store = server.board_for("pay").store
+    cfg = store.load_config()
+    cfg.repos = [{"name": "app", "path": "/nonexistent/repo/path"}]
+    store.save_config(cfg)
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {}, "dry_run": True})
+    # assert
+    assert r.status == 400 and "/nonexistent/repo/path" in r.json()["error"]
