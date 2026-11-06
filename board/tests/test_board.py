@@ -712,7 +712,7 @@ def test_event_vocabulary_covers_every_emitted_event():
     assert reasons <= set(board_mod.WAKE_REASONS)
     assert set(board_mod.WAKE_REASONS) == {
         "ready", "unblocked", "returned", "answer", "message", "proposal_rejected", "escalation", "manual",
-        "rebase", "interrupted", "queued_restart", "review"}
+        "rebase", "interrupted", "queued_restart", "review", "retry"}
 
 
 def test_new_task_from_dict_builds_task_from_creatable_fields():

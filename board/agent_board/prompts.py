@@ -169,6 +169,11 @@ def _wake_line(r: dict, cli: str) -> str:
     if reason == "interrupted":
         return ("Your previous turn was interrupted by a server restart. Check the actual state of the "
                 "worktree and the card, then continue.")
+    if reason == "retry":
+        error = str(r.get("error") or "").strip()
+        what = "with this error, verbatim:\n%s\n" % _quote(error) if error else "with an error. "
+        return ("Your previous turn broke off %sThe user asked to retry it. Check what you managed to do "
+                "(the worktree and the card), then continue from where you stopped." % what)
     if reason == "queued_restart":
         return ("Your next turn was waiting in the queue while the board server restarted. "
                 "Continue working on the task.")
@@ -225,7 +230,7 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
       returned -> from, text (комментарий пользователя к возврату); review -> round, comments, binary, crit_dir;
       rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
       escalation -> from, text; proposal_rejected -> id;
-      interrupted, queued_restart, unblocked, ready, manual -> без полей.
+      retry -> error; interrupted, queued_restart, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».
     """
     out = "\n\n".join(_wake_line(r, board_cli) for r in reasons)

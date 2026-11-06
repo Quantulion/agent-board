@@ -938,3 +938,26 @@ def test_deps__by_agent__rejected(srv, capsys, monkeypatch, actor):
     assert code == 1 and err.strip()
     monkeypatch.delenv("AGENT_BOARD_ACTOR")
     assert run_json(capsys, "show", "T-2")["deps"] == []
+
+
+def test_retry_sends_user_actor_and_reports_rejection(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    run_json(capsys, "stage", "work")
+    srv.board_for("pay").update_task("T-1", "system", {"agent_state": "error", "turn_error": "boom"})
+    # act
+    result = run_json(capsys, "retry", "T-1")
+    srv.board_for("pay").update_task("T-1", "system", {"agent_state": "idle"})
+    code, _, err = run(capsys, "retry", "T-1")
+    # assert
+    assert result["events"][0]["data"] == {"key": "T-1", "reason": "retry", "error": "boom"}
+    assert code == 1 and "Повторить можно только упавший ход" in err
+
+
+def test_retry_from_agent_is_rejected(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    # act
+    code, _, err = run(capsys, "retry", "_project")
+    # assert
+    assert code == 1 and "только пользователь" in err
