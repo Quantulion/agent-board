@@ -1251,6 +1251,8 @@ def test_restart_after_review_page_is_gone_reopens_round_on_same_url(make_projec
     start_server()
     wait_for(lambda: len(fake_crit.review_calls(crit_dir(store))) == 3, what="повторный запуск раунда")
     again = wait_round(store, 1)
+    # демон нового запуска регистрируется чуть позже записи раунда
+    wait_for(lambda: fake_crit.daemon(crit_dir(store), first["session"]) is not None, what="демон ревью после перезапуска")
     # assert
     argv = [c["argv"] for c in fake_crit.review_calls(crit_dir(store))]
     assert "--session" in argv[1] and "--session" not in argv[2]

@@ -1823,7 +1823,7 @@ def test_sync__github_closed__marks_done(server, monkeypatch, clock):
         sync = server.tracker_sync = TrackerSync(server, clock=clock)
         sync.tick()
         gh.issues[1]["state"] = "closed"
-        clock.now += 30
+        clock.now += 120
         # act
         sync.tick()
         # assert
@@ -1859,3 +1859,279 @@ def test_sync__thread_runs_with_server_and_stops_with_it(tmp_home, jira):
 def test_sync__not_started_by_default(server):
     # assert
     assert server.tracker_sync._thread is None
+
+
+# --- синхронизация: исправления ревью ---
+
+@pytest.mark.parametrize("target", ["approved", "queued", "waiting_answer", "in_review", "cancelled", "blocked"])
+def test_sync_config__forbidden_target__is_rejected_on_save(server, jira, target):
+    # arrange
+    board = server.board_for("pay")
+    cfg = {"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+           "auth": {"type": "token_env", "env": "JIRA_TOKEN"}, "statuses": {"Done": target}}
+    # act, assert
+    with pytest.raises(ValueError, match="statuses"):
+        board.update_config({"tracker": cfg})
+
+
+def test_sync__in_review_in_jira_maps_to_sent(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock, statuses={"In Review": "sent"})
+    sync.tick()
+    jira.statuses["MNZ-1"] = "In Review"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert task_status(server, "A") == "sent"
+
+
+def test_sync__forbidden_target_in_stored_config__is_skipped(server, jira, clock):
+    # arrange: старая настройка, записанная в обход проверки
+    sync = sync_project(server, jira, clock)
+    board = server.board_for("pay")
+    config = board.store.load_config()
+    config.tracker["statuses"] = {"Open": None, "Done": "approved"}
+    board.store.save_config(config)
+    sync.tick()
+    jira.statuses["MNZ-1"] = "Done"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert task_status(server, "A") == "not_started"
+
+
+def test_sync__missing_issue_in_jira__others_still_sync(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    del jira.statuses["MNZ-1"]
+    jira.statuses["MNZ-2"] = "Done"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    state = sync_state(server)
+    assert task_status(server, "B") == "done" and state["ok"] is True and state["paused"] is False
+    assert [e["key"] for e in state["errors"]] == ["A"] and "MNZ-1" in state["errors"][0]["error"]
+
+
+def test_sync__jira_rejects_batch__retries_per_key(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    jira.reject_batches = True
+    jira.strict_missing = True
+    jira.statuses["MNZ-2"] = "Done"
+    del jira.statuses["MNZ-1"]
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert task_status(server, "B") == "done" and [e["key"] for e in sync_state(server)["errors"]] == ["A"]
+
+
+def _github_project(server, gh, clock, keys=("A", "B", "C")):
+    board = server.board_for("pay")
+    board.update_config({"tracker": {"type": "github", "repo": "owner/name", "api_url": gh.url,
+                                     "auth": {"type": "token_env", "env": "GITHUB_TOKEN"},
+                                     "statuses": {"open": None, "closed": "done"}}})
+    for key in keys:
+        add_task(server, key)
+    board.set_stage("tracker", "user")
+    post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    board.set_stage("work", "user")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock)
+    return sync
+
+
+@pytest.fixture
+def github(monkeypatch):
+    from fakes.fake_github import FakeGitHub
+
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GITHUB_TOKEN", TRACKER_TOKEN)
+    fake = FakeGitHub(token=TRACKER_TOKEN).start()
+    yield fake
+    fake.stop()
+
+
+def test_sync__github_missing_gone_moved_issues__others_still_sync(server, github, clock):
+    # arrange
+    sync = _github_project(server, github, clock, keys=("A", "B", "C", "D"))
+    sync.tick()
+    del github.issues[1]
+    github.gone.add(2)
+    github.moved.add(3)
+    github.issues[4]["state"] = "closed"
+    clock.now += 120
+    # act
+    sync.tick()
+    # assert
+    state = sync_state(server)
+    assert task_status(server, "D") == "done" and state["ok"] is True and state["paused"] is False
+    assert sorted(e["key"] for e in state["errors"]) == ["A", "B", "C"]
+
+
+def test_sync__github_default_interval_is_120_seconds(server, github, clock):
+    # arrange
+    sync = _github_project(server, github, clock, keys=("A",))
+    # act
+    sync.tick()
+    # assert
+    assert sync.next_due("pay") == 120
+
+
+def test_sync__first_read_done__transitions(server, jira, clock):
+    # arrange: задача уже закрыта в трекере к первому чтению
+    sync = sync_project(server, jira, clock)
+    jira.statuses["MNZ-1"] = "Done"
+    jira.statuses["MNZ-2"] = "In Progress"
+    # act
+    sync.tick()
+    # assert
+    assert task_status(server, "A") == "done" and task_status(server, "B") == "not_started"
+
+
+def test_sync__changed_tracker_key__counts_as_first_read(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    board = server.board_for("pay")
+    board.update_task("A", "system", {"tracker_key": "MNZ-9"})
+    jira.statuses["MNZ-9"] = "Done"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert task_status(server, "A") == "done"
+
+
+def test_sync__seen_drops_cancelled_tasks(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    board = server.board_for("pay")
+    board.transition("B", Status.CANCELLED, "user")
+    jira.statuses["MNZ-1"] = "In Progress"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    seen = board.store.load_meta()["tracker_seen"]
+    assert set(seen) == {"A"} and seen["A"] == ["MNZ-1", "In Progress"]
+
+
+def test_sync__task_moved_meanwhile__transition_is_skipped(server, jira, clock, monkeypatch):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    board = server.board_for("pay")
+    real = board.transition_if
+    calls = []
+
+    def racing(key, expected, to, actor):
+        calls.append(expected)
+        board.transition(key, Status.IN_PROGRESS, "user")
+        return real(key, expected, to, actor)
+
+    monkeypatch.setattr(board, "transition_if", racing)
+    jira.statuses["MNZ-1"] = "Done"
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert calls == [Status.NOT_STARTED] and task_status(server, "A") == "in_progress"
+    assert sync_state(server)["changed"] == []
+
+
+def test_sync__stop_flag_between_requests__stops_promptly(server, github, clock):
+    # arrange
+    sync = _github_project(server, github, clock, keys=("A", "B", "C", "D"))
+    before = len(github.requests)
+    original = sync._stop.is_set
+    sync._stop.set()
+    # act
+    sync.tick()
+    # assert
+    assert len(github.requests) == before and sync_state(server) is None
+    assert original() is True
+
+
+def test_sync__no_tracker__no_requests_and_no_state(server, clock):
+    # arrange
+    add_task(server, "A")
+    server.board_for("pay").set_stage("work", "user")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock)
+    # act
+    sync.tick()
+    # assert
+    assert sync_state(server) is None
+    assert post(server, "/api/p/pay/tracker/sync", {"actor": "user"}).status == 400
+
+
+def test_sync__connection_refused__backs_off_and_does_not_pause(server, jira, clock):
+    # arrange
+    import socket as _socket
+
+    s = _socket.socket()
+    s.bind(("127.0.0.1", 0))
+    port = s.getsockname()[1]
+    s.close()
+    sync = sync_project(server, jira, clock, poll=30)
+    board = server.board_for("pay")
+    board.update_config({"tracker": dict(board.store.load_config().tracker, url="http://127.0.0.1:%d" % port)})
+    delays = []
+    # act
+    for _ in range(3):
+        sync.tick()
+        delays.append(sync.next_due("pay") - clock.now)
+        clock.now = sync.next_due("pay")
+    # assert
+    state = sync_state(server)
+    assert delays == [30, 60, 120] and state["ok"] is False and state["paused"] is False
+
+
+def test_sync__manual_sync_during_scheduled_tick__waits_and_applies_once(server, jira, clock):
+    # arrange
+    from fakes.fake_jira import FakeJira
+
+    gate = threading.Event()
+
+    class Gated(FakeJira):
+        def route(self, method, path, body):
+            if path.startswith("/rest/api/2/search") and getattr(self, "gated", False):
+                gate.wait(5)
+            return super().route(method, path, body)
+
+    gated = Gated(authorization="Bearer " + TRACKER_TOKEN).start()
+    try:
+        gated.statuses = jira.statuses
+        sync = sync_project(server, gated, clock)
+        sync.tick()
+        gated.statuses["MNZ-1"] = "Done"
+        gated.gated = True
+        clock.now += 30
+        results = {}
+        tick = threading.Thread(target=sync.tick)
+        tick.start()
+        while not any(r.path.startswith("/rest/api/2/search") for r in gated.requests[-1:]) and tick.is_alive():
+            time.sleep(0.02)
+        manual = threading.Thread(target=lambda: results.update(r=post(server, "/api/p/pay/tracker/sync",
+                                                                      {"actor": "user"})))
+        manual.start()
+        time.sleep(0.2)
+        waited = manual.is_alive()
+        # act
+        gate.set()
+        tick.join(10)
+        manual.join(10)
+        # assert
+        assert waited and results["r"].json()["ok"] is True
+        changes = [e for e in events_of(server, "status_changed") if e["data"]["actor"] == "tracker"]
+        assert len(changes) == 1 and task_status(server, "A") == "done"
+    finally:
+        gate.set()
+        gated.stop()

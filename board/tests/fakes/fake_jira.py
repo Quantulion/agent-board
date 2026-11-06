@@ -22,6 +22,10 @@ class FakeJira(FakeServer):
         self.statuses: Dict[str, str] = {}
         # подмена ответа поиска (например, не объект)
         self.search_response = None
+        # как Jira Server: неизвестный ключ в запросе без validateQuery=warn — 400
+        self.strict_missing = True
+        # отказ на запросы с несколькими ключами (проверка поключевого повтора)
+        self.reject_batches = False
 
     def authorized(self, headers) -> bool:
         if self.authorization is not None and headers.get("Authorization") != self.authorization:
@@ -50,8 +54,13 @@ class FakeJira(FakeServer):
         if method == "GET" and url.path in ("/rest/api/2/search", "/rest/api/2/search/jql"):
             if self.search_response is not None:
                 return 200, self.search_response
-            jql = parse_qs(url.query).get("jql", [""])[0]
+            query = parse_qs(url.query)
+            jql = query.get("jql", [""])[0]
             keys = re.findall(r"[A-Z]+-\d+", jql)
+            if self.reject_batches and len(keys) > 1:
+                return 400, {"errorMessages": ["batch rejected"]}
+            if self.strict_missing and query.get("validateQuery") != ["warn"] and any(k not in self.statuses for k in keys):
+                return 400, {"errorMessages": ["An issue with key '%s' does not exist for field 'key'." % keys[0]]}
             return 200, {"issues": [{"key": k, "fields": {"status": {"name": self.statuses[k]}}}
                                     for k in keys if k in self.statuses]}
         return 404, {"errorMessages": ["not found"]}

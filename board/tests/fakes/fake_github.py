@@ -14,6 +14,8 @@ class FakeGitHub(FakeServer):
         self.token = token
         self.issues: Dict[int, dict] = {}
         self.comments: Dict[int, list] = {}
+        self.moved: set = set()
+        self.gone: set = set()
         self.html_url = "https://github.example/{repo}/issues/{number}"
 
     def authorized(self, headers) -> bool:
@@ -33,6 +35,10 @@ class FakeGitHub(FakeServer):
             if method == "POST" and m.group(2):
                 self.comments.setdefault(number, []).append(body["body"])
                 return 201, {"id": 1}
+            if method == "GET" and not m.group(2) and number in self.moved:
+                return 301, None, {"Location": "http://127.0.0.1:1/elsewhere"}
+            if method == "GET" and not m.group(2) and number in self.gone:
+                return 410, {"message": "This issue was deleted"}
             if method == "GET" and not m.group(2):
                 return 200, {"number": number, "state": self.issues[number]["state"]}
         return 404, {"message": "Not Found"}

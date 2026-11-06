@@ -34,6 +34,8 @@ MIN_SECRET_CHARS = 4
 TITLE_PLACEHOLDERS = ("key", "title")
 JIRA_SEARCH_BATCH = 50
 TYPES = ("none", "jira", "github")
+# в какие статусы доски трекер может переводить задачи
+SYNC_TARGETS = ("not_started", "in_progress", "sent", "done")
 JIRA_KEYS = {"type", "url", "project", "issue_type", "epic", "epic_field", "components", "labels", "extra_fields",
              "link_type", "auth", "statuses", "title_template", "poll_seconds", "jira_search_path"}
 JIRA_SEARCH_PATH = "/rest/api/2/search"
@@ -47,9 +49,14 @@ _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 class TrackerError(ValueError):
     """Ошибка трекера с текстом без секретов; kind: config, auth, not_found, validation, retryable, network, error."""
 
-    def __init__(self, message: str, kind: str = "error"):
+    def __init__(self, message: str, kind: str = "error", redirect: bool = False):
         super().__init__(message)
         self.kind = kind
+        self.redirect = redirect
+
+
+class SyncStopped(Exception):
+    """Синхронизация прервана остановкой сервера."""
 
 
 class Secret:
@@ -140,10 +147,10 @@ def _validate_template(template: Any) -> None:
 def _validate_statuses(statuses: Any) -> None:
     if not isinstance(statuses, dict):
         raise ValueError("tracker.statuses должен быть объектом «статус трекера → статус доски»")
-    allowed = {s.value for s in Status if s != Status.BLOCKED}
     for name, value in statuses.items():
-        if value is not None and value not in allowed:
-            raise ValueError("Неизвестный статус доски в tracker.statuses[%r]: %r" % (name, value))
+        if value is not None and value not in SYNC_TARGETS:
+            raise ValueError("Недопустимый статус доски в tracker.statuses[%r]: %r. Допустимы: %s (одобрение ставит "
+                             "только пользователь)" % (name, value, ", ".join(SYNC_TARGETS)))
 
 
 def validate_config(cfg: Any) -> None:
@@ -276,11 +283,11 @@ class _Http:
     def scrub(self, text: str) -> str:
         return scrub(text, self.auth.secrets)
 
-    def _fail(self, message: str, kind: str) -> TrackerError:
+    def _fail(self, message: str, kind: str, redirect: bool = False) -> TrackerError:
         text = self.scrub(message)
         if len(text) > MAX_MESSAGE_CHARS:
             text = text[:MAX_MESSAGE_CHARS] + "…"
-        return TrackerError(text, kind)
+        return TrackerError(text, kind, redirect)
 
     def call(self, method: str, path: str, body: Any = None) -> Any:
         headers = dict(self.headers, Accept="application/json")
@@ -333,7 +340,7 @@ class _Http:
             return self._fail("Трекер отклонил авторизацию (HTTP %d): %s%s" % (code, self.auth.hint, detail), "auth")
         if 300 <= code < 400:
             return self._fail("Трекер перенаправил запрос (HTTP %d) — проверьте адрес трекера и авторизацию: %s"
-                              % (code, self.auth.hint), "auth")
+                              % (code, self.auth.hint), "auth", redirect=True)
         if code == 404:
             return self._fail("Не найдено в трекере (HTTP 404)%s" % detail, "not_found")
         if code in (400, 409, 422):
@@ -372,7 +379,10 @@ class TrackerAdapter:
     def link(self, blocker_key: str, blocked_key: str) -> None:
         raise NotImplementedError
 
-    def get_statuses(self, keys: List[str]) -> Dict[str, str]:
+    def get_statuses(self, keys: List[str], errors: Optional[Dict[str, str]] = None,
+                     should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, str]:
+        """Статусы задач по ключам. Недоступные по отдельности задачи не прерывают чтение: их причины попадают в
+        errors (если он передан); should_stop — признак остановки между запросами."""
         raise NotImplementedError
 
     def check(self) -> None:
@@ -424,23 +434,47 @@ class JiraTracker(TrackerAdapter):
             "outwardIssue": {"key": blocked_key},
         })
 
-    def get_statuses(self, keys: List[str]) -> Dict[str, str]:
+    def get_statuses(self, keys: List[str], errors: Optional[Dict[str, str]] = None,
+                     should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, str]:
         result: Dict[str, str] = {}
+        errors = errors if errors is not None else {}
         for i in range(0, len(keys), JIRA_SEARCH_BATCH):
-            batch = keys[i:i + JIRA_SEARCH_BATCH]
-            jql = "key in (%s)" % ", ".join(json.dumps(k) for k in batch)
-            query = urllib.parse.urlencode({"jql": jql, "fields": "status", "maxResults": len(batch)})
-            data = self.http.object("GET", (self.cfg.get("jira_search_path") or JIRA_SEARCH_PATH) + "?" + query)
-            issues = data.get("issues") or []
-            if not isinstance(issues, list):
-                raise TrackerError("Jira вернула неожиданный ответ поиска", "validation")
-            for issue in issues:
-                fields = issue.get("fields") if isinstance(issue, dict) else None
-                status = fields.get("status") if isinstance(fields, dict) else None
-                name = status.get("name") if isinstance(status, dict) else None
-                if isinstance(issue.get("key"), str) and isinstance(name, str):
-                    result[issue["key"]] = name
+            self._batch(keys[i:i + JIRA_SEARCH_BATCH], result, errors, should_stop)
         return result
+
+    def _batch(self, batch: List[str], result: Dict[str, str], errors: Dict[str, str],
+               should_stop: Optional[Callable[[], bool]]) -> None:
+        if should_stop is not None and should_stop():
+            raise SyncStopped()
+        jql = "key in (%s)" % ", ".join(json.dumps(k) for k in batch)
+        # warn: несуществующие ключи не ломают весь запрос, а просто не возвращаются
+        query = urllib.parse.urlencode({"jql": jql, "fields": "status", "maxResults": len(batch),
+                                        "validateQuery": "warn"})
+        try:
+            data = self.http.call("GET", (self.cfg.get("jira_search_path") or JIRA_SEARCH_PATH) + "?" + query)
+        except TrackerError as e:
+            if e.kind not in ("validation", "not_found"):
+                raise
+            if len(batch) > 1:
+                for key in batch:
+                    self._batch([key], result, errors, should_stop)
+            else:
+                errors[batch[0]] = str(e)
+            return
+        if not isinstance(data, dict):
+            raise TrackerError("Трекер вернул неожиданный ответ (GET %s)" % JIRA_SEARCH_PATH, "validation")
+        issues = data.get("issues") or []
+        if not isinstance(issues, list):
+            raise TrackerError("Jira вернула неожиданный ответ поиска", "validation")
+        for issue in issues:
+            fields = issue.get("fields") if isinstance(issue, dict) else None
+            status = fields.get("status") if isinstance(fields, dict) else None
+            name = status.get("name") if isinstance(status, dict) else None
+            if isinstance(issue.get("key"), str) and isinstance(name, str):
+                result[issue["key"]] = name
+        for key in batch:
+            if key not in result and key not in errors:
+                errors[key] = "Задача %s не найдена в Jira (удалена, перенесена или нет доступа)" % key
 
     def check(self) -> None:
         self.http.call("GET", "/rest/api/2/myself")
@@ -481,12 +515,25 @@ class GitHubTracker(TrackerAdapter):
         self.http.call("POST", "/repos/%s/issues/%d/comments" % (self.repo, self._number(blocked_key)),
                        {"body": "Зависит от: %s" % blocker_key})
 
-    def get_statuses(self, keys: List[str]) -> Dict[str, str]:
+    def get_statuses(self, keys: List[str], errors: Optional[Dict[str, str]] = None,
+                     should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, str]:
         result: Dict[str, str] = {}
+        errors = errors if errors is not None else {}
         for key in keys:
-            data = self.http.object("GET", "/repos/%s/issues/%d" % (self.repo, self._number(key)))
+            if should_stop is not None and should_stop():
+                raise SyncStopped()
+            try:
+                data = self.http.object("GET", "/repos/%s/issues/%d" % (self.repo, self._number(key)))
+            except TrackerError as e:
+                # проблема одной задачи (нет, удалена, перенесена, кривой ключ) не мешает остальным
+                if e.redirect or e.kind in ("not_found", "error"):
+                    errors[key] = str(e)
+                    continue
+                raise
             if isinstance(data.get("state"), str):
                 result[key] = data["state"]
+            else:
+                errors[key] = "GitHub не вернул состояние задачи %s" % key
         return result
 
     def check(self) -> None:
@@ -642,7 +689,8 @@ def _is_http(url: Any) -> bool:
 
 # --- фоновая синхронизация статусов ---
 
-DEFAULT_POLL_SECONDS = 30
+# GitHub опрашивается по запросу на задачу, поэтому реже: лимит 5000 запросов в час
+DEFAULT_POLL_SECONDS = {"jira": 30, "github": 120}
 MAX_BACKOFF_SECONDS = 300
 # как часто поток проверяет, не пора ли синхронизировать (и не изменились ли настройки трекера)
 IDLE_SECONDS = 1.0
@@ -680,7 +728,8 @@ class TrackerSync:
         self._stop = threading.Event()
         self._sleep = sleep or self._stop.wait
         self._thread: Optional[threading.Thread] = None
-        self._lock = threading.Lock()
+        self._locks: Dict[str, threading.Lock] = {}
+        self._guard = threading.Lock()
         self._due: Dict[str, float] = {}
         self._failures: Dict[str, int] = {}
 
@@ -711,31 +760,43 @@ class TrackerSync:
     def next_due(self, slug: str) -> Optional[float]:
         return self._due.get(slug)
 
+    def _project_lock(self, slug: str) -> threading.Lock:
+        with self._guard:
+            return self._locks.setdefault(slug, threading.Lock())
+
     def tick(self) -> float:
         """Синхронизирует проекты, которым пора; возвращает, сколько ждать до следующей проверки."""
-        with self._lock:
-            now = self._clock()
-            for slug in list_projects():
-                if self._stop.is_set():
-                    break
-                try:
-                    board = self._server.hub.board(slug)
-                    config = board.store.load_config()
-                except (KeyError, ValueError, OSError):
-                    continue
-                if not sync_enabled(config):
-                    continue
-                meta = board.store.load_meta()
-                state = meta.get("tracker_sync") or {}
-                changed_config = meta.get("tracker_sync_fp") not in (None, _fingerprint(config.tracker))
-                if changed_config:
-                    self._due.pop(slug, None)
-                    self._failures.pop(slug, None)
-                elif state.get("paused"):
-                    continue
-                if now >= self._due.get(slug, now):
-                    self._run(slug, board, config, now)
-            return IDLE_SECONDS
+        for slug in list_projects():
+            if self._stop.is_set():
+                break
+            lock = self._project_lock(slug)
+            # проект, который сейчас синхронизируется (например, вручную), пропускается до следующей проверки
+            if not lock.acquire(blocking=False):
+                continue
+            try:
+                self._tick_project(slug)
+            finally:
+                lock.release()
+        return IDLE_SECONDS
+
+    def _tick_project(self, slug: str) -> None:
+        now = self._clock()
+        try:
+            board = self._server.hub.board(slug)
+            config = board.store.load_config()
+        except (KeyError, ValueError, OSError):
+            return
+        if not sync_enabled(config):
+            return
+        meta = board.store.load_meta()
+        state = meta.get("tracker_sync") or {}
+        if meta.get("tracker_sync_fp") not in (None, _fingerprint(config.tracker)):
+            self._due.pop(slug, None)
+            self._failures.pop(slug, None)
+        elif state.get("paused"):
+            return
+        if now >= self._due.get(slug, now):
+            self._run(slug, board, config, now)
 
     def sync_now(self, board, actor: str) -> dict:
         """Ручной запуск («Повторить сейчас»): один проход проекта сейчас, при успехе пауза снимается."""
@@ -745,11 +806,12 @@ class TrackerSync:
             raise ValueError("В проекте не настроен трекер (tracker.type = none)")
         if config.stage not in SYNC_STAGES:
             raise ValueError("Статусы синхронизируются на стадиях work и done (сейчас %s)" % config.stage)
-        with self._lock:
-            return self._run(board.store.root.name, board, config, self._clock())
+        slug = board.store.root.name
+        with self._project_lock(slug):
+            return self._run(slug, board, config, self._clock())
 
     def _run(self, slug: str, board, config, now: float) -> dict:
-        interval = config.tracker.get("poll_seconds") or DEFAULT_POLL_SECONDS
+        interval = config.tracker.get("poll_seconds") or DEFAULT_POLL_SECONDS.get(config.tracker.get("type"), 30)
         previous = board.store.load_meta().get("tracker_sync") or {}
         state = {"at": _now_text(), "ok": True, "error": None, "paused": False, "unknown_statuses": [],
                  "changed": [], "errors": []}
@@ -757,6 +819,8 @@ class TrackerSync:
             self._sync_project(board, config, state)
             self._failures.pop(slug, None)
             self._due[slug] = now + interval
+        except SyncStopped:
+            return state
         except TrackerError as e:
             self._fail(slug, state, str(e), e.kind in PAUSE_KINDS, now, interval)
         except ValueError as e:
@@ -781,36 +845,48 @@ class TrackerSync:
 
     def _sync_project(self, board, config, state: dict) -> None:
         adapter = adapter_for(config.tracker)
-        tasks = [t for t in board.store.load_tasks().values() if t.tracker_key and t.status != Status.CANCELLED]
-        if not tasks:
-            return
-        mapping = {str(name).strip().lower(): target for name, target in (config.tracker.get("statuses") or {}).items()}
-        statuses = adapter.get_statuses([t.tracker_key for t in tasks])
+        tasks = {t.key: t for t in board.store.load_tasks().values() if t.tracker_key and t.status != Status.CANCELLED}
         meta = board.store.load_meta()
-        seen: Dict[str, str] = dict(meta.get("tracker_seen") or {})
-        unknown = set()
-        for task in sorted(tasks, key=lambda t: t.key):
-            name = statuses.get(task.tracker_key)
-            if not isinstance(name, str):
-                continue
-            target = mapping.get(name.strip().lower(), "unknown")
-            if target == "unknown":
-                unknown.add(name)
-            previous = seen.get(task.key)
-            # статус трекера, которого раньше не видели, только запоминается: доска ведёт задачу дальше трекера,
-            # и откатывать её к устаревшему статусу трекера нельзя
-            if previous is not None and previous != name and target not in ("unknown", None) \
-                    and target != task.status.value:
-                try:
-                    board.transition(task.key, Status(target), "tracker")
-                except (PermissionError, ValueError, KeyError) as e:
-                    state["errors"].append({"key": task.key, "error": str(e)[:MAX_MESSAGE_CHARS]})
-                    continue
-                state["changed"].append(task.key)
-            seen[task.key] = name
-        state["unknown_statuses"] = sorted(unknown)
+        # запоминаем, какой статус трекера видели у задачи (вместе с ключом в трекере)
+        seen: Dict[str, list] = {k: v for k, v in (meta.get("tracker_seen") or {}).items()
+                                 if k in tasks and isinstance(v, list) and len(v) == 2}
+        if tasks:
+            self._apply(board, config, adapter, tasks, seen, state)
+        state["unknown_statuses"] = sorted(state["unknown_statuses"])
         if seen != (meta.get("tracker_seen") or {}):
             board.update_meta({"tracker_seen": seen})
+
+    def _apply(self, board, config, adapter, tasks: Dict[str, Task], seen: Dict[str, list], state: dict) -> None:
+        mapping = {str(name).strip().lower(): target for name, target in (config.tracker.get("statuses") or {}).items()}
+        failed: Dict[str, str] = {}
+        statuses = adapter.get_statuses([t.tracker_key for t in tasks.values()], failed, self._stop.is_set)
+        unknown = set()
+        for key in sorted(tasks):
+            task = tasks[key]
+            name = statuses.get(task.tracker_key)
+            if not isinstance(name, str):
+                if task.tracker_key in failed:
+                    state["errors"].append({"key": key, "error": failed[task.tracker_key]})
+                continue
+            known = mapping.get(name.strip().lower(), "unknown")
+            if known == "unknown":
+                unknown.add(name)
+            target = known if known in SYNC_TARGETS else None
+            entry = seen.get(key)
+            previous = entry[1] if entry and entry[0] == task.tracker_key else None
+            # Новый для доски статус трекера только запоминается: доска ведёт задачу дальше трекера, и откатывать
+            # её к отставшему статусу нельзя. Исключение — закрытая в трекере задача при первом чтении.
+            if target is not None and target != task.status.value and (
+                    (previous is not None and previous != name) or (previous is None and target == "done")):
+                try:
+                    events = board.transition_if(key, task.status, Status(target), "tracker")
+                except (PermissionError, ValueError, KeyError) as e:
+                    state["errors"].append({"key": key, "error": str(e)[:MAX_MESSAGE_CHARS]})
+                    continue
+                if events:
+                    state["changed"].append(key)
+            seen[key] = [task.tracker_key, name]
+        state["unknown_statuses"] = unknown
 
     @staticmethod
     def _save(board, config, state: dict, previous: dict) -> None:
