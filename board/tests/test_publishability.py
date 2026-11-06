@@ -35,6 +35,41 @@ def internal_name_hits(root: Path):
     return hits
 
 
+def agent_report_files(root: Path):
+    """Отслеживаемые файлы из каталога рабочих отчётов агентов, которые попадут в коммит."""
+    # удалённый с диска файл уйдёт из репозитория при коммите одобрения
+    return [rel for rel in _tracked_files(root) if rel.split("/")[0] == "reports" and (root / rel).exists()]
+
+
+def test_tracked_files__no_agent_reports():
+    # act
+    reports = agent_report_files(ROOT)
+    # assert
+    assert reports == []
+
+
+def test_agent_report_files__tracked_report__returned(tmp_path):
+    # arrange
+    if shutil.which("git") is None:
+        pytest.skip("нет git")
+    subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=True)
+    (tmp_path / "reports").mkdir()
+    (tmp_path / "reports" / "T-1.md").write_text("отчёт", encoding="utf-8")
+    (tmp_path / "notes.md").write_text("заметки", encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=True)
+    # act
+    reports = agent_report_files(tmp_path)
+    # assert
+    assert reports == ["reports/T-1.md"]
+
+
+def test_gitignore__ignores_agent_reports():
+    # arrange
+    lines = (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines()
+    # act / assert
+    assert "reports/" in lines
+
+
 def test_tracked_files__no_internal_names():
     # act
     hits = internal_name_hits(ROOT)

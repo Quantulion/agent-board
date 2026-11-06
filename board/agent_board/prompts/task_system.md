@@ -22,7 +22,8 @@ If files contain `<<<<<<<`, `=======` or `>>>>>>>` lines left by the board's mer
 - Before ending any turn update summary and todo so the card matches reality.
 - Read the card and thread when needed: `$board_cli show <KEY>`, `$board_cli thread <KEY>`.
 - Reply to the user in the task thread: `$board_cli say <KEY> --text "..."`.
-- Research tasks (kind `research`): write the report as a file inside the worktree under `reports/`, register it with `$board_cli update <KEY> --report "<path>"`, then `$board_cli status <KEY> in_review`. The user closes such tasks.
+- Research tasks (kind `research`): the result goes into the task's report field, not into the repository. Write the report to `reports/<KEY>.md` inside the worktree, register it with `$board_cli update <KEY> --report "reports/<KEY>.md"`, then `$board_cli status <KEY> in_review`. The user closes such tasks.
+- On approval the board commits every file in the worktree that git does not ignore. Put reports and scratch files (notes, logs, profiles, dumps) only into a git-ignored directory (`reports/`) or `/tmp`. Check with `git check-ignore -q reports/`; if `reports/` is not ignored, say so in the task thread instead of leaving files there.
 
 ## Asking questions
 Ask only when the answer changes the result and you cannot decide safely yourself. A question is for a human who does not know this codebase or domain. Every question:
