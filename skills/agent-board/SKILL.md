@@ -37,8 +37,9 @@ Talk to the user in their language. Ask one question at a time.
 2. **Project.** Pick from the `status` list.
    - New: propose a slug from the plan title (latin, lower case, `-`, short: `payments-pg`) and a title;
      confirm with the user, then `agent-board init <slug> --title "<title>"`.
-   - Existing, stage `decomposition`, and the user brought a new plan or tasks: show the task count, ask whether
-     to add to / update this decomposition. No → give `<board url>#/p/<slug>/decomposition` and stop.
+   - Existing, stage `decomposition`, and the user brought a plan or tasks (new or the same again): show the task
+     count, ask whether to add to / update this decomposition. No → give `<board url>#/p/<slug>/decomposition` and
+     stop. Yes → steps 3–6 change only what differs; tasks matching by key or title are not created again.
    - Existing, any later stage: the decomposition is approved. Give
      `<board url>#/p/<slug>` (board url from `status`) and stop.
 3. **Setup.** Follow `references/setup.md`. It skips fields that are already configured.
@@ -62,6 +63,8 @@ agent-board --project <slug> config set --json '{"project_brief": "Goal: move pa
       «Утвердить разбивку» starts the work; the terminal is no longer needed.
       Setup only, no tasks: "add tasks on the board or bring me a plan" instead of the approve part.
    3. Summary block from steps 4–5: created / updated / skipped tasks, violations, open questions.
+      Nothing changed → one line "board already matches the plan" plus the violations still open.
+      Setup only → list what was configured and what was skipped instead.
 
    User asks to add and start ("закинь и запусти"): do steps 1–6, then say starting is their button on the
    decomposition page.

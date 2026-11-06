@@ -25,7 +25,7 @@ Put the key in the description (`Tracker: PRJ-123`) and tell the user linking ha
 | `description` | What to do: scope, files or components, decisions from the plan that apply. Enough for an agent who has not read the plan |
 | `done_when` | A checkable criterion: tests pass, endpoint returns X, report answers Y. Not "done" or "implemented" |
 | `repo` | One `name` from `config get --json` → `repos`. A task touching two repos is two tasks |
-| `kind` | `code`, or `research` when the result is a report, not a change. Research tasks still need a `repo` (they run in a worktree): ask for one at intake |
+| `kind` | `code`, or `research` when the result is a report, not a change. Research tasks run in a worktree too: with one repo it is used by default, with several set `repo` at intake |
 | `estimate` | Days, a number, only if the plan gives one. Otherwise omit |
 | `deps` | Keys of tasks whose code or result this task needs. Order of work alone is not a dependency |
 
