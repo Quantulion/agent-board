@@ -13,9 +13,11 @@ import { python } from './python.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 const out = path.join(here, 'out');
+// Язык проекта задаётся явно: ожидания текстов ниже рассчитаны на него, а не на язык по умолчанию.
+const LANG = 'ru';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-card-'));
 const gitRepo = path.join(home, 'payments-api');
-const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user' };
+const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: LANG };
 const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 20000 });
 const git = (...args) => execFileSync('git', args, { cwd: gitRepo, encoding: 'utf-8', timeout: 20000 });
 const VIEW = { width: 1440, height: 900 };
@@ -50,7 +52,7 @@ git('commit', '-q', '-m', 'init');
 cli('init', 'pay', '--title', 'Перенос платежей на PostgreSQL');
 const cfgPath = path.join(home, 'projects', 'pay', 'project.json');
 const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-Object.assign(cfg, { harness: { type: 'fake' }, repos: [{ name: 'payments-api', path: gitRepo, base: 'master' }] });
+Object.assign(cfg, { language: LANG, harness: { type: 'fake' }, repos: [{ name: 'payments-api', path: gitRepo, base: 'master' }] });
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
 
 const DESC105 = 'При каждой записи платежа в MSSQL дублировать запись в PG, не влияя на основной поток. Ошибки PG не должны ронять оплату.';
@@ -72,7 +74,7 @@ const origin = new URL(url).origin;
 const token = new URL(url).searchParams.get('token');
 async function api(method, p, body) {
   const resp = await fetch(origin + '/api/p/pay/' + p, {
-    method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': token }, body: body ? JSON.stringify(body) : undefined,
+    method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': token, 'X-Board-Lang': LANG }, body: body ? JSON.stringify(body) : undefined,
   });
   const data = await resp.json();
   if (!resp.ok) throw new Error(p + ': ' + data.error);

@@ -13,7 +13,7 @@ let ok = false;
 
 // Проект на стадии работы: одна задача ждёт слот из-за лимита проекта, агент проекта — из-за общего лимита.
 async function waitingProject(language) {
-  const env = createEnv({ prefix: 'ab-slot-', slug: 'pay', title: 'Слоты', config: { language, max_agents: 2, global_max_agents: 6 } });
+  const env = createEnv({ prefix: 'ab-slot-', slug: 'pay', title: 'Слоты', language, config: { max_agents: 2, global_max_agents: 6 } });
   const metaPath = path.join(env.home, 'projects', 'pay', 'meta.json');
   const meta = fs.existsSync(metaPath) ? JSON.parse(fs.readFileSync(metaPath, 'utf-8')) : {};
   fs.writeFileSync(metaPath, JSON.stringify({ ...meta, project_agent_state: 'waiting_turn', project_wait_reason: 'global' }));

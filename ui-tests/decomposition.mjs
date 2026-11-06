@@ -15,8 +15,10 @@ import { python } from './python.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 const out = path.join(here, 'out');
+// Язык проекта задаётся явно: ожидания текстов ниже рассчитаны на него, а не на язык по умолчанию.
+const LANG = 'ru';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-decomp-'));
-const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user' };
+const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: LANG };
 const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 20000 });
 const VIEW = { width: 1440, height: 900 };
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -56,6 +58,7 @@ cli('init', 'pay', '--title', 'Перенос платежей на PostgreSQL')
 const cfgPath = path.join(home, 'projects', 'pay', 'project.json');
 const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
 Object.assign(cfg, {
+  language: LANG,
   harness: { type: 'fake' },
   repos: [{ name: 'payments-api', path: gitRepo('payments-api'), base: 'master' },
     { name: 'payments-worker', path: gitRepo('payments-worker'), base: 'master' }],
@@ -87,7 +90,7 @@ const origin = new URL(url).origin;
 const token = new URL(url).searchParams.get('token');
 async function api(method, p, body) {
   const resp = await fetch(origin + '/api/p/pay/' + p, {
-    method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': token }, body: body ? JSON.stringify(body) : undefined,
+    method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': token, 'X-Board-Lang': LANG }, body: body ? JSON.stringify(body) : undefined,
   });
   const data = await resp.json();
   if (!resp.ok) throw new Error(p + ': ' + data.error);

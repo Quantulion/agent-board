@@ -34,16 +34,18 @@ export async function until(fn, ms, what) {
   }
 }
 
-/** Изолированное окружение: свой каталог данных, проект `slug`, CLI и управление сервером. */
-export function createEnv({ prefix, slug, title, config = {} }) {
+/** Изолированное окружение: свой каталог данных, проект `slug`, CLI и управление сервером.
+ *  Язык проекта обязателен: ожидания текстов в сценариях не должны зависеть от языка по умолчанию. */
+export function createEnv({ prefix, slug, title, language, config = {} }) {
+  if (!language) throw new Error('createEnv: не задан язык проекта');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: slug, AGENT_BOARD_ACTOR: 'user' };
+  const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: slug, AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: language };
   const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 30000 });
   fs.mkdirSync(out, { recursive: true });
   cli('init', slug, '--title', title);
   const cfgPath = path.join(home, 'projects', slug, 'project.json');
   const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
-  fs.writeFileSync(cfgPath, JSON.stringify({ ...cfg, harness: { type: 'fake' }, ...config }, null, 2));
+  fs.writeFileSync(cfgPath, JSON.stringify({ ...cfg, language, harness: { type: 'fake' }, ...config }, null, 2));
 
   const self = { home, cli, slug, proc: null, url: null, origin: null, token: null, port: null };
 
@@ -78,7 +80,7 @@ export function createEnv({ prefix, slug, title, config = {} }) {
 
   self.api = async (method, p, body) => {
     const resp = await fetch(`${self.origin}/api/p/${slug}/${p}`, {
-      method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': self.token }, body: body ? JSON.stringify(body) : undefined,
+      method, headers: { 'Content-Type': 'application/json', 'X-Board-Token': self.token, 'X-Board-Lang': language }, body: body ? JSON.stringify(body) : undefined,
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(p + ': ' + data.error);

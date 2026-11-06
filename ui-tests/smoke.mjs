@@ -48,7 +48,7 @@ const shot = async (page, name) => {
 
 // ---------- сценарий 1: основной ----------
 async function main(browser) {
-  const env = createEnv({ prefix: 'ab-smoke-', slug: 'pay', title: 'Перенос платежей на PostgreSQL' });
+  const env = createEnv({ prefix: 'ab-smoke-', slug: 'pay', title: 'Перенос платежей на PostgreSQL', language: 'ru' });
   const gitRepo = path.join(env.home, 'payments-api');
   const git = (...args) => execFileSync('git', args, { cwd: gitRepo, encoding: 'utf-8', timeout: 20000 });
   fs.mkdirSync(gitRepo);
@@ -226,7 +226,7 @@ async function main(browser) {
 
 // ---------- сценарий 2: нагрузка ----------
 async function load(browser) {
-  const env = createEnv({ prefix: 'ab-load-', slug: 'load', title: 'Нагрузка', config: { max_agents: 1 } });
+  const env = createEnv({ prefix: 'ab-load-', slug: 'load', title: 'Нагрузка', language: 'ru', config: { max_agents: 1 } });
   const errors = [];
   let page;
   try {

@@ -66,7 +66,7 @@ async function startJira() {
 async function main(browser) {
   const jira = await startJira();
   process.env[TOKEN_ENV] = TOKEN;
-  const env = createEnv({ prefix: 'ab-int-', slug: 'pay', title: 'Интеграции доски' });
+  const env = createEnv({ prefix: 'ab-int-', slug: 'pay', title: 'Интеграции доски', language: 'ru' });
   const errors = [];
   let page;
   const critBin = path.join(env.home, 'crit-bin');
@@ -272,7 +272,7 @@ async function main(browser) {
 // Проект без инструмента ревью: подсказка и кнопки во вкладке «Ревью», возврат с обязательным комментарием,
 // одобрение, отправка одной задачи с подтверждением и неудачная отправка (хвост вывода текстом, пункт «Ждут вас»).
 async function noReviewTool(browser) {
-  const env = createEnv({ prefix: 'ab-int2-', slug: 'pay', title: 'Без инструмента ревью' });
+  const env = createEnv({ prefix: 'ab-int2-', slug: 'pay', title: 'Без инструмента ревью', language: 'ru' });
   const errors = [];
   const page = await browser.newPage();
   page.on('pageerror', e => errors.push(String(e)));
