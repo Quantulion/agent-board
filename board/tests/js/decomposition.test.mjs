@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { decompositionSummary, nextStage, repoColors } from '../../agent_board/static/js/decomposition.js';
+import { decompositionSummary, nextStage, repoColors, rulesText } from '../../agent_board/static/js/decomposition.js';
 
 const t = (key, extra = {}) => ({
   key, title: key, deps: [], status: 'not_started', display_status: 'not_started', open_deps: [], estimate: 1,
@@ -77,4 +77,12 @@ test('repoColors: цвета по порядку репозиториев про
   assert.deepEqual([...colors.keys()], ['api', 'worker', 'reports']);
   assert.equal(colors.get('api'), 'var(--s-progress)');
   assert.notEqual(colors.get('worker'), colors.get('api'));
+});
+
+test('rulesText: страница разбивки показывает правила декомпозиции, а не правила агентов', () => {
+  // arrange
+  const config = { agent_rules: 'make test', decomposition_rules: '  Одна задача = один деплой.  ' };
+  // act / assert
+  assert.equal(rulesText(config), 'Одна задача = один деплой.');
+  assert.equal(rulesText({ agent_rules: 'make test' }), '');
 });

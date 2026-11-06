@@ -26,6 +26,9 @@ const violationsOf = t => (Array.isArray(t.rule_violations) ? t.rule_violations 
 // Черновик комментария к задаче разбивки — свой, не общий с полем ввода в карточке задачи.
 export const commentDraftKey = key => 'decomp:' + key;
 
+// Правила, по которым проверяется разбивка.
+export const rulesText = config => text(config && config.decomposition_rules);
+
 export function nextStage(config) {
   const type = config && config.tracker && config.tracker.type;
   return type && type !== 'none' ? 'tracker' : 'work';
@@ -328,7 +331,7 @@ export function mountDecomposition(root, store, ctx) {
   }
 
   function paintRules(cfg) {
-    const rules = text(cfg.agent_rules);
+    const rules = rulesText(cfg);
     rulesBody.replaceChildren(rules ? h('div', { class: 'md' }, safeMarkdown(rules)) : h('p', { class: 'muted' }, T.dc.noRules));
   }
 

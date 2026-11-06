@@ -59,7 +59,7 @@ Object.assign(cfg, {
   harness: { type: 'fake' },
   repos: [{ name: 'payments-api', path: gitRepo('payments-api'), base: 'master' },
     { name: 'payments-worker', path: gitRepo('payments-worker'), base: 'master' }],
-  agent_rules: 'Одна задача = один деплой.\n\nОценка задачи — не больше 3 дней.\n\nУ каждой задачи есть проверяемый критерий готовности.',
+  decomposition_rules: 'Одна задача = один деплой.\n\nОценка задачи — не больше 3 дней.\n\nУ каждой задачи есть проверяемый критерий готовности.',
 });
 fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, 2));
 

@@ -24,7 +24,7 @@ DESCRIPTIONS = {
                    "build and test commands).",
     "harness": "Agent CLI that runs background sessions and its permission mode.",
     "branch_template": "Task branch name template.",
-    "project_brief": "Project description for the project agent: goal, key decisions, decomposition rules.",
+    "project_brief": "Project description for the project agent: goal, key decisions, constraints.",
     "links": "Project links shown in the UI (plan, spec, mockups).",
     "decomposition_rules": "Rules every task of the decomposition must follow (size, one repo per task, tests); "
                            "the project agent checks tasks against them.",

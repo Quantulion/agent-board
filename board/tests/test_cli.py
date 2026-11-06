@@ -785,3 +785,10 @@ def test_config_schema__list_item_shapes__match_validators(tmp_home, capsys, mon
     assert not _rejected(check, [example])
     for key in shape["required"]:
         assert _rejected(check, [{k: v for k, v in example.items() if k != key}]), key
+
+
+def test_config_schema__project_brief__does_not_claim_decomposition_rules(tmp_home, capsys, monkeypatch):
+    # act
+    schema = _schema(capsys, monkeypatch)
+    # assert
+    assert "decomposition" not in schema["project_brief"]["description"].lower()
