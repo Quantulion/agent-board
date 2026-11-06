@@ -138,3 +138,17 @@ def test_tail_of_stays_within_limit_after_decoding_invalid_utf8(tmp_path):
     tail = ship.tail_of(log)
     # assert
     assert 0 < len(tail.encode("utf-8")) <= ship.OUTPUT_TAIL_BYTES
+
+
+@pytest.mark.parametrize("command", ["cat <<EOF\n{title}\nEOF", "gh pr create --body-file - <<-END\n{title}\nEND",
+                                     "cat <<'X'\n{key}\nX", "cat <<<{title}", "cat<<E {key}"])
+def test_validate_template_rejects_heredoc(command):
+    # arrange, act, assert
+    with pytest.raises(ValueError, match="<<"):
+        ship.validate_template(command)
+
+
+@pytest.mark.parametrize("command", ["echo '<<' {key}", 'echo "a << b" {key}', "echo \\<< {key}", "cmd < in.txt {key}"])
+def test_validate_template_allows_quoted_or_escaped_double_less(command):
+    # arrange, act, assert
+    ship.validate_template(command)
