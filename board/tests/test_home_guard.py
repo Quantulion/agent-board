@@ -46,6 +46,8 @@ def run_inner_session(tmp_path: Path, user_home: Path, test_body: str) -> subpro
         AGENT_BOARD_PROJECT="live",
         AGENT_BOARD_TASK="LIVE-1",
         AGENT_BOARD_ACTOR="agent",
+        AGENT_BOARD_LANG="en",
+        AGENT_BOARD_TRACKER_URL="http://tracker.invalid",
         PYTHONPATH=os.pathsep.join(filter(None, [str(TESTS_DIR.parent), os.environ.get("PYTHONPATH")])),
     )
     return subprocess.run(
@@ -120,7 +122,10 @@ def test_session_guard__agent_session_env_and_live_agents__should_isolate_and_pa
         REAL = Path(os.path.expanduser("~")) / ".agent-board"
 
         def test_isolated():
-            assert sorted(n for n in os.environ if n.startswith("AGENT_BOARD_")) == ["AGENT_BOARD_HOME"]
+            # из окружения агента не доходит ничего: остаются только дом доски и язык, которые задаёт сам conftest
+            board_env = {n: v for n, v in os.environ.items() if n.startswith("AGENT_BOARD_")}
+            assert sorted(board_env) == ["AGENT_BOARD_HOME", "AGENT_BOARD_LANG"]
+            assert board_env["AGENT_BOARD_LANG"] == "ru"
             assert board_home() != REAL
             # живой агент тем временем пишет журнал и события
             (REAL / "projects" / "live" / "logs" / "LIVE-1.jsonl").write_text("{}")

@@ -1389,7 +1389,8 @@ class Runner:
         board = self._board(slug)
         tail = sh.scrub(ship.tail_of(sh.log))
         ok = code == 0 and not timed_out
-        if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system"):
+        done = {"state": "done", "at": self._clock(), "output_tail": tail, "exit_code": 0, "process": None}
+        if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system", fields={"ship": done}):
             ok = False
             error = msg("run.ship_status_changed")
             sh.batch.failed.add(key)
@@ -1398,7 +1399,6 @@ class Runner:
             board.post_message(key, "system", msg("run.ship_error", error=error))
             board.record("ship_finished", {"key": key, "ok": False, "exit_code": 0})
         elif ok:
-            self._ship_set(board, key, state="done", at=self._clock(), output_tail=tail, exit_code=0, process=None)
             board.record("ship_finished", {"key": key, "ok": True, "exit_code": 0})
         else:
             sh.batch.failed.add(key)

@@ -375,19 +375,29 @@ class Board:
             events.extend(self._retire_proposals())
             return events
 
-    def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None) -> List[Event]:
-        """wake_extra — поля для пробуждения returned (например, комментарий пользователя к возврату)."""
+    def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None,
+                   fields: Optional[dict] = None) -> List[Event]:
+        """wake_extra — поля для пробуждения returned (например, комментарий пользователя к возврату).
+
+        fields — служебные поля раннера, которые меняются вместе со статусом, чтобы их не видели порознь."""
         with self._lock:
             to = self._check_transition(key, to, actor)
+            fields = dict(fields or {})
+            if fields and (actor != "system" or not set(fields) <= RUNNER_FIELDS):
+                raise PermissionError(msg("board.runner_fields", names=", ".join(sorted(map(str, fields)))))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
             affected = dependents(key, tasks)
             prev = task.status
             task.status = to
+            for name, value in fields.items():
+                setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
             events = [self._emit("status_changed", {"key": key, "from": prev.value, "to": to.value, "actor": actor})]
+            if fields:
+                events.append(self._emit("task_updated", {"key": key, "fields": sorted(fields)}))
 
             if to == Status.CANCELLED:
                 events.append(self._emit("agent_stop", {"key": key}))
@@ -422,12 +432,13 @@ class Board:
         self._get(self.store.load_tasks(), key)
         return to
 
-    def transition_if(self, key: str, expected: Status, to: Status, actor: str) -> List[Event]:
+    def transition_if(self, key: str, expected: Status, to: Status, actor: str,
+                      fields: Optional[dict] = None) -> List[Event]:
         """Переводит задачу, только если она сейчас в статусе expected; иначе ничего не делает."""
         with self._lock:
             if self._get(self.store.load_tasks(), key).status != Status(expected):
                 return []
-            return self.transition(key, to, actor)
+            return self.transition(key, to, actor, fields=fields)
 
     # --- ревью ---
 
