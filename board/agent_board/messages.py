@@ -273,6 +273,7 @@ CATALOG: Dict[str, tuple] = {
     "ship.on_approve_bool": ("ship.on_approve must be true or false", "ship.on_approve должен быть true или false"),
     "ship.on_approve_command": ("ship.on_approve needs a ship command: set ship.command",
                                 "ship.on_approve требует команду отправки: задайте ship.command"),
+    "ship.on_failure": ("ship.on_failure must be one of: {values}", "ship.on_failure должен быть одним из: {values}"),
     "ship.timeout": ("ship.timeout must be a positive number of seconds",
                      "ship.timeout должен быть положительным числом секунд"),
     "ship.quotes": ("Placeholder inside quotes: do not quote placeholders — values are already escaped",
@@ -331,8 +332,8 @@ CATALOG: Dict[str, tuple] = {
                         "Недопустимая ссылка в links: {item} — нужны title и href (http(s) или путь к файлу)"),
     "config.review_tool": ("Unknown review tool: review.tool must be one of: {tools}",
                            "Неизвестный инструмент ревью: review.tool должен быть одним из: {tools}"),
-    "config.ship_object": ("ship must be an object {{command, timeout, on_approve}}",
-                           "ship должен быть объектом {{command, timeout, on_approve}}"),
+    "config.ship_object": ("ship must be an object {{command, timeout, on_approve, on_failure}}",
+                           "ship должен быть объектом {{command, timeout, on_approve, on_failure}}"),
     "config.harness_type": ("Unknown harness: harness.type must be one of: {types}",
                             "Неизвестный харнесс: harness.type должен быть одним из: {types}"),
     "config.allowed_tools": ("harness.allowed_tools must be a list of strings",
@@ -548,6 +549,16 @@ CATALOG: Dict[str, tuple] = {
                             "Автоматическая отправка в ревью после одобрения не запущена: {error}"),
     "run.ship_multi_deps": ("several unfinished dependencies — send them first",
                             "несколько незавершённых зависимостей — отправьте их сначала"),
+    "run.ship_returned": ("The task was returned to work: the agent will move the branch onto the fresh base, sort out "
+                          "the sending error and return the task to review.",
+                          "Задача возвращена в работу: агент перенесёт ветку на свежую базу, разберёт ошибку отправки "
+                          "и вернёт задачу на ревью."),
+    "run.ship_uncommitted": ("The task branch does not go onto {base} without conflicts: its commits were turned into "
+                             "uncommitted changes (the old branch tip is {head}), the agent will resolve the conflicts "
+                             "in the files.",
+                             "Ветка задачи не переносится на {base} без конфликтов: её коммиты разобраны в "
+                             "незакоммиченные изменения (прежняя вершина ветки — {head}), конфликты агент разрешит "
+                             "в файлах."),
     "run.ship_dep_no_branch": ("dependency {key} has no branch", "у зависимости {key} нет ветки"),
     "run.ship_dep_failed": ("dependency {keys} was not sent", "зависимость {keys} не отправлена"),
     "run.ship_not_approved": ("the task is no longer approved ({status})", "задача уже не одобрена ({status})"),

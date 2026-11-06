@@ -21,7 +21,8 @@ class ProjectConfig(_Serializable):
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
     review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
-    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600, "on_approve": False})
+    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600, "on_approve": False,
+                                                       "on_failure": "stay"})
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
@@ -73,6 +74,8 @@ NOT_SETTABLE = {"slug": "config.slug_fixed", "stage": "config.stage_command",
                 "project_session_id": "config.session_runner"}
 HARNESS_TYPES = ("claude", "codex", "fake")
 REVIEW_TOOLS = ("crit", "none")
+# что делать с задачей, когда команда отправки упала: оставить одобренной или вернуть агенту
+SHIP_ON_FAILURE = ("stay", "return")
 # правила декомпозиции целиком попадают в промпт агента проекта
 MAX_DECOMPOSITION_RULES_CHARS = 4000
 
@@ -205,6 +208,8 @@ def _check_ship(config: ProjectConfig) -> None:
         raise ValueError(msg("ship.on_approve_bool"))
     if on_approve and not has_command:
         raise ValueError(msg("ship.on_approve_command"))
+    if ship.get("on_failure", "stay") not in SHIP_ON_FAILURE:
+        raise ValueError(msg("ship.on_failure", values=", ".join(SHIP_ON_FAILURE)))
 
 
 def _check_harness(config: ProjectConfig) -> None:

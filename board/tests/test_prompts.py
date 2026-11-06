@@ -171,6 +171,40 @@ def test_wake_message_rebase_variants_follow_board_side_rebase():
         assert "git rebase" not in t
 
 
+def test_wake_message_ship_failed__conflict_after_rebase__quotes_output_and_asks_to_resolve_and_return():
+    # arrange
+    reason = {"reason": "ship_failed", "key": "PAY-1", "exit_code": 1, "output": "CONFLICT (content): a.py",
+              "base": "main", "rebase_ok": True, "conflict_files": ["a.py"]}
+
+    # act
+    text = wake_message([reason], "", "ab")
+
+    # assert
+    assert "exit code 1" in text and "```\nCONFLICT (content): a.py\n```" in text
+    assert "returned the task to work" in text and "moved your work onto main" in text and "a.py" in text
+    assert "Run the tests" in text and "ab status PAY-1 in_review" in text and "Do not run any git" in text
+
+
+def test_wake_message_ship_failed__without_output_and_rebase__points_to_card():
+    # arrange
+    reason = {"reason": "ship_failed", "key": "PAY-1"}
+
+    # act
+    text = wake_message([reason], "", "ab")
+
+    # assert
+    assert "ab show PAY-1" in text and "returned the task to work (in_progress)." in text
+    assert "exit code" not in text and "```" not in text
+
+
+def test_task_system_explains_ship_failed():
+    # arrange / act
+    text = task_system(_config(), CLI)
+
+    # assert
+    assert "ship_failed" in text and "status <KEY> in_review" in text.split("ship_failed", 1)[1]
+
+
 def test_wake_message_requested_rebase_names_who_asked_instead_of_dependency():
     # arrange
     base = {"reason": "rebase", "base": "main", "rebase_ok": True, "conflict_files": []}

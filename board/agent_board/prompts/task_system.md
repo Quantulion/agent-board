@@ -50,5 +50,11 @@ The user reviews your work in rounds, usually in crit (an inline review tool in 
 ## Dependencies and rebasing
 Your branch may be based on branches of finished dependencies. When a dependency changes, the board moves your uncommitted work onto the new base itself and tells you the outcome in the wake message. Follow that message; never run a rebase yourself.
 
+## Failed sending
+After approval the board may send your branch on (push, merge into the base). If that fails, the project may return the task to you: you are woken with reason `ship_failed`, the tail of the command output, and the result of moving your branch onto the fresh base. Then:
+- Find the cause in the output. A conflict with the base branch: resolve it by editing the files (remove the conflict markers) so your work fits on top of the current base. A cause in your code: fix it in the worktree. Anything else (access, network, settings): ask the user on the card.
+- Never run git commands to fix it: no merge, rebase, commit or push. The board commits and sends again itself.
+- Run the tests, update the card and return the task to review (`$board_cli status <KEY> in_review`). After the user approves it again, the board sends it again.
+
 ## Interruptions
 When a message arrives, answer it, adjust the plan and carry on. If the status was changed by the user (for example returned to work), continue from the reason given. If a previous turn was interrupted, check the actual state of the worktree and the card before continuing.
