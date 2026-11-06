@@ -51,7 +51,8 @@ RETRY_DELAYS = (5.0, 30.0)
 LEFTOVER_MISSING_TEXT = "Старый процесс хода не найден (завершился или pid занят другим процессом), его не трогаем."
 INTERRUPTED_TEXT = "Ход прерван перезапуском сервера, агент продолжит с сообщением о прерывании."
 FAILURES_TEXT = ("Агент упал %d раза подряд, автоматический перезапуск остановлен: %s. "
-                 "Напишите сообщение или смените статус, чтобы запустить его снова.")
+                 "Повторите ход командой agent-board retry %s — агент продолжит с места остановки; "
+                 "или напишите сообщение либо смените статус.")
 CARRIED_TEXT = ("Ветка задачи перенесена на %s, но незакоммиченную работу не удалось вернуть в файлы без конфликта. "
                 "Она сохранена в git по ссылке %s: верните её вручную (например, git stash apply %s), "
                 "затем удалите ссылку командой git update-ref -d %s.")
@@ -495,12 +496,28 @@ class Runner:
             board = self._board(slug)
             reason = self._ctx.enrich(slug, board.store, event)
             key = str(d.get("key"))
+            if reason.get("reason") == "retry":
+                self._retry_now((slug, key), reason)
+                return
             if reason.get("reason") in ("answer", "review") or (
                     reason.get("reason") == "message" and reason.get("author") == "user"):
                 self._reset_failures((slug, key))
             if self._park_agent_loop((slug, key), reason):
                 return
             self._wake(slug, key, reason)
+
+    def _retry_now(self, k: Key, reason: dict) -> None:
+        """Повтор упавшего хода по просьбе пользователя: счётчик неудач сбрасывается, а сообщение о прерывании
+        идёт агенту перед причинами, которые прошлый ход не выполнил."""
+        self._reset_failures(k)
+        self._unpark(k)
+        if k[1] != PROJECT_THREAD:
+            task = self._board(k[0]).store.load_tasks().get(k[1])
+            if task is None or task.status == Status.CANCELLED:
+                return
+        self._pending[k] = [reason] + [r for r in self._pending.get(k, []) if r.get("reason") != "retry"]
+        if k not in self._turns and k not in self._waiting:
+            self._schedule(k)
 
     @staticmethod
     def _by_agent(reason: dict) -> bool:
@@ -959,7 +976,7 @@ class Runner:
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])
         if state == "error" and self._failures.get(k, 0) >= MAX_FAILURES:
-            board.post_message(k[1], "system", FAILURES_TEXT % (MAX_FAILURES, error))
+            board.post_message(k[1], "system", FAILURES_TEXT % (MAX_FAILURES, error, k[1]))
 
     def _update_task_after_turn(self, board: Board, key: str, state: str, error: str, session_id: Optional[str]) -> None:
         task = board.store.load_tasks()[key]

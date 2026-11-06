@@ -2610,3 +2610,65 @@ def test_set_deps__by_agent__403(server):
     r = post(server, "/api/p/pay/tasks/T-2/deps", {"deps": ["T-1"], "actor": "agent"})
     # assert
     assert r.status == 403
+
+
+# --- повтор упавшего хода ---
+
+def failed_task(server, key="T-1", error="обрыв соединения"):
+    add_task(server, key)
+    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
+    server.board_for("pay").update_task(key, "system", {"agent_state": "error", "turn_error": error})
+
+
+def test_retry_of_failed_task_records_retry_wake_with_error(server):
+    # arrange
+    failed_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "user"})
+    # assert
+    assert r.status == 200
+    assert [(e["type"], e["data"]) for e in r.json()["events"]] == [
+        ("agent_wake", {"key": "T-1", "reason": "retry", "error": "обрыв соединения"})]
+
+
+def test_retry_of_idle_task_is_400(server):
+    # arrange
+    add_task(server)
+    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "idle" in r.json()["error"]
+
+
+def test_retry_by_agent_is_403(server):
+    # arrange
+    failed_task(server)
+    # act
+    agent = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "agent"})
+    project_agent = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "project_agent"})
+    # assert
+    assert (agent.status, project_agent.status) == (403, 403)
+
+
+def test_retry_of_cancelled_task_is_400(server):
+    # arrange
+    failed_task(server)
+    post(server, "/api/p/pay/tasks/T-1/transition", {"to": "cancelled", "actor": "user"})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "cancelled" in r.json()["error"]
+
+
+def test_retry_of_project_agent_only_in_error(server):
+    # arrange
+    board = server.board_for("pay")
+    idle = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "user"})
+    board.update_meta({"project_agent_state": "error", "project_turn_error": "упал CLI"})
+    # act
+    r = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "user"})
+    # assert
+    assert idle.status == 400
+    assert r.status == 200
+    assert r.json()["events"][0]["data"] == {"key": "_project", "reason": "retry", "error": "упал CLI"}

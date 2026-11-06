@@ -102,6 +102,7 @@ WAKE_REASONS: Dict[str, str] = {
     "manual": "пользователь сам запустил задачу без сессии агента",
     "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
     "interrupted": "ход агента был прерван, нужно продолжить",
+    "retry": "error — пользователь повторил упавший ход агента, нужно продолжить с места остановки",
     "queued_restart": "следующий ход ждал очереди, когда сервер перезапустился, нужно продолжить",
     "review": "round, comments [{id, path, line, body}], binary, crit_dir — пользователь завершил раунд ревью "
               "с комментариями",
@@ -466,6 +467,24 @@ class Board:
             if note:
                 events.extend(self.post_message(key, "system", note))
             return events
+
+    def retry(self, key: str, actor: str) -> List[Event]:
+        """Пользователь повторяет упавший ход агента задачи или агента проекта; ход запускает раннер."""
+        with self._lock:
+            self._require_user(actor, "Повторить ход агента может только пользователь")
+            if key == PROJECT_THREAD:
+                meta = self.store.load_meta()
+                state, error = meta.get("project_agent_state") or "idle", meta.get("project_turn_error") or ""
+            else:
+                task = self._get(self.store.load_tasks(), key)
+                if task.status in (Status.CANCELLED, Status.APPROVED, Status.SENT):
+                    raise ValueError("Агент задачи на статусе %s не работает, повторять нечего" % task.status.value)
+                if self.store.load_config().stage != "work":
+                    raise ValueError("Агенты задач работают только на стадии work")
+                state, error = task.agent_state, task.turn_error
+            if state != "error":
+                raise ValueError("Повторить можно только упавший ход: агент %s сейчас в состоянии %s" % (key, state))
+            return [self._emit("agent_wake", {"key": key, "reason": "retry", "error": error})]
 
     def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
         """Возврат в работу с комментарием: агент получает комментарий вместе с пробуждением returned."""
