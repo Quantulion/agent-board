@@ -454,6 +454,7 @@ CATALOG: Dict[str, tuple] = {
     "board.rebase_status": ("A task at status {status} is not moved onto its base: its work is already accepted "
                             "or cancelled",
                             "Задача на статусе {status} не переносится на базу: её работа уже принята или отменена"),
+    "board.merged": ("Merged into {base}", "Влито в {base}"),
     "board.rebase_no_worktree": ("The task has no working copy yet: the agent will start right from the fresh base",
                                  "У задачи ещё нет рабочей копии: агент начнёт работу сразу от свежей базы"),
     "run.leftover_missing": ("The old turn process was not found (it exited or its pid belongs to another process), "

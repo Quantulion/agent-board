@@ -488,6 +488,18 @@ class Board:
                 events.extend(self.post_message(key, "system", note))
             return events
 
+    def mark_merged(self, key: str, expected: Status, base: str) -> List[Event]:
+        """Одобренная или отправленная задача влита в базовую ветку: она готова, а зависимые переходят на базу,
+        как после ручного перевода в «Готово». Если статус уже сменился, ничего не делает."""
+        with self._lock:
+            tasks = self.store.load_tasks()
+            if self._get(tasks, key).status != Status(expected):
+                return []
+            events = self.transition(key, Status.DONE, "system")
+            events.extend(self._rebase_wakes(key, dependents(key, tasks)))
+            events.extend(self.post_message(key, "system", msg("board.merged", base=base)))
+            return events
+
     def retry(self, key: str, actor: str) -> List[Event]:
         """Пользователь повторяет упавший ход агента задачи или агента проекта; ход запускает раннер."""
         with self._lock:

@@ -35,10 +35,12 @@ from .wakes import WakeContext
 from .worktree import (
     GitError,
     RebaseOutcome,
+    branch_exists,
     carry_ref,
     changed_files,
     commit_all,
     ensure_worktree,
+    is_ancestor,
     rebase_carrying_changes,
     unmerged_files,
     worktree_path,
@@ -65,6 +67,8 @@ REVIEW_ERROR_CHARS = 1000
 SHIP_KILL_GRACE = 3.0
 # как часто раннер убирает устаревшие данные ревью (кроме уборки при старте)
 HOUSEKEEPING_SECONDS = 24 * 3600
+# как часто проверяется, влиты ли одобренные и отправленные задачи в базовую ветку
+MERGE_CHECK_SECONDS = 300
 SHIP_TEXT_CHARS = 500
 
 Key = Tuple[str, str]
@@ -173,6 +177,7 @@ class Runner:
         self._reviews: Dict[Key, _Review] = {}
         self._ships: Dict[Key, _Ship] = {}
         self._housekeeping_timer: Optional[threading.Timer] = None
+        self._merge_timer: Optional[threading.Timer] = None
         self._stopping = threading.Event()
 
     # --- жизненный цикл ---
@@ -189,9 +194,9 @@ class Runner:
         чтобы следующий старт продолжил их как прерванные."""
         self._server.hub.unsubscribe(self.on_event)
         self._stopping.set()
-        timer = self._housekeeping_timer
-        if timer is not None:
-            timer.cancel()
+        for timer in (self._housekeeping_timer, self._merge_timer):
+            if timer is not None:
+                timer.cancel()
         self._inbox.put(None)
         if self._thread is not None:
             self._thread.join(timeout=30)
@@ -275,8 +280,11 @@ class Runner:
         elif kind == "recover":
             self._recover()
             self._housekeeping()
+            self._check_merged()
         elif kind == "housekeeping":
             self._housekeeping()
+        elif kind == "merge_check":
+            self._check_merged()
         elif kind == "sync":
             item[1].set()
 
@@ -441,6 +449,57 @@ class Runner:
         timer.daemon = True
         timer.start()
         self._housekeeping_timer = timer
+
+    def _check_merged(self) -> None:
+        """Переводит в «Готово» одобренные и отправленные задачи, уже влитые в базовую ветку репозитория,
+        и назначает следующую проверку."""
+        for slug in list_projects():
+            try:
+                self._check_merged_project(self._board(slug))
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+        if self._stopping.is_set():
+            return
+        timer = threading.Timer(MERGE_CHECK_SECONDS, lambda: self._inbox.put(("merge_check",)))
+        timer.daemon = True
+        timer.start()
+        self._merge_timer = timer
+
+    def _check_merged_project(self, board: Board) -> None:
+        tasks = board.store.load_tasks()
+        candidates = [t for t in tasks.values() if t.status in (Status.APPROVED, Status.SENT) and t.kind != "research"
+                      and not (isinstance(t.ship, dict) and t.ship.get("state") in ("queued", "running"))]
+        if not candidates:
+            return
+        config = board.store.load_config()
+        approvals = self._approval_commits(board)
+        for task in sorted(candidates, key=lambda t: t.key):
+            try:
+                repo, base = self._repo(config, task)
+                if self._merged(repo, base, task, approvals.get(task.key)):
+                    board.mark_merged(task.key, task.status, base)
+            except (_PrepareError, GitError) as e:
+                # проверка повторится по расписанию: тред задачи ошибками не засоряем
+                print("runner: не удалось проверить влив %s: %s" % (task.key, e), file=sys.stderr)
+
+    @staticmethod
+    def _approval_commits(board: Board) -> Dict[str, str]:
+        """Последний коммит одобрения каждой задачи."""
+        commits: Dict[str, str] = {}
+        for event in board.store.read_events():
+            if event.type == "task_committed" and event.data.get("key") and event.data.get("sha"):
+                commits[str(event.data["key"])] = str(event.data["sha"])
+        return commits
+
+    @staticmethod
+    def _merged(repo: Path, base: str, task: Task, approval: Optional[str]) -> bool:
+        # без коммита одобрения ветка не отличается от базы, и по истории влив не определить
+        if not approval or not is_ancestor(repo, approval, base):
+            return False
+        # после влива ветку часто удаляют: тогда достаточно коммита одобрения
+        if task.branch and branch_exists(repo, task.branch):
+            return is_ancestor(repo, "refs/heads/" + task.branch, base)
+        return True
 
     def _reset_failures(self, k: Key) -> None:
         self._failures.pop(k, None)
