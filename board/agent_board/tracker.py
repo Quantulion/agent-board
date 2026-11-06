@@ -6,21 +6,26 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import http.client
 import json
 import os
 import re
 import socket
 import string
+import sys
 import threading
+import time
+from datetime import datetime, timezone
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
 from .model import Status, Task
 from .ship import order as dependency_order
+from .store import list_projects
 
 TIMEOUT = 15.0
 MAX_MESSAGE_CHARS = 500
@@ -633,3 +638,183 @@ def _is_http(url: Any) -> bool:
         return False
     parts = urllib.parse.urlsplit(url)
     return parts.scheme in ("http", "https") and bool(parts.netloc)
+
+
+# --- фоновая синхронизация статусов ---
+
+DEFAULT_POLL_SECONDS = 30
+MAX_BACKOFF_SECONDS = 300
+# как часто поток проверяет, не пора ли синхронизировать (и не изменились ли настройки трекера)
+IDLE_SECONDS = 1.0
+SYNC_STAGES = ("work", "done")
+# после этих ошибок повторять бессмысленно до исправления настроек или доступа
+PAUSE_KINDS = ("auth", "config")
+
+
+def _now_text() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _fingerprint(cfg: Any) -> str:
+    """Отпечаток настроек трекера: меняется вместе с настройками, сами значения не раскрывает."""
+    return hashlib.sha256(json.dumps(cfg, sort_keys=True, default=str).encode("utf-8")).hexdigest()
+
+
+def sync_enabled(config) -> bool:
+    return (isinstance(config.tracker, dict) and config.tracker.get("type", "none") != "none"
+            and config.stage in SYNC_STAGES)
+
+
+class TrackerSync:
+    """Один поток на сервер: периодически читает статусы задач в трекерах проектов и переводит задачи доски.
+
+    Результат последнего прохода хранится в meta проекта (`tracker_sync`) и попадает в снимок. События пишутся
+    только при изменениях. После ошибок авторизации и настроек синхронизация проекта встаёт на паузу до изменения
+    настроек трекера или ручного запуска.
+    """
+
+    def __init__(self, server, clock: Optional[Callable[[], float]] = None,
+                 sleep: Optional[Callable[[float], Any]] = None):
+        self._server = server
+        self._clock = clock or time.monotonic
+        self._stop = threading.Event()
+        self._sleep = sleep or self._stop.wait
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+        self._due: Dict[str, float] = {}
+        self._failures: Dict[str, int] = {}
+
+    # --- жизненный цикл ---
+
+    def start(self) -> None:
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="board-tracker-sync", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=15)
+            self._thread = None
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            try:
+                delay = self.tick()
+            except Exception as exc:
+                print("tracker sync failed: %s" % type(exc).__name__, file=sys.stderr)
+                delay = IDLE_SECONDS
+            self._sleep(delay)
+
+    # --- проходы ---
+
+    def next_due(self, slug: str) -> Optional[float]:
+        return self._due.get(slug)
+
+    def tick(self) -> float:
+        """Синхронизирует проекты, которым пора; возвращает, сколько ждать до следующей проверки."""
+        with self._lock:
+            now = self._clock()
+            for slug in list_projects():
+                if self._stop.is_set():
+                    break
+                try:
+                    board = self._server.hub.board(slug)
+                    config = board.store.load_config()
+                except (KeyError, ValueError, OSError):
+                    continue
+                if not sync_enabled(config):
+                    continue
+                meta = board.store.load_meta()
+                state = meta.get("tracker_sync") or {}
+                changed_config = meta.get("tracker_sync_fp") not in (None, _fingerprint(config.tracker))
+                if changed_config:
+                    self._due.pop(slug, None)
+                    self._failures.pop(slug, None)
+                elif state.get("paused"):
+                    continue
+                if now >= self._due.get(slug, now):
+                    self._run(slug, board, config, now)
+            return IDLE_SECONDS
+
+    def sync_now(self, board, actor: str) -> dict:
+        """Ручной запуск («Повторить сейчас»): один проход проекта сейчас, при успехе пауза снимается."""
+        _require_user(actor, "Запускает синхронизацию трекера только пользователь")
+        config = board.store.load_config()
+        if not isinstance(config.tracker, dict) or config.tracker.get("type", "none") == "none":
+            raise ValueError("В проекте не настроен трекер (tracker.type = none)")
+        if config.stage not in SYNC_STAGES:
+            raise ValueError("Статусы синхронизируются на стадиях work и done (сейчас %s)" % config.stage)
+        with self._lock:
+            return self._run(board.store.root.name, board, config, self._clock())
+
+    def _run(self, slug: str, board, config, now: float) -> dict:
+        interval = config.tracker.get("poll_seconds") or DEFAULT_POLL_SECONDS
+        previous = board.store.load_meta().get("tracker_sync") or {}
+        state = {"at": _now_text(), "ok": True, "error": None, "paused": False, "unknown_statuses": [],
+                 "changed": [], "errors": []}
+        try:
+            self._sync_project(board, config, state)
+            self._failures.pop(slug, None)
+            self._due[slug] = now + interval
+        except TrackerError as e:
+            self._fail(slug, state, str(e), e.kind in PAUSE_KINDS, now, interval)
+        except ValueError as e:
+            # некорректные настройки трекера
+            self._fail(slug, state, str(e), True, now, interval)
+        except Exception as exc:
+            print("tracker sync %s failed: %s" % (slug, type(exc).__name__), file=sys.stderr)
+            self._fail(slug, state, "Внутренняя ошибка синхронизации", False, now, interval)
+        self._save(board, config, state, previous)
+        return state
+
+    def _fail(self, slug: str, state: dict, error: str, pause: bool, now: float, interval: float) -> None:
+        state["ok"], state["error"] = False, error[:MAX_MESSAGE_CHARS]
+        failures = self._failures.get(slug, 0)
+        if pause:
+            state["paused"] = True
+            self._failures.pop(slug, None)
+            self._due[slug] = now + interval
+            return
+        self._failures[slug] = failures + 1
+        self._due[slug] = now + min(max(MAX_BACKOFF_SECONDS, interval), interval * 2 ** failures)
+
+    def _sync_project(self, board, config, state: dict) -> None:
+        adapter = adapter_for(config.tracker)
+        tasks = [t for t in board.store.load_tasks().values() if t.tracker_key and t.status != Status.CANCELLED]
+        if not tasks:
+            return
+        mapping = {str(name).strip().lower(): target for name, target in (config.tracker.get("statuses") or {}).items()}
+        statuses = adapter.get_statuses([t.tracker_key for t in tasks])
+        meta = board.store.load_meta()
+        seen: Dict[str, str] = dict(meta.get("tracker_seen") or {})
+        unknown = set()
+        for task in sorted(tasks, key=lambda t: t.key):
+            name = statuses.get(task.tracker_key)
+            if not isinstance(name, str):
+                continue
+            target = mapping.get(name.strip().lower(), "unknown")
+            if target == "unknown":
+                unknown.add(name)
+            previous = seen.get(task.key)
+            # статус трекера, которого раньше не видели, только запоминается: доска ведёт задачу дальше трекера,
+            # и откатывать её к устаревшему статусу трекера нельзя
+            if previous is not None and previous != name and target not in ("unknown", None) \
+                    and target != task.status.value:
+                try:
+                    board.transition(task.key, Status(target), "tracker")
+                except (PermissionError, ValueError, KeyError) as e:
+                    state["errors"].append({"key": task.key, "error": str(e)[:MAX_MESSAGE_CHARS]})
+                    continue
+                state["changed"].append(task.key)
+            seen[task.key] = name
+        state["unknown_statuses"] = sorted(unknown)
+        if seen != (meta.get("tracker_seen") or {}):
+            board.update_meta({"tracker_seen": seen})
+
+    @staticmethod
+    def _save(board, config, state: dict, previous: dict) -> None:
+        board.update_meta({"tracker_sync": state, "tracker_sync_fp": _fingerprint(config.tracker)})
+        keys = ("ok", "error", "paused", "unknown_statuses", "errors")
+        if state["changed"] or any(state[k] != previous.get(k) for k in keys):
+            board.record("tracker_synced", {"ok": state["ok"], "changed": state["changed"], "error": state["error"]})

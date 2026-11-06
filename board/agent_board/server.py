@@ -442,6 +442,8 @@ class _Handler(BaseHTTPRequestHandler):
         extra: dict = {}
         if rest == ["tracker", "create"]:
             return self._send_json(200, tracker.create_issues(board, _need(body, "actor")))
+        if rest == ["tracker", "sync"]:
+            return self._send_json(200, self.app.tracker_sync.sync_now(board, _need(body, "actor")))
         if rest == ["tracker", "check"]:
             return self._send_json(200, tracker.check_access(board, _need(body, "actor")))
         if len(rest) == 3 and rest[0] == "threads" and rest[2] == "read":
@@ -552,7 +554,8 @@ class _HttpServer(ThreadingHTTPServer):
 class BoardServer:
     """Сервер доски. port=None — постоянный порт из DEFAULT_PORTS (или случайный, если все заняты)."""
 
-    def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None, runner: bool = False):
+    def __init__(self, port: Optional[int] = None, static_dir: Optional[Path] = None, runner: bool = False,
+                 tracker_sync: bool = False):
         self.port = port
         self._requested_port = port
         self.static_dir = static_dir
@@ -563,6 +566,8 @@ class BoardServer:
         self._lock_fd: Optional[int] = None
         self._with_runner = runner
         self.runner = None
+        self._with_tracker_sync = tracker_sync
+        self.tracker_sync = tracker.TrackerSync(self)
 
     def board_for(self, slug: str) -> Board:
         return self.hub.board(slug)
@@ -601,6 +606,8 @@ class BoardServer:
                 runner = Runner(self)
                 runner.start()
                 self.runner = runner
+            if self._with_tracker_sync:
+                self.tracker_sync.start()
         except BaseException:
             self._rollback_start(httpd)
             raise
@@ -645,6 +652,7 @@ class BoardServer:
             self._lock_fd = None
 
     def stop(self) -> None:
+        self.tracker_sync.stop()
         if self.runner is not None:
             self.runner.stop()
             self.runner = None

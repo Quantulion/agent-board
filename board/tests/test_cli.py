@@ -469,3 +469,30 @@ def test_request_read_timeout_says_request_still_runs(tmp_home):
         listener.close()
     # assert
     assert info.value.code == 2 and "всё ещё выполняется" in str(info.value)
+
+
+def test_tracker_sync_runs_one_pass_as_user(srv, capsys, fake_jira):
+    # arrange
+    with_tracker(srv, fake_jira)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").set_stage("tracker", "user")
+    run_json(capsys, "tracker", "create")
+    srv.board_for("pay").set_stage("work", "user")
+    # act
+    synced = run_json(capsys, "tracker", "sync")
+    # assert
+    assert synced["ok"] is True and synced["paused"] is False
+
+
+def test_tracker_sync_failure_exits_1(srv, capsys, fake_jira):
+    # arrange
+    with_tracker(srv, fake_jira)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").set_stage("tracker", "user")
+    run_json(capsys, "tracker", "create")
+    srv.board_for("pay").set_stage("work", "user")
+    fake_jira.fail_all = (401, None)
+    # act
+    code, _, err = run(capsys, "tracker", "sync")
+    # assert
+    assert code == 1 and "JIRA_TOKEN" in err

@@ -84,7 +84,7 @@ def _p(args, suffix: str) -> str:
 
 
 def cmd_serve(args):
-    server = BoardServer(port=args.port, runner=not args.no_runner)
+    server = BoardServer(port=args.port, runner=not args.no_runner, tracker_sync=True)
     try:
         server.start()
     except ServerAlreadyRunning as e:
@@ -181,7 +181,7 @@ TRACKER_TIMEOUT = 600
 def cmd_tracker(args):
     result = _request("POST", _p(args, "tracker/" + args.action), {"actor": "user"}, timeout=TRACKER_TIMEOUT)
     problems = [e["error"] for e in result.get("errors") or []]
-    if args.action == "check" and not result.get("ok"):
+    if args.action in ("check", "sync") and not result.get("ok"):
         problems.append(result.get("error") or "нет доступа к трекеру")
     if problems:
         print(json.dumps(result, ensure_ascii=False, indent=2))
@@ -329,8 +329,9 @@ def build_parser() -> argparse.ArgumentParser:
         "stage")
     add("ship", cmd_ship, help="отправить одобренные задачи в ревью командой проекта (только пользователь)").add_argument(
         "keys", nargs="+")
-    add("tracker", cmd_tracker, help="завести задачи в трекере (create) или проверить доступ (check); "
-                                     "только пользователь").add_argument("action", choices=["create", "check"])
+    add("tracker", cmd_tracker, help="завести задачи в трекере (create), проверить доступ (check) или "
+                                     "синхронизировать статусы сейчас (sync); только пользователь").add_argument(
+        "action", choices=["create", "check", "sync"])
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

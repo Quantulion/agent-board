@@ -73,6 +73,8 @@ EVENT_TYPES: Dict[str, str] = {
     "ship_finished": "key, ok, exit_code — команда отправки завершена (exit_code пуст при таймауте)",
     "tracker_created": "created [ключи], linked [[блокер, блокируемая]], errors [ключи] — пользователь завёл "
                        "задачи в трекере",
+    "tracker_synced": "ok, changed [ключи задач, переведённых по статусам трекера], error — итог проверки статусов "
+                      "в трекере (пишется только при изменениях)",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -222,6 +224,7 @@ class Board:
                     "session_id": config.project_session_id,
                     "parked": bool(meta.get("project_agent_parked")),
                 },
+                "tracker_sync": meta.get("tracker_sync"),
                 "last_seq": self.store.last_seq(),
             }
         # очередь ресурсов сама пишет в доску под своей блокировкой: читаем её вне блокировки доски
