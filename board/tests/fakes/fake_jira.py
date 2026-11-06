@@ -1,6 +1,9 @@
 """Поддельная Jira (REST v2): заведение задач, связи, поиск статусов, проверка доступа.
 
 `auth` — ожидаемое значение заголовка Authorization или Cookie (None — без проверки).
+`anonymous` — как Jira с просроченной cookie: запросы проходят без авторизации от имени анонимного пользователя
+("header" — поиск пуст, ответы с заголовком X-AUSERNAME: anonymous, /myself — 200; "silent" — поиск пуст без
+заголовка, /myself — 401).
 """
 from __future__ import annotations
 
@@ -26,8 +29,11 @@ class FakeJira(FakeServer):
         self.strict_missing = True
         # отказ на запросы с несколькими ключами (проверка поключевого повтора)
         self.reject_batches = False
+        self.anonymous: Optional[str] = None
 
     def authorized(self, headers) -> bool:
+        if self.anonymous:
+            return True
         if self.authorization is not None and headers.get("Authorization") != self.authorization:
             return False
         if self.cookie is not None and headers.get("Cookie") != self.cookie:
@@ -36,6 +42,8 @@ class FakeJira(FakeServer):
 
     def route(self, method, path, body):
         url = urlsplit(path)
+        if self.anonymous:
+            return self._anonymous(method, url)
         if method == "GET" and url.path == "/rest/api/2/myself":
             return 200, {"name": "tester"}
         m = re.fullmatch(r"/rest/api/2/project/([^/]+)", url.path)
@@ -64,3 +72,15 @@ class FakeJira(FakeServer):
             return 200, {"issues": [{"key": k, "fields": {"status": {"name": self.statuses[k]}}}
                                     for k in keys if k in self.statuses]}
         return 404, {"errorMessages": ["not found"]}
+
+    def _anonymous(self, method, url):
+        header = {"X-AUSERNAME": "anonymous"} if self.anonymous == "header" else {}
+        if method == "GET" and url.path == "/rest/api/2/myself":
+            if self.anonymous == "header":
+                return 200, {}, header
+            return 401, {"errorMessages": ["You are not authenticated."]}
+        if method == "GET" and url.path in ("/rest/api/2/search", "/rest/api/2/search/jql"):
+            return 200, {"issues": [], "warningMessages": ["The issue key does not exist."]}, header
+        if method == "GET" and url.path.startswith("/rest/api/2/project/"):
+            return 404, {"errorMessages": ["No project could be found."]}, header
+        return 401, None

@@ -279,6 +279,8 @@ class _Http:
         self.auth = auth
         self.headers = dict(headers or {})
         self._opener = urllib.request.build_opener(_NoRedirect)
+        # Jira помечает ответы анонимному пользователю заголовком X-AUSERNAME: anonymous
+        self.anonymous_seen = False
 
     def scrub(self, text: str) -> str:
         return scrub(text, self.auth.secrets)
@@ -301,6 +303,8 @@ class _Http:
         try:
             with self._opener.open(req, timeout=TIMEOUT) as resp:
                 raw = resp.read()
+                if (resp.headers.get("X-AUSERNAME") or "").strip().lower() == "anonymous":
+                    self.anonymous_seen = True
         except urllib.error.HTTPError as e:
             raise self._http_error(e.code, e.read() if e.fp is not None else b"") from None
         except urllib.error.URLError as e:
@@ -438,9 +442,21 @@ class JiraTracker(TrackerAdapter):
                      should_stop: Optional[Callable[[], bool]] = None) -> Dict[str, str]:
         result: Dict[str, str] = {}
         errors = errors if errors is not None else {}
+        self.http.anonymous_seen = False
         for i in range(0, len(keys), JIRA_SEARCH_BATCH):
             self._batch(keys[i:i + JIRA_SEARCH_BATCH], result, errors, should_stop)
+        # с просроченной сессией Jira отвечает анонимному пользователю: задачи «не находятся», а ошибки нет
+        if keys and (not result or self.http.anonymous_seen):
+            self._check_user()
         return result
+
+    def _check_user(self) -> None:
+        """Jira узнаёт пользователя; иначе — ошибка авторизации."""
+        self.http.anonymous_seen = False
+        self.http.call("GET", "/rest/api/2/myself")
+        if self.http.anonymous_seen:
+            raise TrackerError("Jira отвечает как анонимному пользователю — сессия истекла или авторизация не принята: "
+                               "%s" % self.http.auth.hint, "auth")
 
     def _batch(self, batch: List[str], result: Dict[str, str], errors: Dict[str, str],
                should_stop: Optional[Callable[[], bool]]) -> None:
@@ -477,7 +493,7 @@ class JiraTracker(TrackerAdapter):
                 errors[key] = "Задача %s не найдена в Jira (удалена, перенесена или нет доступа)" % key
 
     def check(self) -> None:
-        self.http.call("GET", "/rest/api/2/myself")
+        self._check_user()
         try:
             self.http.call("GET", "/rest/api/2/project/" + urllib.parse.quote(self.cfg["project"], safe=""))
         except TrackerError as e:

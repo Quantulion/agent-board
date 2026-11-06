@@ -1917,6 +1917,61 @@ def test_sync__missing_issue_in_jira__others_still_sync(server, jira, clock):
     assert [e["key"] for e in state["errors"]] == ["A"] and "MNZ-1" in state["errors"][0]["error"]
 
 
+@pytest.mark.parametrize("mode", ["header", "silent"])
+def test_sync__jira_answers_as_anonymous__pauses_as_auth_error(server, jira, clock, mode):
+    # arrange: просроченная cookie — Jira отвечает 200, но как анонимному пользователю
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    jira.anonymous = mode
+    clock.now += 30
+    # act
+    sync.tick()
+    count = len(jira.requests)
+    clock.now += 30
+    sync.tick()
+    # assert
+    state = sync_state(server)
+    assert state["ok"] is False and state["paused"] is True and "авторизац" in state["error"]
+    assert jira.calls("GET", "/rest/api/2/myself") and len(jira.requests) == count
+    assert task_status(server, "A") == "not_started"
+
+
+def test_sync__all_issues_missing_but_user_known__not_paused(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    jira.statuses.clear()
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    state = sync_state(server)
+    assert jira.calls("GET", "/rest/api/2/myself")
+    assert state["ok"] is True and state["paused"] is False and sorted(e["key"] for e in state["errors"]) == ["A", "B"]
+
+
+def test_sync__some_issues_found__does_not_ask_who_am_i(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    del jira.statuses["MNZ-1"]
+    clock.now += 30
+    # act
+    sync.tick()
+    # assert
+    assert not jira.calls("GET", "/rest/api/2/myself")
+
+
+def test_check__jira_anonymous_header__is_auth_error(server, jira):
+    # arrange
+    with_jira(server, jira)
+    jira.anonymous = "header"
+    # act
+    r = post(server, "/api/p/pay/tracker/check", {"actor": "user"}).json()
+    # assert
+    assert r["ok"] is False and r["kind"] == "auth"
+
+
 def test_sync__jira_rejects_batch__retries_per_key(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)
