@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .config import ProjectConfig, clean_links
+from .messages import msg
 from .model import Event, Message, Proposal, Task
 
 PROJECT_THREAD = "_project"
@@ -17,7 +18,7 @@ _IDENT_RE = re.compile(r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}")
 
 def _check_ident(value: str, what: str) -> str:
     if not isinstance(value, str) or not _IDENT_RE.fullmatch(value) or ".." in value:
-        raise ValueError("Недопустимый идентификатор (%s): %r" % (what, value))
+        raise ValueError(msg("board.bad_ident", what=msg(what), value=value))
     return value
 
 
@@ -82,7 +83,7 @@ def _append_jsonl(path: Path, obj) -> None:
 
 class ProjectStore:
     def __init__(self, slug: str):
-        self.slug = _check_ident(slug, "проект")
+        self.slug = _check_ident(slug, "board.ident_project")
         self.root = board_home() / "projects" / slug
         self._last_seq = None
         self._thread_cache: dict = {}
@@ -91,7 +92,7 @@ class ProjectStore:
         # на регистрозависимой ФС иначе появились бы два проекта, неразличимые для пользователя
         clash = [p for p in list_projects() if p.lower() == self.slug.lower()]
         if clash:
-            raise FileExistsError("Проект уже существует: %s" % clash[0])
+            raise FileExistsError(msg("board.project_exists", slug=clash[0]))
         self.root.mkdir(parents=True, exist_ok=False)
         (self.root / "tasks").mkdir()
         (self.root / "threads").mkdir()
@@ -115,17 +116,18 @@ class ProjectStore:
         return result
 
     def save_task(self, t: Task) -> None:
-        atomic_write_json(self.root / "tasks" / (_check_ident(t.key, "задача") + ".json"), t.to_dict())
+        atomic_write_json(self.root / "tasks" / (_check_ident(t.key, "board.ident_task") + ".json"), t.to_dict())
 
     def append_message(self, thread: str, m: Message) -> None:
-        _append_jsonl(self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl"), m.to_dict())
+        _append_jsonl(self.root / "threads" / (_check_ident(thread, "board.ident_thread") + ".jsonl"), m.to_dict())
 
     def read_thread(self, thread: str) -> List[Message]:
-        return [Message.from_dict(d) for d in _read_jsonl(self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl"))]
+        path = self.root / "threads" / (_check_ident(thread, "board.ident_thread") + ".jsonl")
+        return [Message.from_dict(d) for d in _read_jsonl(path)]
 
     def thread_summary(self, thread: str) -> Tuple[int, Optional[Message]]:
         """Число сообщений треда и последнее сообщение; файл перечитывается, только если он изменился."""
-        path = self.root / "threads" / (_check_ident(thread, "тред") + ".jsonl")
+        path = self.root / "threads" / (_check_ident(thread, "board.ident_thread") + ".jsonl")
         try:
             st = path.stat()
         except FileNotFoundError:

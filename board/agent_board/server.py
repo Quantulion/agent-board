@@ -18,6 +18,7 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import __version__, tracker
 from .board import Board, ConfigConflict, new_task_from_dict
+from .messages import LANG_HEADER, localize, msg, normalize, reason
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
@@ -132,9 +133,9 @@ class _Hub:
         try:
             store = ProjectStore(slug)
         except ValueError:
-            raise KeyError("Неизвестный проект: %s" % slug)
+            raise KeyError(msg("api.unknown_project", slug=slug))
         if not (store.root / "project.json").is_file():
-            raise KeyError("Неизвестный проект: %s" % slug)
+            raise KeyError(msg("api.unknown_project", slug=slug))
         with self._lock:
             if slug not in self._boards:
                 board = Board(store, on_event=lambda e, s=slug: self._notify(s, e))
@@ -179,7 +180,7 @@ class _Hub:
 
 def _need(body: dict, name: str):
     if name not in body:
-        raise ValueError("Не указано поле: %s" % name)
+        raise ValueError(msg("api.missing_field", name=name))
     return body[name]
 
 
@@ -210,6 +211,8 @@ class _Handler(BaseHTTPRequestHandler):
         self._dispatch("POST")
 
     def _send_json(self, status: int, obj, extra_headers: Optional[List[Tuple[str, str]]] = None) -> None:
+        # сообщения доски уходят на языке, который запросил клиент
+        obj = localize(obj, normalize(self.headers.get(LANG_HEADER)))
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
         self._send_bytes(status, body, "application/json; charset=utf-8", extra_headers)
 
@@ -261,13 +264,13 @@ class _Handler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
         except ValueError as e:
-            self._send_json(400, {"error": str(e)})
+            self._send_json(400, {"error": reason(e)})
         except PermissionError as e:
-            self._send_json(403, {"error": str(e)})
+            self._send_json(403, {"error": reason(e)})
         except ConfigConflict as e:
-            self._send_json(409, {"error": str(e)})
+            self._send_json(409, {"error": reason(e)})
         except KeyError as e:
-            self._send_json(404, {"error": str(e.args[0]) if e.args else "not found"})
+            self._send_json(404, {"error": reason(e) if e.args else "not found"})
         except Exception:
             traceback.print_exc(file=sys.stderr)
             try:
@@ -303,18 +306,18 @@ class _Handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("Content-Length") or 0)
         except ValueError:
-            raise ValueError("Некорректный Content-Length")
+            raise ValueError(msg("api.bad_length"))
         if length < 0 or length > MAX_BODY:
-            raise ValueError("Слишком большое тело запроса")
+            raise ValueError(msg("api.body_too_large"))
         raw = self.rfile.read(length) if length else b""
         if not raw.strip():
             return {}
         try:
             body = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            raise ValueError("Некорректный JSON")
+            raise ValueError(msg("api.bad_json"))
         if not isinstance(body, dict):
-            raise ValueError("Тело запроса должно быть JSON-объектом")
+            raise ValueError(msg("api.body_not_object"))
         return body
 
     def _api(self, method: str, path: str, query: dict) -> None:
@@ -322,7 +325,7 @@ class _Handler(BaseHTTPRequestHandler):
         if method == "GET" and parts == ["projects"]:
             return self._send_json(200, {"projects": list_projects()})
         if len(parts) < 3 or parts[0] != "p":
-            raise KeyError("Неизвестный маршрут")
+            raise KeyError(msg("api.unknown_route"))
         board = self.app.hub.board(parts[1])
         rest = parts[2:]
         if method == "POST" and len(rest) == 3 and rest[0] == "locks":
@@ -337,7 +340,7 @@ class _Handler(BaseHTTPRequestHandler):
         if rest == ["config"]:
             # снимок тоже содержит настройки, но запрос настроек — действие пользователя; секретов в них нет
             if (query.get("actor") or [""])[0] != "user":
-                raise PermissionError("Настройки проекта читает только пользователь")
+                raise PermissionError(msg("api.config_read_user_only"))
             return self._send_json(200, {"config": board.store.load_config().to_dict()})
         if len(rest) == 2 and rest[0] == "threads":
             messages = board.store.read_thread(rest[1])
@@ -351,7 +354,7 @@ class _Handler(BaseHTTPRequestHandler):
             return self._send_json(200, {"events": [e.to_dict() for e in events]})
         if rest == ["stream"]:
             return self._stream(board, slug, query)
-        raise KeyError("Неизвестный маршрут")
+        raise KeyError(msg("api.unknown_route"))
 
     @staticmethod
     def _repo_path(config, task: Task) -> Optional[Path]:
@@ -367,7 +370,7 @@ class _Handler(BaseHTTPRequestHandler):
         empty = {"base": None, "files": [], "diff": "", "truncated": False}
         task = board.store.load_tasks().get(key)
         if task is None:
-            raise KeyError("Неизвестная задача: %s" % key)
+            raise KeyError(msg("board.unknown_task", key=key))
         if not task.worktree or not task.base_branch:
             return empty
         repo = self._repo_path(board.store.load_config(), task)
@@ -380,7 +383,7 @@ class _Handler(BaseHTTPRequestHandler):
             files = changed_files(path, task.base_branch)
             text = worktree_diff(path, task.base_branch)
         except GitError as e:
-            raise ValueError("Не удалось получить изменения: %s" % e)
+            raise ValueError(msg("api.diff_failed", error=reason(e)))
         raw = text.encode("utf-8")
         truncated = len(raw) > MAX_DIFF_BYTES
         if truncated:
@@ -397,7 +400,7 @@ class _Handler(BaseHTTPRequestHandler):
         """
         raw = (query.get("path") or [""])[0]
         if not raw:
-            raise ValueError("Не указан path")
+            raise ValueError(msg("api.no_path"))
         root = board.store.root.resolve()
         config = board.store.load_config()
         repos = [Path(r["path"]).resolve() for r in config.repos if isinstance(r, dict) and r.get("path")]
@@ -405,15 +408,15 @@ class _Handler(BaseHTTPRequestHandler):
         allowed = [root] + repos
         base = next((b for b in allowed if target == b or b in target.parents), None)
         if base is None:
-            raise PermissionError("Путь вне каталогов проекта")
+            raise PermissionError(msg("api.path_outside"))
         rel = [part.lower() for part in target.relative_to(base).parts]
         # внутренности git и логи агентов не отдаются; регистр не важен — ФС macOS к нему нечувствительна
         if ".git" in rel or (base == root and rel[:1] == ["logs"]):
-            raise PermissionError("Путь недоступен")
+            raise PermissionError(msg("api.path_unavailable"))
         if not target.is_file():
-            raise KeyError("Файл не найден")
+            raise KeyError(msg("api.file_not_found"))
         if target.stat().st_size > MAX_FILE_BYTES:
-            return self._send_json(413, {"error": "Файл больше %d МБ" % (MAX_FILE_BYTES // (1024 * 1024))})
+            return self._send_json(413, {"error": msg("api.file_too_large", mb=MAX_FILE_BYTES // (1024 * 1024))})
         body = target.read_bytes()
         if target.suffix.lower() in (".html", ".htm"):
             return self._send_bytes(200, body, "text/html; charset=utf-8", [
@@ -427,20 +430,20 @@ class _Handler(BaseHTTPRequestHandler):
             try:
                 result = max(result, int(raw))
             except ValueError:
-                raise ValueError("Некорректный since: %r" % raw)
+                raise ValueError(msg("api.bad_since", value=raw))
         return result
 
     def _api_lock(self, slug: str, resource: str, action: str) -> None:
         body = self._read_body()
         task, pid = _need(body, "task"), _need(body, "pid")
         if not isinstance(task, str) or not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
-            raise ValueError("task должен быть строкой, pid — положительным числом")
+            raise ValueError(msg("api.bad_lock_body"))
         queue = self.app.hub.queue(slug)
         if action == "release":
             queue.release(resource, task, pid)
             return self._send_json(200, {"position": None})
         if action not in ("acquire", "poll"):
-            raise KeyError("Неизвестный маршрут")
+            raise KeyError(msg("api.unknown_route"))
         position = getattr(queue, action)(resource, task, pid)
         self._send_json(200, {"position": position})
 
@@ -456,17 +459,17 @@ class _Handler(BaseHTTPRequestHandler):
         if rest == ["config"]:
             dry_run = body.get("dry_run", False)
             if not isinstance(dry_run, bool):
-                raise ValueError("dry_run должен быть true или false")
+                raise ValueError(msg("api.bad_dry_run"))
             return self._send_json(200, board.set_config(_need(body, "actor"), _need(body, "fields"), dry_run))
         if len(rest) == 3 and rest[0] == "threads" and rest[2] == "read":
             events = board.mark_read(rest[1])
         elif len(rest) == 3 and rest[0] == "threads" and rest[2] == "messages":
             author = _need(body, "author")
             if author not in MESSAGE_AUTHORS:
-                raise ValueError("Недопустимый автор: %r" % (author,))
+                raise ValueError(msg("api.bad_author", author=author))
             from_task = body.get("from_task")
             if from_task is not None and not isinstance(from_task, str):
-                raise ValueError("from_task должен быть строкой")
+                raise ValueError(msg("api.bad_from_task"))
             events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None)
         elif rest == ["stage"]:
             events = board.set_stage(_need(body, "stage"), _need(body, "actor"))
@@ -491,7 +494,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "deps":
             deps = _need(body, "deps")
             if not isinstance(deps, list):
-                raise ValueError("deps должен быть списком")
+                raise ValueError(msg("api.bad_deps"))
             events = board.set_deps(rest[1], deps, _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "questions":
             events = board.ask(rest[1], self._question(_need(body, "question")))
@@ -499,14 +502,14 @@ class _Handler(BaseHTTPRequestHandler):
         elif len(rest) == 5 and rest[0] == "tasks" and rest[2] == "questions" and rest[4] == "answer":
             choice, comment = body.get("choice"), body.get("comment")
             if choice is not None and not isinstance(choice, str):
-                raise ValueError("choice должен быть строкой или null")
+                raise ValueError(msg("api.bad_choice"))
             if comment is not None and not isinstance(comment, str):
-                raise ValueError("comment должен быть строкой")
+                raise ValueError(msg("api.bad_comment"))
             events = board.answer(rest[1], rest[3], choice, comment or "")
         elif rest == ["proposals"]:
             payload = _need(body, "payload")
             if not isinstance(payload, dict):
-                raise ValueError("payload должен быть объектом")
+                raise ValueError(msg("api.bad_payload"))
             events = board.propose(_need(body, "kind"), payload, str(body.get("reason") or ""))
             extra["proposal_id"] = _event_ids(events, "proposal_created", "id")
         elif len(rest) == 3 and rest[0] == "proposals" and rest[2] == "apply":
@@ -514,7 +517,7 @@ class _Handler(BaseHTTPRequestHandler):
         elif len(rest) == 3 and rest[0] == "proposals" and rest[2] == "reject":
             events = board.reject_proposal(rest[1])
         else:
-            raise KeyError("Неизвестный маршрут")
+            raise KeyError(msg("api.unknown_route"))
         payload = {"events": [e.to_dict() for e in events]}
         payload.update(extra)
         self._send_json(200, payload)
@@ -526,11 +529,11 @@ class _Handler(BaseHTTPRequestHandler):
     @staticmethod
     def _question(d) -> Question:
         if not isinstance(d, dict):
-            raise ValueError("question должен быть объектом")
+            raise ValueError(msg("api.bad_question_body"))
         try:
             return Question.from_dict(dict({"id": ""}, **d))
         except TypeError as e:
-            raise ValueError("Некорректный вопрос: %s" % e)
+            raise ValueError(msg("api.bad_question", error=e))
 
     # --- SSE ---
 
@@ -603,7 +606,7 @@ class BoardServer:
             running = read_discovery()
             if running is not None and _port_open(running.get("port")):
                 raise ServerAlreadyRunning(
-                    "Доска уже запущена (pid %s, порт %s)" % (running.get("pid"), running.get("port")))
+                    msg("life.already_running", pid=running.get("pid"), port=running.get("port")))
             self.token = _load_or_create_token(home / "token")
             httpd = self._bind()
         except BaseException:
@@ -663,7 +666,7 @@ class BoardServer:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             os.close(fd)
-            raise ServerAlreadyRunning("Доска уже запущена с этим каталогом: %s" % path.parent)
+            raise ServerAlreadyRunning(msg("life.already_running_home", path=path.parent))
         self._lock_fd = fd
 
     def _release_lock(self) -> None:

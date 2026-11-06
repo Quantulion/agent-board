@@ -152,6 +152,7 @@ def test_ready_task_starts_in_worktree_with_session(make_project, start_server, 
     bin_dir = store.root / "bin"
     assert env["AGENT_BOARD_TASK"] == "T-1" and env["AGENT_BOARD_PROJECT"] == "pay"
     assert env["AGENT_BOARD_ACTOR"] == "agent" and env["AGENT_BOARD_HOME"] == str(tmp_home)
+    assert env["AGENT_BOARD_LANG"] == "ru"
     assert env["PATH"].split(os.pathsep)[0] == str(bin_dir)
     assert (store.root / "logs" / "T-1.jsonl").is_file()
     snap = {x["key"]: x for x in srv.board_for("pay").snapshot()["tasks"]}

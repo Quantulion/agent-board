@@ -39,6 +39,12 @@ def real_board_home_untouched():
         pytest.fail("Тесты изменили настоящий %s: было %r, стало %r" % (root, before, after), pytrace=False)
 
 
+@pytest.fixture(autouse=True)
+def russian_messages(monkeypatch):
+    """Тексты сообщений в тестах сверяются по-русски; язык по умолчанию проверяют отдельные тесты."""
+    monkeypatch.setenv("AGENT_BOARD_LANG", "ru")
+
+
 @pytest.fixture
 def tmp_home(tmp_path, monkeypatch):
     monkeypatch.setenv("AGENT_BOARD_HOME", str(tmp_path))

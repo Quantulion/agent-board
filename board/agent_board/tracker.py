@@ -23,6 +23,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Union
 
+from .messages import Msg, clip, msg, reason
 from .model import Status, Task
 from .ship import order as dependency_order
 from .store import list_projects
@@ -120,86 +121,84 @@ def scrub(text: str, secrets: Iterable[Union[Secret, str]]) -> str:
 def _str_list(cfg: dict, name: str) -> None:
     value = cfg.get(name, [])
     if not isinstance(value, list) or not all(isinstance(x, str) for x in value):
-        raise ValueError("tracker.%s должен быть списком строк" % name)
+        raise ValueError(msg("tracker.str_list", name=name))
 
 
 def _required_str(cfg: dict, name: str) -> None:
     if not isinstance(cfg.get(name), str) or not cfg[name].strip():
-        raise ValueError("Не задано tracker.%s" % name)
+        raise ValueError(msg("tracker.missing", name=name))
 
 
 def _http_url(value: Any, name: str) -> None:
     parts = urllib.parse.urlsplit(value) if isinstance(value, str) else None
     if parts is None or parts.scheme not in ("http", "https") or not parts.hostname:
-        raise ValueError("tracker.%s должен быть http(s)-адресом" % name)
+        raise ValueError(msg("tracker.http_url", name=name))
     if "@" in parts.netloc:
-        raise ValueError("tracker.%s не должен содержать логин и пароль: секреты задаются через auth" % name)
+        raise ValueError(msg("tracker.url_credentials", name=name))
 
 
 def _validate_auth(auth: Any, kinds: tuple) -> None:
     if not isinstance(auth, dict) or auth.get("type") not in kinds:
-        raise ValueError("tracker.auth.type должен быть одним из: %s" % ", ".join(kinds))
+        raise ValueError(msg("tracker.auth_type", kinds=", ".join(kinds)))
     extra = set(auth) - set(AUTH_KEYS[auth["type"]])
     if extra:
-        raise ValueError("Недопустимые ключи tracker.auth: %s — секреты задаются только именем переменной "
-                         "окружения или путём к файлу" % ", ".join(sorted(map(str, extra))))
+        raise ValueError(msg("tracker.auth_extra", names=", ".join(sorted(map(str, extra)))))
     if auth["type"] == "token_env":
         if not isinstance(auth.get("env"), str) or not auth["env"].strip():
-            raise ValueError("Не задано tracker.auth.env — имя переменной окружения с токеном")
+            raise ValueError(msg("tracker.auth_env"))
         if auth.get("user_env") is not None and (not isinstance(auth["user_env"], str) or not auth["user_env"]):
-            raise ValueError("tracker.auth.user_env должен быть именем переменной окружения")
+            raise ValueError(msg("tracker.auth_user_env"))
     elif not isinstance(auth.get("path"), str) or not auth["path"].strip():
-        raise ValueError("Не задано tracker.auth.path — путь к файлу с cookie")
+        raise ValueError(msg("tracker.auth_path"))
 
 
 def _validate_template(template: Any) -> None:
     if not isinstance(template, str):
-        raise ValueError("tracker.title_template должен быть строкой")
+        raise ValueError(msg("tracker.title_template_str"))
     try:
         parsed = list(string.Formatter().parse(template))
     except ValueError as e:
-        raise ValueError("Некорректный tracker.title_template: %s" % e)
+        raise ValueError(msg("tracker.bad_title_template", error=e))
     for _, name, spec, conversion in parsed:
         if name is not None and (name not in TITLE_PLACEHOLDERS or spec or conversion):
-            raise ValueError("Неизвестный плейсхолдер в tracker.title_template: {%s}. Допустимы: {key}, {title}" % name)
+            raise ValueError(msg("tracker.title_placeholder", name=name))
 
 
 def _validate_statuses(statuses: Any) -> None:
     if not isinstance(statuses, dict):
-        raise ValueError("tracker.statuses должен быть объектом «статус трекера → статус доски»")
+        raise ValueError(msg("tracker.statuses_object"))
     for name, value in statuses.items():
         if value is not None and value not in SYNC_TARGETS:
-            raise ValueError("Недопустимый статус доски в tracker.statuses[%r]: %r. Допустимы: %s (одобрение ставит "
-                             "только пользователь)" % (name, value, ", ".join(SYNC_TARGETS)))
+            raise ValueError(msg("tracker.bad_status", name=name, value=value, allowed=", ".join(SYNC_TARGETS)))
 
 
 def validate_config(cfg: Any) -> None:
     """Проверяет настройки трекера; секреты в них хранить нельзя."""
     if not isinstance(cfg, dict) or cfg.get("type") not in TYPES:
-        raise ValueError("tracker.type должен быть одним из: %s" % ", ".join(TYPES))
+        raise ValueError(msg("tracker.type", types=", ".join(TYPES)))
     kind = cfg["type"]
     if kind == "none":
         return
     extra = set(cfg) - (JIRA_KEYS if kind == "jira" else GITHUB_KEYS)
     if extra:
-        raise ValueError("Недопустимые ключи tracker: %s" % ", ".join(sorted(map(str, extra))))
+        raise ValueError(msg("tracker.extra_keys", names=", ".join(sorted(map(str, extra)))))
     if kind == "jira":
         _http_url(cfg.get("url"), "url")
         _required_str(cfg, "project")
         _required_str(cfg, "issue_type")
         for name in ("epic", "epic_field", "link_type"):
             if cfg.get(name) is not None and not isinstance(cfg[name], str):
-                raise ValueError("tracker.%s должен быть строкой" % name)
+                raise ValueError(msg("tracker.field_str", name=name))
         _str_list(cfg, "components")
         path = cfg.get("jira_search_path")
         if path is not None and (not isinstance(path, str) or not re.fullmatch(r"/[A-Za-z0-9/_.-]*", path)):
-            raise ValueError("tracker.jira_search_path должен быть путём от адреса Jira, например /rest/api/2/search")
+            raise ValueError(msg("tracker.search_path"))
         if not isinstance(cfg.get("extra_fields", {}), dict):
-            raise ValueError("tracker.extra_fields должен быть объектом")
+            raise ValueError(msg("tracker.extra_fields"))
         _validate_auth(cfg.get("auth"), AUTH_TYPES["jira"])
     else:
         if not isinstance(cfg.get("repo"), str) or not _REPO.match(cfg["repo"]):
-            raise ValueError("tracker.repo должен быть в виде owner/name")
+            raise ValueError(msg("tracker.repo"))
         if cfg.get("api_url") is not None:
             _http_url(cfg["api_url"], "api_url")
         _validate_auth(cfg.get("auth"), AUTH_TYPES["github"])
@@ -208,7 +207,7 @@ def validate_config(cfg: Any) -> None:
     _validate_template(cfg.get("title_template", "{title}"))
     poll = cfg.get("poll_seconds")
     if poll is not None and (isinstance(poll, bool) or not isinstance(poll, (int, float)) or poll <= 0):
-        raise ValueError("tracker.poll_seconds должен быть положительным числом секунд")
+        raise ValueError(msg("tracker.poll_seconds"))
 
 
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
@@ -222,32 +221,30 @@ def insecure_warning(cfg: Any) -> Optional[str]:
     parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
     if parts is None or parts.scheme.lower() != "http" or (parts.hostname or "").lower() in LOCAL_HOSTS:
         return None
-    return ("Трекер %s доступен по http без шифрования: токен или cookie уходят открытым текстом — "
-            "используйте https" % parts.hostname)
+    return msg("tracker.insecure", host=parts.hostname)
 
 
 # --- авторизация ---
 
 class _Auth:
-    def __init__(self, headers: Dict[str, Secret], secrets: List[Secret], hint: str):
+    def __init__(self, headers: Dict[str, Secret], secrets: List[Secret], hint: Msg):
         self.headers = headers
         self.secrets = secrets
         self.hint = hint
 
 
-def _env(name: str, what: str) -> str:
+def _env(name: str, what: Msg) -> str:
     value = (os.environ.get(name) or "").strip()
     if not value:
-        raise TrackerError("Не задана переменная окружения %s (%s трекера)" % (name, what), "config")
-    _check_header_text(value, "переменной окружения %s" % name)
+        raise TrackerError(msg("tracker.env_missing", name=name, what=what), "config")
+    _check_header_text(value, msg("tracker.where_env", name=name))
     return value
 
 
-def _check_header_text(value: str, where: str) -> None:
+def _check_header_text(value: str, where: Msg) -> None:
     """Значение уходит в заголовок: управляющие и не латинские символы отвергаются, не показывая само значение."""
     if any(ord(c) < 0x20 or ord(c) == 0x7f or ord(c) > 0xff for c in value):
-        raise TrackerError("Недопустимые символы в %s (переводы строк, управляющие или не латинские символы)" % where,
-                           "config")
+        raise TrackerError(msg("tracker.bad_chars", where=where), "config")
 
 
 def _load_auth(auth: dict, kind: str) -> _Auth:
@@ -256,18 +253,18 @@ def _load_auth(auth: dict, kind: str) -> _Auth:
         try:
             lines = path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
-            raise TrackerError("Не удалось прочитать файл с cookie трекера: %s" % auth["path"], "config") from None
+            raise TrackerError(msg("tracker.cookie_unreadable", path=auth["path"]), "config") from None
         cookie = "; ".join(line.strip().rstrip(";").strip() for line in lines if line.strip())
         if not cookie:
-            raise TrackerError("Файл с cookie трекера пуст: %s" % auth["path"], "config")
-        _check_header_text(cookie, "файле с cookie %s" % auth["path"])
+            raise TrackerError(msg("tracker.cookie_empty", path=auth["path"]), "config")
+        _check_header_text(cookie, msg("tracker.where_cookie", path=auth["path"]))
         parts = [p.partition("=")[2].strip() for p in cookie.split(";")]
         return _Auth({"Cookie": Secret(cookie)}, [Secret(cookie)] + [Secret(p) for p in parts if p],
-                     "проверьте cookie в файле %s" % auth["path"])
-    token = _env(auth["env"], "токен")
-    hint = "проверьте токен в переменной окружения %s" % auth["env"]
+                     msg("tracker.hint_cookie", path=auth["path"]))
+    token = _env(auth["env"], msg("tracker.what_token"))
+    hint = msg("tracker.hint_token", name=auth["env"])
     if kind == "jira" and auth.get("user_env"):
-        user = _env(auth["user_env"], "пользователь")
+        user = _env(auth["user_env"], msg("tracker.what_user"))
         encoded = base64.b64encode(("%s:%s" % (user, token)).encode("utf-8")).decode("ascii")
         return _Auth({"Authorization": Secret("Basic " + encoded)}, [Secret(token), Secret(encoded)], hint)
     return _Auth({"Authorization": Secret("Bearer " + token)}, [Secret(token)], hint)
@@ -331,11 +328,16 @@ class _Http:
     def scrub(self, text: str) -> str:
         return scrub(text, self.auth.secrets)
 
-    def _fail(self, message: str, kind: str, redirect: bool = False) -> TrackerError:
-        text = self.scrub(message)
-        if len(text) > MAX_MESSAGE_CHARS:
-            text = text[:MAX_MESSAGE_CHARS] + "…"
-        return TrackerError(text, kind, redirect)
+    def _fail(self, message: Msg, kind: str, redirect: bool = False) -> TrackerError:
+        # вставки из ответа трекера очищаются от секретов и обрезаются, текст каталога секретов не содержит
+        params = {}
+        for name, value in message.params.items():
+            if isinstance(value, str) and not isinstance(value, Msg):
+                value = self.scrub(value)
+                if len(value) > MAX_MESSAGE_CHARS:
+                    value = value[:MAX_MESSAGE_CHARS] + "…"
+            params[name] = value
+        return TrackerError(msg(message.key, **params), kind, redirect)
 
     def call(self, method: str, path: str, body: Any = None) -> Any:
         headers = dict(self.headers, Accept="application/json")
@@ -356,48 +358,46 @@ class _Http:
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):
                 raise self._timeout() from None
-            raise self._fail("Нет связи с трекером %s: %s" % (self.base, e.reason), "network") from None
+            raise self._fail(msg("tracker.no_connection", base=self.base, reason=str(e.reason)), "network") from None
         except socket.timeout:
             raise self._timeout() from None
         except (OSError, http.client.HTTPException) as e:
-            raise self._fail("Нет связи с трекером %s: %s" % (self.base, type(e).__name__ if not str(e) else e),
+            raise self._fail(msg("tracker.no_connection", base=self.base, reason=str(e) or type(e).__name__),
                              "network") from None
         except ValueError:
             # текст такой ошибки содержит значение заголовка — не показываем его
-            raise TrackerError("Некорректный запрос к трекеру: проверьте адрес и %s" % self.auth.hint,
-                               "config") from None
+            raise TrackerError(msg("tracker.bad_request", hint=self.auth.hint), "config") from None
         if not raw.strip():
             return None
         try:
             return json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
-            raise self._fail("Трекер вернул ответ не в JSON (%s %s)" % (method, path), "error") from None
+            raise self._fail(msg("tracker.not_json", method=method, path=path), "error") from None
 
     def _timeout(self) -> TrackerError:
-        return self._fail("Трекер не ответил за %g с" % TIMEOUT, "network")
+        return self._fail(msg("tracker.timeout", seconds=TIMEOUT), "network")
 
     def object(self, method: str, path: str) -> dict:
         """Ответ, который должен быть JSON-объектом."""
         data = self.call(method, path)
         if not isinstance(data, dict):
-            raise TrackerError("Трекер вернул неожиданный ответ (%s %s)" % (method, path.split("?")[0]), "validation")
+            raise TrackerError(msg("tracker.unexpected", method=method, path=path.split("?")[0]), "validation")
         return data
 
     def _http_error(self, code: int, raw: bytes) -> TrackerError:
         message = _tracker_message(raw)
         detail = (": " + message) if message else ""
         if code in (401, 403):
-            return self._fail("Трекер отклонил авторизацию (HTTP %d): %s%s" % (code, self.auth.hint, detail), "auth")
+            return self._fail(msg("tracker.auth_rejected", code=code, hint=self.auth.hint, detail=detail), "auth")
         if 300 <= code < 400:
-            return self._fail("Трекер перенаправил запрос (HTTP %d) — проверьте адрес трекера и авторизацию: %s"
-                              % (code, self.auth.hint), "auth", redirect=True)
+            return self._fail(msg("tracker.redirect", code=code, hint=self.auth.hint), "auth", redirect=True)
         if code == 404:
-            return self._fail("Не найдено в трекере (HTTP 404)%s" % detail, "not_found")
+            return self._fail(msg("tracker.not_found", detail=detail), "not_found")
         if code in (400, 409, 422):
-            return self._fail("Трекер отклонил запрос (HTTP %d)%s" % (code, detail), "validation")
+            return self._fail(msg("tracker.rejected", code=code, detail=detail), "validation")
         if code == 429 or code >= 500:
-            return self._fail("Трекер временно недоступен (HTTP %d), повторите позже" % code, "retryable")
-        return self._fail("Ошибка трекера (HTTP %d)%s" % (code, detail), "error")
+            return self._fail(msg("tracker.unavailable", code=code), "retryable")
+        return self._fail(msg("tracker.http_error", code=code, detail=detail), "error")
 
 
 # --- адаптеры ---
@@ -441,7 +441,7 @@ class TrackerAdapter:
 
 class NoneTracker(TrackerAdapter):
     def _none(self, *args, **kwargs):
-        raise TrackerError("В проекте не настроен трекер (tracker.type = none)", "config")
+        raise TrackerError(msg("tracker.not_configured"), "config")
 
     create_issue = link = get_statuses = check = _none
 
@@ -473,7 +473,7 @@ class JiraTracker(TrackerAdapter):
         result = self.http.call("POST", "/rest/api/2/issue", {"fields": fields})
         key = result.get("key") if isinstance(result, dict) else None
         if not isinstance(key, str) or not key:
-            raise TrackerError("Jira не вернула ключ созданной задачи", "error")
+            raise TrackerError(msg("tracker.jira_no_key"), "error")
         return {"key": key, "url": "%s/browse/%s" % (self.base, key)}
 
     def link(self, blocker_key: str, blocked_key: str) -> None:
@@ -501,8 +501,7 @@ class JiraTracker(TrackerAdapter):
         self.http.anonymous_seen = False
         self.http.call("GET", "/rest/api/2/myself")
         if self.http.anonymous_seen:
-            raise TrackerError("Jira отвечает как анонимному пользователю — сессия истекла или авторизация не принята: "
-                               "%s" % self.http.auth.hint, "auth")
+            raise TrackerError(msg("tracker.jira_anonymous", hint=self.http.auth.hint), "auth")
 
     def _batch(self, batch: List[str], result: Dict[str, str], errors: Dict[str, str],
                should_stop: Optional[Callable[[], bool]]) -> None:
@@ -521,13 +520,13 @@ class JiraTracker(TrackerAdapter):
                 for key in batch:
                     self._batch([key], result, errors, should_stop)
             else:
-                errors[batch[0]] = str(e)
+                errors[batch[0]] = reason(e)
             return
         if not isinstance(data, dict):
-            raise TrackerError("Трекер вернул неожиданный ответ (GET %s)" % JIRA_SEARCH_PATH, "validation")
+            raise TrackerError(msg("tracker.unexpected", method="GET", path=JIRA_SEARCH_PATH), "validation")
         issues = data.get("issues") or []
         if not isinstance(issues, list):
-            raise TrackerError("Jira вернула неожиданный ответ поиска", "validation")
+            raise TrackerError(msg("tracker.jira_search"), "validation")
         for issue in issues:
             fields = issue.get("fields") if isinstance(issue, dict) else None
             status = fields.get("status") if isinstance(fields, dict) else None
@@ -536,7 +535,7 @@ class JiraTracker(TrackerAdapter):
                 result[issue["key"]] = name
         for key in batch:
             if key not in result and key not in errors:
-                errors[key] = "Задача %s не найдена в Jira (удалена, перенесена или нет доступа)" % key
+                errors[key] = msg("tracker.jira_issue_missing", key=key)
 
     def check(self) -> None:
         self._check_user()
@@ -544,7 +543,7 @@ class JiraTracker(TrackerAdapter):
             self.http.call("GET", "/rest/api/2/project/" + urllib.parse.quote(self.cfg["project"], safe=""))
         except TrackerError as e:
             if e.kind == "not_found":
-                raise TrackerError("Проект %s не найден в Jira или нет доступа к нему" % self.cfg["project"],
+                raise TrackerError(msg("tracker.jira_project_missing", project=self.cfg["project"]),
                                    "not_found") from None
             raise
 
@@ -560,7 +559,7 @@ class GitHubTracker(TrackerAdapter):
 
     def _number(self, key: str) -> int:
         if not re.fullmatch(r"#\d+", key or ""):
-            raise TrackerError("Некорректный ключ задачи GitHub: %r" % key, "error")
+            raise TrackerError(msg("tracker.github_bad_key", key=key), "error")
         return int(key[1:])
 
     def create_issue(self, task: Task, dep_refs: Iterable[str] = ()) -> Dict[str, str]:
@@ -570,7 +569,7 @@ class GitHubTracker(TrackerAdapter):
             "labels": list(self.cfg.get("labels") or []),
         })
         if not isinstance(result, dict) or not isinstance(result.get("number"), int):
-            raise TrackerError("GitHub не вернул номер созданной задачи", "error")
+            raise TrackerError(msg("tracker.github_no_number"), "error")
         return {"key": "#%d" % result["number"], "url": str(result.get("html_url") or "")}
 
     def link(self, blocker_key: str, blocked_key: str) -> None:
@@ -589,13 +588,13 @@ class GitHubTracker(TrackerAdapter):
             except TrackerError as e:
                 # проблема одной задачи (нет, удалена, перенесена, кривой ключ) не мешает остальным
                 if e.redirect or e.kind in ("not_found", "error"):
-                    errors[key] = str(e)
+                    errors[key] = reason(e)
                     continue
                 raise
             if isinstance(data.get("state"), str):
                 result[key] = data["state"]
             else:
-                errors[key] = "GitHub не вернул состояние задачи %s" % key
+                errors[key] = msg("tracker.github_no_state", key=key)
         return result
 
     def check(self) -> None:
@@ -603,8 +602,7 @@ class GitHubTracker(TrackerAdapter):
             self.http.call("GET", "/repos/" + self.repo)
         except TrackerError as e:
             if e.kind == "not_found":
-                raise TrackerError("Репозиторий %s не найден на GitHub или нет доступа к нему" % self.repo,
-                                   "not_found") from None
+                raise TrackerError(msg("tracker.github_repo_missing", repo=self.repo), "not_found") from None
             raise
 
 
@@ -641,13 +639,13 @@ def check(config) -> None:
 
 def check_access(board, actor: str) -> dict:
     """Проверка доступа по запросу пользователя: {ok, error, kind, warning}."""
-    _require_user(actor, "Проверяет доступ к трекеру только пользователь")
+    _require_user(actor, msg("tracker.check_user_only"))
     config = board.store.load_config()
     warning = insecure_warning(config.tracker)
     try:
         check(config)
     except TrackerError as e:
-        result = {"ok": False, "error": str(e), "kind": e.kind}
+        result = {"ok": False, "error": reason(e), "kind": e.kind}
     else:
         result = {"ok": True}
     if warning:
@@ -662,16 +660,16 @@ def create_issues(board, actor: str) -> dict:
     Возвращает {created: [{key, tracker_key, url}], linked: [[blocker, blocked]], errors: [{key, error}],
     warnings: [{key, warning}], events}.
     """
-    _require_user(actor, "Заводит задачи в трекере только пользователь")
+    _require_user(actor, msg("tracker.create_user_only"))
     config = board.store.load_config()
     if config.stage != "tracker":
-        raise ValueError("Задачи заводятся в трекере на стадии tracker (сейчас %s)" % config.stage)
+        raise ValueError(msg("tracker.wrong_stage", stage=config.stage))
     if not isinstance(config.tracker, dict) or config.tracker.get("type", "none") == "none":
-        raise ValueError("В проекте не настроен трекер (tracker.type = none)")
+        raise ValueError(msg("tracker.not_configured"))
     adapter = adapter_for(config.tracker)
     lock = _project_lock(board)
     if not lock.acquire(blocking=False):
-        raise ValueError("Задачи уже заводятся в трекере")
+        raise ValueError(msg("tracker.creating"))
     try:
         return _create(board, adapter)
     finally:
@@ -701,20 +699,19 @@ def _create(board, adapter: TrackerAdapter) -> dict:
         deps = [d for d in task.deps if d in tasks]
         missing = [d for d in deps if not tasks[d].tracker_key]
         if missing:
-            errors.append({"key": key, "error": "%s не заведена: сначала нужно завести %s" % (key, ", ".join(missing))})
+            errors.append({"key": key, "error": msg("tracker.dep_not_created", key=key, missing=", ".join(missing))})
             continue
         try:
             issue = adapter.create_issue(task, [tasks[d].tracker_key for d in deps])
         except TrackerError as e:
-            errors.append({"key": key, "error": str(e)})
+            errors.append({"key": key, "error": reason(e)})
             if e.kind in STOP_KINDS:
                 stopped = True
                 break
             continue
         url = issue["url"] if is_http_url(issue["url"]) else None
         if url is None:
-            warnings.append({"key": key, "warning": "Трекер вернул ссылку на задачу %s не по http(s): ссылка не сохранена"
-                                                    % issue["key"]})
+            warnings.append({"key": key, "warning": msg("tracker.bad_issue_url", key=issue["key"])})
         events.extend(board.update_task(key, "system", {"tracker_key": issue["key"], "tracker_url": url}))
         task.tracker_key, task.tracker_url = issue["key"], url
         created.append({"key": key, "tracker_key": issue["key"], "url": url})
@@ -733,7 +730,7 @@ def _create(board, adapter: TrackerAdapter) -> dict:
                 try:
                     adapter.link(tasks[dep].tracker_key, task.tracker_key)
                 except TrackerError as e:
-                    errors.append({"key": key, "error": "Связь %s → %s: %s" % (dep, key, e)})
+                    errors.append({"key": key, "error": msg("tracker.link_failed", dep=dep, key=key, error=reason(e))})
                     if e.kind in STOP_KINDS:
                         stopped = True
                         break
@@ -969,12 +966,12 @@ class TrackerSync:
 
     def sync_now(self, board, actor: str) -> dict:
         """Ручной запуск («Повторить сейчас»): один проход проекта сейчас, при успехе пауза снимается."""
-        _require_user(actor, "Запускает синхронизацию трекера только пользователь")
+        _require_user(actor, msg("tracker.sync_user_only"))
         config = board.store.load_config()
         if not isinstance(config.tracker, dict) or config.tracker.get("type", "none") == "none":
-            raise ValueError("В проекте не настроен трекер (tracker.type = none)")
+            raise ValueError(msg("tracker.not_configured"))
         if config.stage not in SYNC_STAGES:
-            raise ValueError("Статусы синхронизируются на стадиях work и done (сейчас %s)" % config.stage)
+            raise ValueError(msg("tracker.sync_stage", stage=config.stage))
         slug = board.store.root.name
         with self._project_lock(slug):
             return self._run(slug, board, config, self._clock())
@@ -991,18 +988,18 @@ class TrackerSync:
         except SyncStopped:
             return state
         except TrackerError as e:
-            self._fail(slug, state, str(e), e.kind in PAUSE_KINDS, now, interval)
+            self._fail(slug, state, reason(e), e.kind in PAUSE_KINDS, now, interval)
         except ValueError as e:
             # некорректные настройки трекера
-            self._fail(slug, state, str(e), True, now, interval)
+            self._fail(slug, state, reason(e), True, now, interval)
         except Exception as exc:
             print("tracker sync %s failed: %s" % (slug, type(exc).__name__), file=sys.stderr)
-            self._fail(slug, state, "Внутренняя ошибка синхронизации", False, now, interval)
+            self._fail(slug, state, msg("tracker.sync_internal"), False, now, interval)
         self._save(board, config, state, previous)
         return state
 
     def _fail(self, slug: str, state: dict, error: str, pause: bool, now: float, interval: float) -> None:
-        state["ok"], state["error"] = False, error[:MAX_MESSAGE_CHARS]
+        state["ok"], state["error"] = False, clip(error, MAX_MESSAGE_CHARS)
         failures = self._failures.get(slug, 0)
         if pause:
             state["paused"] = True
@@ -1050,7 +1047,7 @@ class TrackerSync:
                 try:
                     events = board.transition_if(key, task.status, Status(target), "tracker")
                 except (PermissionError, ValueError, KeyError) as e:
-                    state["errors"].append({"key": key, "error": str(e)[:MAX_MESSAGE_CHARS]})
+                    state["errors"].append({"key": key, "error": clip(reason(e), MAX_MESSAGE_CHARS)})
                     continue
                 if events:
                     state["changed"].append(key)
