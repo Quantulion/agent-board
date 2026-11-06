@@ -31,7 +31,8 @@ Never ask for a token, password or cookie value. Auth is configured only as an e
 Never read or print a secret file, and never call the tracker with the user's credentials yourself.
 If the user pastes a secret value anyway:
 - Do not use it in any command, file or setting, and do not repeat it back.
-- Say it was not saved and ask for an env var name or a file path instead.
+- Say it was not saved and ask for an env var name or a file path instead. Pasted as `NAME=value` → take `NAME`
+  as the env var name and do not ask for it again.
 - Recommend rotating the secret: it is now in the chat history.
 
 ## Questions, in order
@@ -85,7 +86,8 @@ Ask: none, Jira or GitHub Issues? Default none. Linear is not supported.
 agent-board --project <slug> config set --json '{"tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PRJ", "issue_type": "Task", "epic": "PRJ-1", "epic_field": "customfield_10007", "components": [], "labels": [], "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}}' --dry-run
 ```
 After saving run `agent-board --project <slug> tracker check`. On failure show the error and fix the setting;
-do not ask for the secret.
+do not ask for the secret. Env var missing in the server process → the user exports it in their shell profile;
+restart the board only on their yes (a restart stops agents in all projects).
 
 Status mapping (`statuses`): tracker status name → board status. Allowed targets: `not_started`, `in_progress`,
 `sent`, `done`, or null (known status, no move). Never map anything to `approved`: only the user approves.
@@ -131,6 +133,7 @@ Default: the language the user writes in (`ru`, `en`, …). It sets the board UI
 ## Finish
 
 Run `agent-board --project <slug> config validate` and give a short summary: what was set, what was skipped.
+Exit 0 = the saved config is valid; the printed `"saved": false` only means validate writes nothing.
 
 ## Common mistakes
 

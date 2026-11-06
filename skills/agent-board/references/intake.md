@@ -8,7 +8,7 @@ Turn the user's input into board tasks with dependencies. `<slug>` is the projec
 |---|---|
 | Plan or spec file (writing-plans, brainstorming, grilling output) | Read it whole. Decompose into tasks |
 | Free text in the chat | Same as a plan; ask about gaps before creating anything |
-| Ready list or table of tasks | Do not re-split. Keep the user's tasks, fill missing fields and dependencies |
+| Ready list or table of tasks | Do not re-split. Keep the user's tasks, fill missing fields and dependencies. No `done_when` → propose one from the text and list it as an open question; no estimate → open question only, not a violation |
 | Tracker keys (`PRJ-123`) | Treat as ready tasks; read their text only from what the user gives you |
 
 Tracker keys are not a board field you can set: the board links tasks to the tracker itself at the tracker stage.
@@ -20,12 +20,12 @@ Put the key in the description (`Tracker: PRJ-123`) and tell the user linking ha
 
 | Field | Rule |
 |---|---|
-| `key` | `<PREFIX>-<n>`: PREFIX is a short upper-case form of the slug (`PAY`), or the prefix existing tasks use. Unique, never starts with `_` |
+| `key` | `<PREFIX>-<n>`: PREFIX is the upper-cased first word of the slug, max 6 letters (`items-cli` → `ITEMS`, `input-pipeline` → `INPUT`), or the prefix existing tasks use; the user may override. Unique, never starts with `_` |
 | `title` | What the task delivers, ≤ 80 characters, imperative ("Add PG schema for payments") |
 | `description` | What to do: scope, files or components, decisions from the plan that apply. Enough for an agent who has not read the plan |
 | `done_when` | A checkable criterion: tests pass, endpoint returns X, report answers Y. Not "done" or "implemented" |
 | `repo` | One `name` from `config get --json` → `repos`. A task touching two repos is two tasks |
-| `kind` | `code`, or `research` when the result is a report, not a change |
+| `kind` | `code`, or `research` when the result is a report, not a change. Research tasks still need a `repo` (they run in a worktree): ask for one at intake |
 | `estimate` | Days, a number, only if the plan gives one. Otherwise omit |
 | `deps` | Keys of tasks whose code or result this task needs. Order of work alone is not a dependency |
 
@@ -44,7 +44,8 @@ One task = one reviewable, deployable unit. Follow the project's `decomposition_
    in the final summary.
 3. Show the user a compact table (key, title, repo, deps, estimate) and get a yes before writing.
    More than 15 tasks: group the table by repo or plan section.
-4. Create new tasks in topological order (dependencies first), one call each. Many tasks: chain the calls in one
+4. `add-task` prints an `agent_wake reason=ready` event: before approval it is only queued, no agent runs.
+   Create new tasks in topological order (dependencies first), one call each. Many tasks: chain the calls in one
    shell command with `&&`, still in topological order, so the first error stops the rest:
 ```
 agent-board --project <slug> add-task --json '{"key": "PAY-2", "title": "Add PG schema for payments", "description": "Tables payments, refunds; migrations only.", "done_when": "Migrations apply to an empty database in tests", "repo": "api", "kind": "code", "estimate": 2, "deps": ["PAY-1"]}'
