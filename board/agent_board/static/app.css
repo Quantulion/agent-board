@@ -785,15 +785,20 @@ span.chip.trk { font-family: var(--mono); font-size: 11px; }
 
 .cmd { margin: 0; padding: 8px 10px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 8px; font-family: var(--mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
 .cmd .ph { color: var(--s-sent); font-weight: 600; }
-.shipvals { grid-template-columns: 80px minmax(0, 1fr); font-size: 12.5px; }
+.shipvals { grid-template-columns: 90px minmax(0, 1fr); font-size: 12.5px; }
+.shipvals dt { font-size: 12px; }
 .modal.shipmodal { width: min(720px, calc(100vw - 32px)); }
 .shiplist { display: grid; gap: 6px; }
-.shiprow { display: grid; grid-template-columns: 18px auto minmax(0, 1fr); gap: 4px 10px; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: 13px; cursor: pointer; }
+.shiprow { display: grid; gap: 4px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface); font-size: 13px; }
 .shiprow.off { opacity: .5; }
-.shiprow input { margin: 0; accent-color: var(--s-approved); }
-.shiprow .k { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.shiprow .shead { display: flex; gap: 10px; align-items: center; min-width: 0; cursor: pointer; }
+.shiprow input { margin: 0; accent-color: var(--s-approved); flex: none; }
+.shiprow .k { font-family: var(--mono); font-size: 11.5px; color: var(--muted); flex: none; }
 .shiprow .tt { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.shiprow .res { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 12px; min-width: 0; }
+.shiprow .res, .shiprow .vals { margin-left: 28px; }
+.shiprow .res { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; font-size: 12px; min-width: 0; }
+.shiprow .vals summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+.shiprow .vals .kv { margin-top: 6px; }
 .shiprow .res:empty { display: none; }
 .shiprow .res details { flex-basis: 100%; }
 .shipst { font-weight: 600; font-size: 12px; }

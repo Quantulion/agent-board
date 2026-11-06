@@ -161,11 +161,16 @@ export function mountTrackerSync(ctx, store) {
   const tick = setInterval(paint, TICK_MS);
   const refresh = setInterval(() => { if (model() && store.refresh && document.visibilityState !== 'hidden') store.refresh(); }, SYNC_REFRESH_MS);
   paint();
+  let opening = null;
   return {
     el,
     // открытие из другого места по клику: тот же клик, дойдя до документа, не должен сразу закрыть окно
-    open: () => setTimeout(() => setOpen(true)),
+    open: () => {
+      clearTimeout(opening);
+      opening = setTimeout(() => setOpen(true));
+    },
     destroy() {
+      clearTimeout(opening);
       unsubscribe();
       clearInterval(tick);
       clearInterval(refresh);
@@ -177,6 +182,9 @@ export function mountTrackerSync(ctx, store) {
 
 // --- заведение задач на стадии «Трекер» ---
 
+// Последний итог заведения и идущий запрос по проекту: переживают уход со страницы доски и возврат на неё.
+const creations = new Map();
+
 export function mountTrackerStage(ctx, store) {
   const lead = h('p', { class: 'lead' });
   const createBtn = h('button', { class: 'btn primary sm', type: 'button', 'data-tracker': 'create', onclick: create });
@@ -185,8 +193,11 @@ export function mountTrackerStage(ctx, store) {
   const el = h('div', { class: 'tstage', hidden: true },
     h('div', { class: 'trow' }, icon('sync'), lead, h('span', { class: 'grow' }), checkBtn, createBtn), result);
   let busy = null;
+  let alive = true;
+  const saved = () => creations.get(ctx.slug) || {};
 
   function paint() {
+    if (!alive) return;
     const snap = store.get().snapshot;
     const info = snap && trackerInfo(snap.config);
     el.hidden = !info || snap.config.stage !== 'tracker';
@@ -223,19 +234,28 @@ export function mountTrackerStage(ctx, store) {
     result.hidden = false;
   }
 
-  async function create() {
-    if (busy) return;
+  // ждёт идущее заведение (своё или начатое до возврата на страницу) и показывает его итог
+  async function follow(pending) {
     busy = 'create';
     paint();
-    try {
-      // заведение идёт столько, сколько отвечает трекер: свой таймаут у браузера не ставим
-      showResult(await ctx.client.post('/tracker/create', { actor: 'user' }));
-    } catch (err) {
-      showResult({ errors: [{ key: '', error: (err && err.message) || String(err) }] });
-    } finally {
-      busy = null;
-      paint();
-    }
+    const res = await pending;
+    if (!alive) return;
+    busy = null;
+    showResult(res);
+    paint();
+  }
+
+  function create() {
+    if (busy || saved().pending) return;
+    // заведение идёт столько, сколько отвечает трекер: свой таймаут у браузера не ставим
+    const pending = ctx.client.post('/tracker/create', { actor: 'user' })
+      .catch(err => ({ errors: [{ key: '', error: (err && err.message) || String(err) }] }))
+      .then(res => {
+        creations.set(ctx.slug, { result: res, pending: null });
+        return res;
+      });
+    creations.set(ctx.slug, { ...saved(), pending });
+    follow(pending);
   }
 
   async function check() {
@@ -256,6 +276,14 @@ export function mountTrackerStage(ctx, store) {
   }
 
   const unsubscribe = store.subscribe(paint);
-  paint();
-  return { el, destroy: unsubscribe };
+  if (saved().result) showResult(saved().result);
+  if (saved().pending) follow(saved().pending);
+  else paint();
+  return {
+    el,
+    destroy() {
+      alive = false;
+      unsubscribe();
+    },
+  };
 }

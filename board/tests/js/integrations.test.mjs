@@ -240,3 +240,54 @@ test('cardModel: чипы ревью, отправки и ключ трекер�
   assert.deepEqual(m.ship, { text: 'отправка не удалась', cls: 'err' });
   assert.deepEqual(m.tracker, { key: 'MNZ-7', url: 'https://j/browse/MNZ-7' });
 });
+
+// --- исправления ревью ---
+
+import { shipValues } from '../../agent_board/static/js/ship.js';
+import { stateClass } from '../../agent_board/static/js/review.js';
+
+test('shipValues: значения всех плейсхолдеров шаблона, {base} — ветка единственной неотправленной зависимости', () => {
+  // arrange
+  const cfg = { repos: [{ name: 'api', path: '/src/api', base: 'master' }],
+    ship: { command: 'gh pr create -H {branch} -B {base} -t {title} -R {repo} # {key} {worktree} {base}' } };
+  const a = task('A', { status: 'approved', branch: 'A', worktree: '/wt/A' });
+  const b = task('B', { status: 'approved', deps: ['A'], branch: 'B', worktree: '/wt/B', title: 'Чтение' });
+  const s = snap([a, b], cfg);
+  // act
+  const vb = shipValues(s, b);
+  // assert
+  assert.equal(vb.error, null);
+  assert.deepEqual(vb.values.map(v => [v.ph, v.value]), [
+    ['{branch}', 'B'], ['{base}', 'A'], ['{title}', 'Чтение'], ['{repo}', '/src/api'], ['{key}', 'B'], ['{worktree}', '/wt/B'],
+  ]);
+  assert.equal(shipValues(s, a).values.find(v => v.ph === '{base}').value, 'master', 'без зависимостей — база репозитория');
+  const sentDep = snap([{ ...a, status: 'sent' }, b], cfg);
+  assert.equal(shipValues(sentDep, b).values.find(v => v.ph === '{base}').value, 'A', 'отправленная, но не влитая зависимость — тоже база');
+  const doneDep = snap([{ ...a, status: 'done' }, b], cfg);
+  assert.equal(shipValues(doneDep, b).values.find(v => v.ph === '{base}').value, 'master');
+  assert.equal(shipValues(snap([a, b], { ...cfg, chains: false }), b).values.find(v => v.ph === '{base}').value, 'master');
+  const two = snap([a, task('C', { status: 'approved', branch: 'C' }), { ...b, deps: ['A', 'C'] }], cfg);
+  assert.match(shipValues(two, { ...b, deps: ['A', 'C'] }).error, /A, C/);
+});
+
+test('отправка одной задачи недоступна, пока не отправлена одобренная зависимость; есть переход к пакетной', () => {
+  const a = task('A', { status: 'approved' });
+  const b = task('B', { status: 'approved', deps: ['A'] });
+  const s = snap([a, b]);
+  const ship = cardActions(b, s).find(x => x.id === 'ship');
+  assert.equal(ship.enabled, false);
+  assert.equal(ship.title, 'сначала отправьте A');
+  assert.ok(actionIds(b, s).includes('ship-batch'));
+  assert.ok(!actionIds(a, s).includes('ship-batch'));
+  assert.equal(cardActions(a, s).find(x => x.id === 'ship').enabled, true);
+});
+
+test('reviewChip: «одобрено» и без данных ревью', () => {
+  assert.deepEqual(reviewChip(task('A', { status: 'approved' })), { text: 'одобрено', cls: 'ok' });
+});
+
+test('stateClass: в класс попадают только известные состояния', () => {
+  assert.equal(stateClass('open'), 'open');
+  assert.equal(stateClass('x" onclick'), '');
+  assert.equal(stateClass(null), '');
+});

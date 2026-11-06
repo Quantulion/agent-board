@@ -10,6 +10,11 @@ import { confirmDialog, toast } from './ui.js';
 // Ссылка открывается, только если это абсолютный адрес http(s).
 export const httpUrl = url => (typeof url === 'string' && /^https?:\/\//i.test(url.trim()) ? safeUrl(url) : null);
 
+// Состояния ревью и отправки, которые могут попасть в имя класса; остальное от сервера в разметку не идёт.
+const KNOWN_STATES = new Set(['idle', 'open', 'changes', 'fixing', 'approved',
+  'queued', 'running', 'done', 'error', 'skipped', 'interrupted', 'cancelled']);
+export const stateClass = state => (KNOWN_STATES.has(state) ? state : '');
+
 export const reviewTool = snapshot => {
   const review = snapshot && snapshot.config && snapshot.config.review;
   return review && review.tool === 'none' ? 'none' : 'crit';
@@ -32,8 +37,8 @@ export function reviewOf(task) {
 export function reviewChip(task) {
   const status = statusOf(task);
   const r = reviewOf(task);
-  if (!r || (status !== 'in_review' && status !== 'approved')) return null;
-  if (status === 'approved') return r.state === 'approved' ? { text: T.review.chipApproved, cls: 'ok' } : null;
+  if (status === 'approved') return { text: T.review.chipApproved, cls: 'ok' };
+  if (!r || status !== 'in_review') return null;
   if (r.state === 'idle') return r.error ? { text: T.review.chipError, cls: 'err' } : null;
   const label = T.review.chip[r.state];
   if (!label || !r.round) return null;

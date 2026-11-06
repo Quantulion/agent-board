@@ -4,7 +4,7 @@ import { statusOf } from './chips.js';
 import { h, icon } from './dom.js';
 import { T } from './i18n.js';
 import { region, sec } from './pane-kit.js';
-import { approveTask, returnDialog, reviewOf, reviewTool } from './review.js';
+import { approveTask, returnDialog, reviewOf, reviewTool, stateClass } from './review.js';
 import { formatTime } from './thread.js';
 
 export function reviewPane(pc) {
@@ -29,9 +29,9 @@ function current(r, status, tool) {
   if (tool === 'none' && !r) return null;
   if (!r) return sec(T.card.reviewTitle, h('p', { class: 'muted' }, status === 'in_review' ? T.review.stateHint.idle : T.review.notYet));
   const label = T.review.state[r.state] || r.state;
-  return h('section', { class: 'sec rvcur st-' + r.state },
+  return h('section', { class: 'sec rvcur' },
     h('h3', null, T.card.reviewTitle, r.round ? h('span', { class: 'r' }, T.card.round(r.round)) : null),
-    h('div', { class: 'rvstate' }, h('span', { class: 'rvpill ' + r.state }, label),
+    h('div', { class: 'rvstate' }, h('span', { class: 'rvpill ' + stateClass(r.state) }, label),
       T.review.stateHint[r.state] ? h('span', { class: 'muted' }, T.review.stateHint[r.state]) : null),
     r.state === 'open' && r.url
       ? h('a', { href: r.url, target: '_blank', rel: 'noopener noreferrer', class: 'rvlink mono' }, icon('ext'), r.url) : null,

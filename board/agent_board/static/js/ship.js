@@ -3,7 +3,8 @@ import { registerCardAction } from './actions.js';
 import { spill, statusOf } from './chips.js';
 import { h, icon, patchList } from './dom.js';
 import { T, statusInfo } from './i18n.js';
-import { isResearch, sec } from './pane-kit.js';
+import { isResearch } from './pane-kit.js';
+import { stateClass } from './review.js';
 import { confirmDialog, openModal, toast } from './ui.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
@@ -103,6 +104,54 @@ export function commandParts(command) {
   return parts;
 }
 
+function repoOf(config, task) {
+  const repos = (config.repos || []).filter(r => r && typeof r === 'object' && r.path);
+  if (task.repo) return repos.find(r => r.name === task.repo) || null;
+  return repos.length === 1 ? repos[0] : null;
+}
+
+// Что подставится в команду отправки задачи — по тем же правилам, что у сервера:
+// {base} — ветка единственной одобренной или отправленной (ещё не влитой) зависимости, иначе база репозитория.
+// error — почему отправка не пройдёт (несколько таких зависимостей).
+export function shipValues(snapshot, task) {
+  const config = snapshot.config;
+  const command = shipCommand(snapshot) || '';
+  const byKey = new Map(snapshot.tasks.map(t => [t.key, t]));
+  const repo = repoOf(config, task);
+  let base = repo ? repo.base || 'main' : '';
+  let error = null;
+  if (config.chains !== false) {
+    const unmerged = (task.deps || []).map(d => byKey.get(d)).filter(d => d && (d.status === 'approved' || d.status === 'sent'));
+    if (unmerged.length > 1) {
+      error = T.ship.multiDeps(unmerged.map(d => d.key));
+      base = '';
+    } else if (unmerged.length === 1) {
+      base = unmerged[0].branch || '';
+    }
+  }
+  const all = { key: task.key, title: task.title, branch: task.branch || '', base, worktree: task.worktree || '', repo: repo ? repo.path : '' };
+  const seen = new Set();
+  const values = [];
+  for (const p of commandParts(command)) {
+    if (!p.ph || seen.has(p.text)) continue;
+    seen.add(p.text);
+    values.push({ ph: p.text, value: String(all[p.text.slice(1, -1)] ?? '') });
+  }
+  return { values, error };
+}
+
+const valuesList = model => [
+  model.values.length ? h('dl', { class: 'kv shipvals' }, model.values.map(v => [h('dt', { class: 'mono' }, v.ph),
+    h('dd', { class: v.value ? 'mono' : 'mono faint' }, v.value || T.ship.empty)])) : null,
+  model.error ? h('div', { class: 'ferr' }, model.error) : null,
+];
+
+// Одобренная зависимость, которую нужно отправить раньше задачи.
+const unsentDep = (snapshot, task) => {
+  const byKey = new Map(snapshot.tasks.map(t => [t.key, t]));
+  return (task.deps || []).find(d => byKey.get(d) && byKey.get(d).status === 'approved') || null;
+};
+
 export const commandPreview = command => h('pre', { class: 'cmd' },
   commandParts(command).map(p => (p.ph ? h('b', { class: 'ph' }, p.text) : p.text)));
 
@@ -110,13 +159,13 @@ const post = (ctx, keys) => ctx.client.post('/ship', { keys, actor: 'user' });
 
 // Отправка одной задачи: подтверждение с командой и значениями плейсхолдеров.
 export function shipOne(ctx, task) {
-  const command = shipCommand(ctx.store.get().snapshot);
-  const values = [['{key}', task.key], ['{branch}', task.branch], ['{worktree}', task.worktree]].filter(([, v]) => v);
+  const snap = ctx.store.get().snapshot;
+  const command = shipCommand(snap);
   return confirmDialog({
     title: T.ship.title(task.key),
     body: [
       h('div', { class: 'field' }, h('label', null, T.ship.command), commandPreview(command || '')),
-      values.length ? h('dl', { class: 'kv shipvals' }, values.map(([k, v]) => [h('dt', null, k), h('dd', { class: 'mono' }, v)])) : null,
+      h('div', { class: 'field' }, h('label', null, T.ship.values), valuesList(shipValues(snap, task))),
       h('p', { class: 'mtext muted' }, T.ship.hostNote),
     ],
     ok: T.ship.run,
@@ -132,9 +181,20 @@ registerCardAction({
   label: T.ship.action,
   icon: 'send',
   visible: (task, snap) => !isResearch(task) && statusOf(task) === 'approved' && Boolean(shipCommand(snap)),
-  enabled: task => !isShipping(task),
-  title: task => (isShipping(task) ? T.ship.chip[shipState(task)] : null),
+  enabled: (task, snap) => !isShipping(task) && !unsentDep(snap, task),
+  title: (task, snap) => (isShipping(task) ? T.ship.chip[shipState(task)]
+    : unsentDep(snap, task) ? T.ship.depFirst(unsentDep(snap, task)) : null),
   run: shipOne,
+});
+
+// Задачу с неотправленной одобренной зависимостью отправляют вместе с ней — из пакетной отправки.
+registerCardAction({
+  id: 'ship-batch',
+  label: T.ship.openBatch,
+  icon: 'send',
+  visible: (task, snap) => !isResearch(task) && statusOf(task) === 'approved' && Boolean(shipCommand(snap))
+    && !isShipping(task) && Boolean(unsentDep(snap, task)),
+  run: ctx => ctx.openShip(),
 });
 
 // Строка результата отправки: состояние, код выхода, причина и хвост вывода.
@@ -145,7 +205,7 @@ function resultNodes(task) {
   const failed = state === 'error' || state === 'interrupted' || state === 'cancelled';
   const tail = typeof s.output_tail === 'string' ? s.output_tail : '';
   return [
-    h('span', { class: 'shipst ' + (state || '') }, T.ship.state[state] || state || ''),
+    h('span', { class: 'shipst ' + stateClass(state) }, T.ship.state[state] || state || ''),
     Number.isInteger(s.exit_code) && s.exit_code !== 0 ? h('span', { class: 'muted' }, T.ship.exitCode(s.exit_code)) : null,
     s.error || s.reason ? h('div', { class: 'shipwhy' }, String(s.error || s.reason)) : null,
     tail.trim() ? h('details', { class: 'tail', open: failed ? true : null },
@@ -182,8 +242,11 @@ export function openShipDialog(ctx) {
       selected = selectShip(plan, selected, item.key, box.checked);
       paint();
     });
-    const node = h('label', { class: 'shiprow', 'data-key': item.key }, box,
-      h('span', { class: 'k' }, item.key), h('span', { class: 'tt' }, item.title), h('div', { class: 'res' }));
+    const task = snap.tasks.find(t => t.key === item.key);
+    const node = h('div', { class: 'shiprow', 'data-key': item.key },
+      h('label', { class: 'shead' }, box, h('span', { class: 'k' }, item.key), h('span', { class: 'tt' }, item.title)),
+      h('div', { class: 'res' }),
+      task ? h('details', { class: 'vals' }, h('summary', null, T.ship.values), valuesList(shipValues(snap, task))) : null);
     node._box = box;
     return node;
   }

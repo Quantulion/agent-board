@@ -127,6 +127,12 @@ async function main(browser) {
     check('ключ трекера на карточке доски — ссылка',
       await waits(page, () => document.querySelector('.card[data-key="PAY-1"] a.chip.trk')?.href.endsWith('/browse/MNZ-1'), 10000));
     await shotThemes(page, 'tracker-created');
+    // итог заведения остаётся после ухода со страницы проекта и возврата на неё
+    await page.evaluate(() => { window.location.hash = '#/'; });
+    await page.waitForFunction(() => !document.querySelector('.tstage'), { timeout: 5000 });
+    await page.evaluate(() => { window.location.hash = '#/p/pay'; });
+    check('итог заведения виден после возврата на доску',
+      await waits(page, () => document.querySelector('.tresult:not([hidden])')?.textContent.includes('MNZ-2'), 10000));
     const jiraState = await jira.control('GET', '/_control/state');
     check('в Jira заведены задачи и связь', Object.keys(jiraState.issues).length === 2 && jiraState.links.length === 1, jiraState);
 
@@ -201,6 +207,9 @@ async function main(browser) {
     check('снятие зависимости снимает зависимую, выбор зависимой тянет зависимость',
       afterUncheck.join() === 'false,false' && afterCheck.join() === 'true,true', { afterUncheck, afterCheck });
     check('превью команды с плейсхолдерами', (await page.$$eval('.shipmodal .cmd .ph', els => els.map(e => e.textContent))).join() === '{key},{base}');
+    const rowValues = await page.$$eval('.shipmodal .shiprow[data-key="PAY-2"] .vals dd', els => els.map(e => e.textContent));
+    const pay1Branch = (await env.task('PAY-1')).branch;
+    check('значения плейсхолдеров по строке: {base} PAY-2 — ветка PAY-1', rowValues.join() === 'PAY-2,' + pay1Branch, rowValues);
     await shotThemes(page, 'ship-modal');
     await page.click('.shipmodal [data-ok]');
     check('обе отправлены, результат по каждой', await waits(page, () => document.querySelectorAll('.shipmodal .shipst.done').length === 2, 30000));
@@ -253,6 +262,96 @@ async function main(browser) {
   }
 }
 
+// Проект без инструмента ревью: подсказка и кнопки во вкладке «Ревью», возврат с обязательным комментарием,
+// одобрение, отправка одной задачи с подтверждением и неудачная отправка (хвост вывода текстом, пункт «Ждут вас»).
+async function noReviewTool(browser) {
+  const env = createEnv({ prefix: 'ab-int2-', slug: 'pay', title: 'Без инструмента ревью' });
+  const errors = [];
+  const page = await browser.newPage();
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  try {
+    const gitRepo = path.join(env.home, 'payments-api');
+    const git = (...args) => execFileSync('git', args, { cwd: gitRepo, encoding: 'utf-8', timeout: 20000 });
+    fs.mkdirSync(gitRepo);
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'ui@test');
+    git('config', 'user.name', 'ui');
+    fs.writeFileSync(path.join(gitRepo, 'README.md'), '# payments\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const cfgPath = path.join(env.home, 'projects', 'pay', 'project.json');
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    fs.writeFileSync(cfgPath, JSON.stringify({
+      ...cfg,
+      repos: [{ name: 'payments-api', path: gitRepo, base: 'master' }],
+      review: { tool: 'none' },
+      ship: { command: 'echo "<b>boom</b>" {key}; exit 3', timeout: 60 },
+    }, null, 2));
+    await env.start();
+    env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-1', title: 'Без crit', repo: 'payments-api',
+      description: script([{ write: { path: 'a.txt', text: 'a' } }, { cli: ['status', 'PAY-1', 'in_review'] }]) }));
+    env.cli('stage', 'tracker');
+    env.cli('stage', 'work');
+    await until(async () => { const t = await env.task('PAY-1'); return t.status === 'in_review' && t.agent_state === 'idle'; }, 30000, 'PAY-1 на ревью');
+
+    await page.setViewport(VIEW);
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.goto(env.url + '#/p/pay?task=PAY-1', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.drawer[data-key="PAY-1"]', { timeout: 10000 });
+    await page.click('.tabs [data-tab="review"]');
+    await page.waitForSelector('.drawer .rvnone', { timeout: 10000 });
+    const none = await page.$eval('.drawer .rvnone', el => ({ text: el.textContent, buttons: [...el.querySelectorAll('button')].map(b => b.textContent) }));
+    check('tool none: подсказка и кнопки во вкладке «Ревью»', none.text.includes('«Изменения»')
+      && JSON.stringify(none.buttons) === JSON.stringify(['Открыть изменения', 'Вернуть в работу…', 'Одобрить']), none);
+    check('tool none: «Начать ревью» нет', !(await page.$('.drawer [data-action="review-start"]')));
+    await shotThemes(page, 'review-none');
+
+    // возврат: пустой комментарий не уходит, окно остаётся с ошибкой
+    const tabButton = text => page.evaluate(t => [...document.querySelectorAll('.drawer .rvnone button')].find(b => b.textContent === t).click(), text);
+    await tabButton('Вернуть в работу…');
+    await page.waitForSelector('.modal textarea', { timeout: 5000 });
+    await page.click('.modal [data-ok]');
+    const empty = await waits(page, () => document.querySelector('.modal .ferr:not([hidden])')?.textContent === 'Напишите, что исправить', 5000);
+    check('пустой комментарий: окно открыто, ошибка в окне', empty && Boolean(await page.$('.modal textarea')) && (await env.task('PAY-1')).status === 'in_review');
+    const comment = 'Добавь тест на таймаут ' + script([{ cli: ['status', 'PAY-1', 'in_review'] }]);
+    await page.type('.modal textarea', comment);
+    await page.click('.modal [data-ok]');
+    check('с комментарием окно закрывается', await waits(page, () => !document.querySelector('.modal'), 10000));
+    await page.click('.tabs [data-tab="thread"]');
+    check('комментарий возврата в треде от пользователя',
+      await waits(page, () => [...document.querySelectorAll('.drawer .thread .msg.user')].some(m => m.textContent.includes('Добавь тест на таймаут')), 15000));
+    await until(async () => { const t = await env.task('PAY-1'); return t.status === 'in_review' && t.agent_state === 'idle'; }, 30000, 'PAY-1 снова на ревью');
+
+    // одобрение кнопкой во вкладке и отправка одной задачи
+    await page.click('.tabs [data-tab="review"]');
+    await page.waitForFunction(() => [...document.querySelectorAll('.drawer .rvnone button')].some(b => b.textContent === 'Одобрить'), { timeout: 10000 });
+    await tabButton('Одобрить');
+    await page.waitForSelector('.modal [data-ok]', { timeout: 5000 });
+    await page.click('.modal [data-ok]');
+    await until(async () => (await env.task('PAY-1')).status === 'approved', 20000, 'PAY-1 одобрена');
+    await page.waitForSelector('.drawer [data-action="ship"]:not([disabled])', { timeout: 10000 });
+    await page.click('.drawer [data-action="ship"]');
+    await page.waitForSelector('.modal .shipvals', { timeout: 5000 });
+    const vals = await page.$$eval('.modal .shipvals dt, .modal .shipvals dd', els => els.map(e => e.textContent));
+    check('подтверждение отправки показывает значения плейсхолдеров', vals.join() === '{key},PAY-1', vals);
+    await shotThemes(page, 'ship-confirm');
+    await page.click('.modal [data-ok]');
+
+    // неудачная отправка: пункт «Ждут вас» и хвост вывода текстом в «Обзоре»
+    check('«Ждут вас»: отправка не удалась',
+      await waits(page, () => [...document.querySelectorAll('.attn .it')].some(b => b.textContent.includes('отправка не удалась')), 30000));
+    await page.click('.tabs [data-tab="overview"]');
+    await page.waitForSelector('.drawer .sec.ship .out', { timeout: 10000 });
+    const tail = await page.$eval('.drawer .sec.ship', el => ({ text: el.querySelector('.out').textContent, b: el.querySelectorAll('.out b').length, all: el.textContent }));
+    check('хвост вывода текстом, код выхода', tail.text.includes('<b>boom</b> PAY-1') && tail.b === 0 && tail.all.includes('код выхода 3'), tail);
+    await shotThemes(page, 'ship-error');
+    check('нет ошибок страницы (без ревью)', errors.length === 0, errors);
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 // Пользователь нажал «Finish Review» в поддельном crit, оставив comments.
 function finish(env, session, comments, approved = null) {
   const dir = path.join(env.home, 'projects', 'pay', 'crit', 'fake-crit');
@@ -275,6 +374,7 @@ let failed = false;
 try {
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   await main(browser);
+  await noReviewTool(browser);
 } catch (e) {
   failed = true;
   console.error(e);
