@@ -8,11 +8,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import puppeteer from 'puppeteer';
+import { python } from './python.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
 const out = path.join(here, 'out');
-const python = path.join(repo, '.venv', 'bin', 'python');
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-card-'));
 const gitRepo = path.join(home, 'payments-api');
 const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user' };

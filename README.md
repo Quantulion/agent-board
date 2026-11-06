@@ -301,6 +301,8 @@ Headless Chrome checks (puppeteer is installed only in `ui-tests/`; Node is need
 cd ui-tests && npm install && npm test
 ```
 
+The Python interpreter for the board is picked in `ui-tests/python.mjs`, first match wins: the `AGENT_BOARD_PYTHON` environment variable, `.venv` in the repository root, `.venv` of the main checkout (so the checks run from a task worktree without its own `.venv`), `python3` from `PATH`. If none is found, the scripts stop with an error naming these options.
+
 Scripts one by one (`node ui-tests/<name>.mjs` from the root or `npm run <name>` in `ui-tests/`):
 
 - `smoke` — end-to-end pre-release scenario: columns and "Waiting for you", answering an agent and sending a message, tabs without recreating the panel, agent text is not executed (summary and thread), draft/focus/scroll under the event stream, server restart with reconnection without reloading, 60 tasks and 200 events in 5 s with no long tasks > 200 ms, a forbidden transition with an error toast (the load thresholds can be changed: `SMOKE_LONGTASK_MS`, default 200, and `SMOKE_SEND_LIMIT_MS`, default 7000 — the time limit for sending 200 events);
