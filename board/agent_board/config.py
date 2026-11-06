@@ -6,6 +6,7 @@ import re
 import string
 from typing import List, Optional
 
+from .messages import msg
 from .model import _Serializable
 
 
@@ -67,8 +68,8 @@ def clean_links(links) -> List[dict]:
 
 
 # настройки, которые ведёт не пользователь: имя проекта, стадия (своя команда) и сессия агента проекта (раннер)
-NOT_SETTABLE = {"slug": "имя проекта не меняется", "stage": "стадию меняет команда stage",
-                "project_session_id": "сессию агента проекта ведёт раннер"}
+NOT_SETTABLE = {"slug": "config.slug_fixed", "stage": "config.stage_command",
+                "project_session_id": "config.session_runner"}
 HARNESS_TYPES = ("claude", "codex", "fake")
 REVIEW_TOOLS = ("crit", "none")
 # правила декомпозиции целиком попадают в промпт агента проекта
@@ -77,23 +78,23 @@ MAX_DECOMPOSITION_RULES_CHARS = 4000
 
 def _positive_int(value, name: str) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError("%s должен быть целым числом не меньше 1" % name)
+        raise ValueError(msg("config.positive_int", name=name))
 
 
 def _text(value, name: str, required: bool = False) -> None:
     if not isinstance(value, str) or (required and not value.strip()):
-        raise ValueError("%s должен быть %sстрокой" % (name, "непустой " if required else ""))
+        raise ValueError(msg("config.nonempty_string" if required else "config.string", name=name))
 
 
 def _optional_text(value, name: str) -> None:
     if value is not None and (not isinstance(value, str) or not value.strip()):
-        raise ValueError("%s должен быть непустой строкой или null" % name)
+        raise ValueError(msg("config.optional_string", name=name))
 
 
 def _check_decomposition_rules(config: "ProjectConfig") -> None:
     _text(config.decomposition_rules, "decomposition_rules")
     if len(config.decomposition_rules) > MAX_DECOMPOSITION_RULES_CHARS:
-        raise ValueError("decomposition_rules длиннее %d символов" % MAX_DECOMPOSITION_RULES_CHARS)
+        raise ValueError(msg("config.rules_too_long", max=MAX_DECOMPOSITION_RULES_CHARS))
 
 
 def _git_work_tree(path: str) -> bool:
@@ -109,14 +110,14 @@ def _git_work_tree(path: str) -> bool:
 
 def _repos_structure(repos) -> None:
     if not isinstance(repos, list):
-        raise ValueError("repos должен быть списком репозиториев")
+        raise ValueError(msg("config.repos_list"))
     names = set()
     for repo in repos:
         if not isinstance(repo, dict):
-            raise ValueError("Репозиторий в repos должен быть объектом {name, path, base}")
+            raise ValueError(msg("config.repo_object"))
         _text(repo.get("name"), "repos[].name", required=True)
         if repo["name"] in names:
-            raise ValueError("Репозиторий %s указан дважды" % repo["name"])
+            raise ValueError(msg("config.repo_twice", name=repo["name"]))
         names.add(repo["name"])
         _text(repo.get("path"), "repos[].path", required=True)
 
@@ -131,14 +132,14 @@ def _validate_repos(repos, previous=None) -> None:
     for repo in repos:
         path = repo["path"]
         if not os.path.isabs(path):
-            raise ValueError("Путь репозитория %s должен быть абсолютным: %s" % (repo["name"], path))
+            raise ValueError(msg("config.repo_relative", name=repo["name"], path=path))
         _optional_text(repo.get("base"), "repos[].base")
         if (repo["name"], path) in known:
             continue
         if not os.path.isdir(path):
-            raise ValueError("Каталог репозитория %s не найден: %s" % (repo["name"], path))
+            raise ValueError(msg("config.repo_missing", name=repo["name"], path=path))
         if not _git_work_tree(path):
-            raise ValueError("Каталог репозитория %s — не git-репозиторий: %s" % (repo["name"], path))
+            raise ValueError(msg("config.repo_not_git", name=repo["name"], path=path))
 
 
 def _validate_branch_template(template) -> None:
@@ -146,24 +147,23 @@ def _validate_branch_template(template) -> None:
     try:
         parsed = list(string.Formatter().parse(template))
     except ValueError as e:
-        raise ValueError("Некорректный branch_template: %s" % e)
+        raise ValueError(msg("config.bad_branch_template", error=e))
     names = [name for _, name, _, _ in parsed if name is not None]
     if any(name != "key" for name in names) or any(spec or conv for _, name, spec, conv in parsed if name):
-        raise ValueError("В branch_template допустим только плейсхолдер {key}")
+        raise ValueError(msg("config.branch_only_key"))
     if "key" not in names:
-        raise ValueError("branch_template должен содержать {key}: у каждой задачи своя ветка")
+        raise ValueError(msg("config.branch_needs_key"))
 
 
 def _validate_resources(resources) -> None:
     if not isinstance(resources, list):
-        raise ValueError("resources должен быть списком ресурсов")
+        raise ValueError(msg("config.resources_list"))
     names = set()
     for item in resources:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str) or not _RESOURCE.match(item["name"]):
-            raise ValueError("Ресурс в resources должен быть объектом {name, description} с именем из латиницы, цифр, "
-                             "«-», «_» и «.»")
+            raise ValueError(msg("config.resource_object"))
         if item["name"] in names:
-            raise ValueError("Ресурс %s указан дважды" % item["name"])
+            raise ValueError(msg("config.resource_twice", name=item["name"]))
         names.add(item["name"])
         if item.get("description") is not None:
             _text(item["description"], "resources[].description")
@@ -171,17 +171,16 @@ def _validate_resources(resources) -> None:
 
 def _validate_links(links) -> None:
     if not isinstance(links, list):
-        raise ValueError("links должен быть списком ссылок")
+        raise ValueError(msg("config.links_list"))
     for item in links:
         if len(clean_links([item])) != 1:
-            raise ValueError("Недопустимая ссылка в links: %s — нужны title и href (http(s) или путь к файлу)"
-                             % json.dumps(item, ensure_ascii=False)[:200])
+            raise ValueError(msg("config.bad_link", item=json.dumps(item, ensure_ascii=False)[:200]))
 
 
 def _check_review(config: ProjectConfig) -> None:
     review = config.review
     if not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS:
-        raise ValueError("Неизвестный инструмент ревью: review.tool должен быть одним из: %s" % ", ".join(REVIEW_TOOLS))
+        raise ValueError(msg("config.review_tool", tools=", ".join(REVIEW_TOOLS)))
     _optional_text(review.get("binary"), "review.binary")
 
 
@@ -190,7 +189,7 @@ def _check_ship(config: ProjectConfig) -> None:
 
     ship = config.ship
     if not isinstance(ship, dict):
-        raise ValueError("ship должен быть объектом {command, timeout}")
+        raise ValueError(msg("config.ship_object"))
     if ship.get("command") is not None:
         _text(ship["command"], "ship.command")
     if isinstance(ship.get("command"), str) and ship["command"].strip():
@@ -198,18 +197,18 @@ def _check_ship(config: ProjectConfig) -> None:
     else:
         timeout = ship.get("timeout", 600)
         if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout <= 0:
-            raise ValueError("ship.timeout должен быть положительным числом секунд")
+            raise ValueError(msg("ship.timeout"))
 
 
 def _check_harness(config: ProjectConfig) -> None:
     harness = config.harness
     if not isinstance(harness, dict) or harness.get("type", "claude") not in HARNESS_TYPES:
-        raise ValueError("Неизвестный харнесс: harness.type должен быть одним из: %s" % ", ".join(HARNESS_TYPES))
+        raise ValueError(msg("config.harness_type", types=", ".join(HARNESS_TYPES)))
     for name in ("permission_mode", "model", "sandbox"):
         _optional_text(harness.get(name), "harness." + name)
     tools = harness.get("allowed_tools")
     if tools is not None and (not isinstance(tools, list) or not all(isinstance(t, str) and t for t in tools)):
-        raise ValueError("harness.allowed_tools должен быть списком строк")
+        raise ValueError(msg("config.allowed_tools"))
 
 
 def _check_tracker(config: ProjectConfig) -> None:
@@ -220,7 +219,7 @@ def _check_tracker(config: ProjectConfig) -> None:
 
 def _check_chains(config: ProjectConfig) -> None:
     if not isinstance(config.chains, bool):
-        raise ValueError("chains должен быть true или false")
+        raise ValueError(msg("config.chains"))
 
 
 # полные проверки каждого поля, которое задаёт пользователь (repos проверяются отдельно — с учётом прежних)
@@ -250,9 +249,9 @@ def check_field_names(names) -> None:
     known = {f.name for f in dataclass_fields(ProjectConfig)}
     for name in names:
         if name in NOT_SETTABLE:
-            raise ValueError("Поле %s нельзя менять в настройках: %s" % (name, NOT_SETTABLE[name]))
+            raise ValueError(msg("config.not_settable", name=name, reason=msg(NOT_SETTABLE[name])))
         if name not in known:
-            raise ValueError("Неизвестное поле конфига: %s" % name)
+            raise ValueError(msg("config.unknown_field", name=name))
 
 
 def validate_fields(config: ProjectConfig, names, previous_repos=None) -> None:
@@ -268,7 +267,7 @@ def validate_structure(config: ProjectConfig) -> None:
     """Проверки формы всех настроек: типы, перечисления и согласованность полей — без проверок, которые могут
     устареть сами по себе (диск, git, правила шаблонов)."""
     if not isinstance(config.title, str):
-        raise ValueError("title должен быть строкой")
+        raise ValueError(msg("config.string", name="title"))
     _check_chains(config)
     _positive_int(config.max_agents, "max_agents")
     _positive_int(config.global_max_agents, "global_max_agents")
@@ -277,19 +276,19 @@ def validate_structure(config: ProjectConfig) -> None:
     _repos_structure(config.repos)
     tracker = config.tracker
     if not isinstance(tracker, dict) or not isinstance(tracker.get("type", "none"), str):
-        raise ValueError("tracker должен быть объектом с полем type")
+        raise ValueError(msg("config.tracker_object"))
     review = config.review
     if not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS:
-        raise ValueError("Неизвестный инструмент ревью: review.tool должен быть одним из: %s" % ", ".join(REVIEW_TOOLS))
+        raise ValueError(msg("config.review_tool", tools=", ".join(REVIEW_TOOLS)))
     if not isinstance(config.ship, dict):
-        raise ValueError("ship должен быть объектом {command, timeout}")
+        raise ValueError(msg("config.ship_object"))
     if not isinstance(config.resources, list):
-        raise ValueError("resources должен быть списком ресурсов")
+        raise ValueError(msg("config.resources_list"))
     harness = config.harness
     if not isinstance(harness, dict) or harness.get("type", "claude") not in HARNESS_TYPES:
-        raise ValueError("Неизвестный харнесс: harness.type должен быть одним из: %s" % ", ".join(HARNESS_TYPES))
+        raise ValueError(msg("config.harness_type", types=", ".join(HARNESS_TYPES)))
     if not isinstance(config.links, list):
-        raise ValueError("links должен быть списком ссылок")
+        raise ValueError(msg("config.links_list"))
 
 
 def validate_config(config: ProjectConfig) -> None:

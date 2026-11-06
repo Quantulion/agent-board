@@ -8,11 +8,16 @@ export class ApiError extends Error {
   }
 }
 
+function pageLanguage() {
+  return (globalThis.document && globalThis.document.documentElement.lang) || 'en';
+}
+
 export function api(slug, fetchFn = (...args) => globalThis.fetch(...args)) {
   const base = slug ? '/api/p/' + encodeURIComponent(slug) : '/api';
 
   async function request(method, path, body, signal) {
-    const init = { method, credentials: 'same-origin', headers: {} };
+    // ошибки доски приходят на языке страницы
+    const init = { method, credentials: 'same-origin', headers: { 'X-Board-Lang': pageLanguage() } };
     if (signal) init.signal = signal;
     if (body !== undefined) {
       init.headers['Content-Type'] = 'application/json';

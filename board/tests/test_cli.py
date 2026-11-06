@@ -335,7 +335,7 @@ def test_lock_run_waits_quietly_for_unreachable_board_once(srv, capsys, monkeypa
     def flaky(method, path, body=None):
         if state["fails"] > 0 and path.endswith("/acquire"):
             state["fails"] -= 1
-            raise cli.CliError(cli.NOT_RUNNING, 2)
+            raise cli.CliError(cli.msg("cli.not_running"), 2)
         return real(method, path, body)
 
     monkeypatch.setattr(cli, "_request", flaky)

@@ -11,6 +11,7 @@ from typing import List, Optional
 
 from . import __version__
 from .harness import process_identity
+from .messages import msg
 from .review import trim_log
 from .server import _port_open, discovery_path, read_discovery
 from .store import ProjectStore, board_home, list_projects
@@ -20,7 +21,6 @@ START_WAIT_SECONDS = 10.0
 STOP_WAIT_SECONDS = 15.0
 LOG_TAIL_LINES = 20
 AGENT_ENV = ("AGENT_BOARD_ACTOR", "AGENT_BOARD_TASK", "AGENT_BOARD_PROJECT", "AGENT_BOARD_LOCK_POLL")
-RESTART_HINT = "перезапустите: agent-board stop && agent-board serve --detach"
 
 
 def server_log_path() -> Path:
@@ -61,17 +61,16 @@ def format_status(report: dict) -> str:
     server = report["server"]
     lines = []
     if server is None:
-        lines.append("доска не запущена (agent-board serve --detach)")
+        lines.append(msg("life.not_running_status"))
     else:
-        lines.append("доска запущена: %s (версия %s, pid %s)" % (server["url"], server["version"] or "?",
-                                                                server["pid"]))
+        lines.append(msg("life.running", url=server["url"], version=server["version"] or "?", pid=server["pid"]))
     for p in report["projects"]:
         if p["stage"] is None:
-            lines.append("  %s: не удалось прочитать проект" % p["slug"])
+            lines.append(msg("life.project_unreadable", slug=p["slug"]))
         else:
-            lines.append("  %s «%s»: стадия %s, задач %d" % (p["slug"], p["title"], p["stage"], p["tasks"]))
+            lines.append(msg("life.project_line", slug=p["slug"], title=p["title"], stage=p["stage"], tasks=p["tasks"]))
     if not report["projects"]:
-        lines.append("  проектов нет")
+        lines.append(msg("life.no_projects"))
     return "\n".join(lines)
 
 
@@ -102,8 +101,8 @@ def _running_result() -> Optional[dict]:
         return None
     if running.get("version") == __version__:
         return {"url": server_url(running)}
-    return {"error": "доска уже запущена другой версии (%s, нужна %s): %s"
-                     % (running.get("version") or "неизвестна", __version__, RESTART_HINT), "code": 3}
+    return {"error": msg("life.other_version", running=running.get("version") or msg("life.version_unknown"),
+                         needed=__version__, hint=msg("life.restart_hint")), "code": 3}
 
 
 def start_detached(port: Optional[int], no_runner: bool, no_tracker_sync: bool) -> dict:
@@ -143,10 +142,10 @@ def start_detached(port: Optional[int], no_runner: bool, no_tracker_sync: bool) 
                     if result is not None:
                         return result
                     time.sleep(0.05)
-            return {"error": "сервер не запустился (код %s), %s:\n%s" % (code, log, _log_tail(log)), "code": 1}
+            return {"error": msg("life.start_failed", code=code, log=log, tail=_log_tail(log)), "code": 1}
         time.sleep(0.05)
     _terminate(child)
-    return {"error": "сервер не поднялся за %g с, %s:\n%s" % (START_WAIT_SECONDS, log, _log_tail(log)), "code": 1}
+    return {"error": msg("life.start_timeout", seconds=START_WAIT_SECONDS, log=log, tail=_log_tail(log)), "code": 1}
 
 
 def _terminate(child) -> None:
@@ -177,17 +176,17 @@ def stop_server() -> dict:
     """Останавливает сервер по pid из discovery после проверки, что это процесс доски. {"message", "code"}."""
     info = read_discovery()
     if info is None:
-        return {"message": "доска не запущена", "code": 0}
+        return {"message": msg("life.not_running"), "code": 0}
     pid = int(info["pid"])
     if not _is_board_server(pid):
-        return {"message": "pid %d из %s не похож на сервер доски, процесс не тронут" % (pid, discovery_path()),
+        return {"message": msg("life.not_board", pid=pid, path=discovery_path()),
                 "code": 1}
     try:
         os.kill(pid, signal.SIGTERM)
     except ProcessLookupError:
-        return {"message": "доска остановлена", "code": 0}
+        return {"message": msg("life.stopped"), "code": 0}
     except OSError as e:
-        return {"message": "не удалось остановить pid %d: %s" % (pid, e), "code": 1}
+        return {"message": msg("life.stop_failed", pid=pid, error=e), "code": 1}
     deadline = time.monotonic() + STOP_WAIT_SECONDS
     while time.monotonic() < deadline:
         try:
@@ -196,6 +195,6 @@ def stop_server() -> dict:
         except OSError:
             pass
         if not discovery_path().exists() or read_discovery() is None:
-            return {"message": "доска остановлена", "code": 0}
+            return {"message": msg("life.stopped"), "code": 0}
         time.sleep(0.1)
-    return {"message": "доска (pid %d) не остановилась за %g с" % (pid, STOP_WAIT_SECONDS), "code": 1}
+    return {"message": msg("life.stop_timeout", pid=pid, seconds=STOP_WAIT_SECONDS), "code": 1}

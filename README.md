@@ -228,6 +228,7 @@ Every request carries `{"actor": "user"}` and the `X-Board-Token` header.
 | `AGENT_BOARD_PROJECT` | default project instead of `--project` |
 | `AGENT_BOARD_ACTOR` | who acts: `agent`, `user`, `project_agent`; the runner sets it for agents itself. Not set: for `say` and user commands — `user`, for `status <KEY> <STATUS>` — `agent` (that command is mostly called by agents, while a message from the terminal is written by a human) |
 | `AGENT_BOARD_TASK` | the agent's task; with it, `say _project` wakes the project agent (escalation) |
+| `AGENT_BOARD_LANG` | language of CLI messages and board errors: `en` (default) or `ru`; the runner sets it for agents from the project language. The CLI passes the language to the board in the `X-Board-Lang` header |
 
 ## Interface
 
