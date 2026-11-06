@@ -459,6 +459,8 @@ class _Handler(BaseHTTPRequestHandler):
             events = board.transition(rest[1], Status(_need(body, "to")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "review":
             events = board.request_review(rest[1], _need(body, "actor"))
+        elif rest == ["ship"]:
+            events = board.request_ship(_need(body, "keys"), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "approve":
             events = board.approve(rest[1], _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "return":

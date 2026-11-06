@@ -1172,3 +1172,119 @@ def test_review_field_is_runner_only(server):
     r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"review": {"state": "approved"}}})
     # assert
     assert r.status == 403 and task_state(server)["review"] is None
+
+
+# --- отправка в ревью ---
+
+def approved_task(server, key="T-1", **extra):
+    add_task(server, key, **extra)
+    post(server, "/api/p/pay/tasks/%s/transition" % key, {"to": "in_review", "actor": "agent"})
+    post(server, "/api/p/pay/tasks/%s/approve" % key, {"actor": "user"})
+
+
+def with_ship(server, **ship_cfg):
+    server.board_for("pay").update_config({"ship": ship_cfg})
+
+
+def test_ship_request_queues_tasks_in_dependency_order(server):
+    # arrange
+    with_ship(server, command="true")
+    approved_task(server, "A")
+    approved_task(server, "B", deps=["A"])
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["B", "A"], "actor": "user"})
+    # assert
+    assert r.status == 200
+    assert [e["data"] for e in r.json()["events"] if e["type"] == "ship_requested"] == [{"keys": ["A", "B"]}]
+    assert task_state(server, "A")["ship"]["state"] == "queued"
+
+
+def test_ship_without_command_is_400_with_reason(server):
+    # arrange
+    approved_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # assert
+    assert r.status == 400 and "команда отправки" in r.json()["error"]
+
+
+def test_ship_unknown_placeholder_is_400_at_request_time(server):
+    # arrange
+    with_ship(server, command="echo {nope}")
+    approved_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # assert
+    assert r.status == 400 and "{nope}" in r.json()["error"] and task_state(server)["ship"] is None
+
+
+def test_ship_task_not_approved_is_400(server):
+    # arrange
+    with_ship(server, command="true")
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # assert
+    assert r.status == 400 and task_state(server)["ship"] is None
+
+
+def test_ship_with_unshipped_dependency_outside_request_is_400(server):
+    # arrange
+    with_ship(server, command="true")
+    approved_task(server, "A")
+    approved_task(server, "B", deps=["A"])
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["B"], "actor": "user"})
+    # assert
+    assert r.status == 400 and "сначала отправьте A" in r.json()["error"]
+
+
+def test_ship_second_request_while_running_is_400(server):
+    # arrange
+    with_ship(server, command="true")
+    approved_task(server)
+    first = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # act
+    second = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
+    # assert
+    assert first.status == 200 and second.status == 400 and "уже отправляется" in second.json()["error"]
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
+def test_ship_by_non_user_is_403(server, actor):
+    # arrange
+    with_ship(server, command="true")
+    approved_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": actor})
+    # assert
+    assert r.status == 403 and task_state(server)["ship"] is None
+
+
+@pytest.mark.parametrize("keys", [[], "T-1", ["T-1", "T-1"], [1]])
+def test_ship_bad_keys_is_400(server, keys):
+    # arrange
+    with_ship(server, command="true")
+    approved_task(server)
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": keys, "actor": "user"})
+    # assert
+    assert r.status == 400
+
+
+def test_ship_unknown_task_is_404(server):
+    # arrange
+    with_ship(server, command="true")
+    # act
+    r = post(server, "/api/p/pay/ship", {"keys": ["NOPE"], "actor": "user"})
+    # assert
+    assert r.status == 404
+
+
+def test_agent_cannot_write_ship_field(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"ship": {"state": "done"}}})
+    # assert
+    assert r.status == 403

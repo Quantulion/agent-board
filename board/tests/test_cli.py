@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from agent_board.cli import build_parser, main
+from agent_board.model import Status
 from agent_board.server import BoardServer
 
 
@@ -377,3 +378,25 @@ def test_update_has_no_review_option():
     # arrange / act / assert: состояние ревью ведёт раннер, агент его не задаёт
     with pytest.raises(SystemExit):
         build_parser().parse_args(["update", "T-1", "--review-json", "{}"])
+
+
+def test_ship_sends_request_as_user_even_with_agent_actor_env(srv, capsys, monkeypatch):
+    # arrange
+    srv.board_for("pay").update_config({"ship": {"command": "true"}})
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    # act
+    result = run_json(capsys, "ship", "T-1")
+    # assert
+    assert [e["type"] for e in result["events"]] == ["ship_requested"]
+
+
+def test_ship_without_command_exits_1_with_reason(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    # act
+    code, _, err = run(capsys, "ship", "T-1")
+    # assert
+    assert code != 0

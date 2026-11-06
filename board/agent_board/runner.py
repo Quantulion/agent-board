@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 import queue
 import shlex
+import signal
+import subprocess
 import sys
 import threading
 import traceback
@@ -11,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
-from . import prompts
+from . import prompts, ship
 from .board import RETURNED_FROM, Board
 from .graph import base_for, open_deps, ready_tasks
 from .harness import (
@@ -74,6 +76,14 @@ REVIEW_NOT_IN_REVIEW_TEXT = ("Раунд ревью %d завершён без �
                              "одобрите её вручную, когда она будет готова")
 REVIEW_TOOL_OFF_TEXT = "Инструмент ревью в проекте отключён: открытый раунд %d закрыт"
 
+SHIP_KILL_GRACE = 3.0
+SHIP_TEXT_CHARS = 500
+SHIP_INTERRUPTED_TEXT = "Отправка в ревью прервана перезапуском сервера. Команда могла выполниться не до конца: проверьте результат и при необходимости отправьте задачу снова."
+SHIP_FAILED_TEXT = "Отправка в ревью не удалась (код выхода %s)."
+SHIP_TIMEOUT_TEXT = "Отправка в ревью прервана по таймауту (%d с), процессы команды остановлены."
+SHIP_ERROR_TEXT = "Отправка в ревью не выполнена: %s"
+SHIP_MULTI_DEPS_TEXT = "несколько незавершённых зависимостей — отправьте их сначала"
+
 Key = Tuple[str, str]
 
 
@@ -123,6 +133,23 @@ class _Review:
         self.stopped = False
 
 
+class _ShipBatch:
+    """Очередь отправки одного запроса: задачи идут по одной в порядке зависимостей."""
+
+    def __init__(self, slug: str, keys: List[str]):
+        self.slug = slug
+        self.queue: Deque[str] = deque(keys)
+        self.failed: set = set()
+
+
+class _Ship:
+    def __init__(self, proc, batch: _ShipBatch, log: Path):
+        self.proc = proc
+        self.batch = batch
+        self.log = log
+        self.stopped = False
+
+
 class Runner:
     """Превращает события доски в ходы агентов.
 
@@ -147,6 +174,7 @@ class Runner:
         self._agent_wakes: Dict[Key, int] = {}
         self._parked: set = set()
         self._reviews: Dict[Key, _Review] = {}
+        self._ships: Dict[Key, _Ship] = {}
 
     # --- жизненный цикл ---
 
@@ -165,6 +193,7 @@ class Runner:
             self._thread.join(timeout=30)
             self._thread = None
         self._kill_reviews()
+        self._kill_ships()
         stoppers = [threading.Thread(target=terminate, args=(turn.proc, STOP_GRACE_SECONDS), daemon=True)
                     for turn in list(self._turns.values())]
         for t in stoppers:
@@ -177,6 +206,18 @@ class Runner:
         for turn in list(self._turns.values()):
             terminate(turn.proc, grace)
         self._kill_reviews()
+        self._kill_ships()
+
+    def _kill_ships(self) -> None:
+        """Отправки останавливаются вместе с сервером; на доске они остаются идущими и после старта помечаются прерванными."""
+        ships = list(self._ships.values())
+        for sh in ships:
+            sh.stopped = True
+        stoppers = [threading.Thread(target=terminate, args=(sh.proc, SHIP_KILL_GRACE), daemon=True) for sh in ships]
+        for t in stoppers:
+            t.start()
+        for t in stoppers:
+            t.join(SHIP_KILL_GRACE + 10)
 
     def _kill_reviews(self) -> None:
         """Клиенты раундов останавливаются без SIGTERM: страница ревью у пользователя остаётся открытой,
@@ -225,6 +266,8 @@ class Runner:
             self._on_review_url(item[1], item[2], item[3], item[4])
         elif kind == "review_done":
             self._on_review_done(item[1], item[2], item[3])
+        elif kind == "ship_done":
+            self._on_ship_done(item[1], item[2], item[3], item[4])
         elif kind == "recover":
             self._recover()
         elif kind == "sync":
@@ -233,7 +276,7 @@ class Runner:
     def _report_failure(self, item: tuple, error: Exception) -> None:
         if item[0] == "event":
             slug, key = item[1], item[2].data.get("key")
-        elif item[0] in ("done", "retry", "review_url", "review_done"):
+        elif item[0] in ("done", "retry", "review_url", "review_done", "ship_done"):
             slug, key = item[1]
         else:
             return
@@ -325,6 +368,9 @@ class Runner:
             if meta.get("project_agent_parked"):
                 self._update_project_meta(board, {"project_agent_parked": False})
             for key, task in sorted(tasks.items()):
+                if isinstance(task.ship, dict) and task.ship.get("state") in ("queued", "running"):
+                    self._ship_interrupted(board, task)
+            for key, task in sorted(tasks.items()):
                 if task.agent_parked:
                     board.update_task(key, "system", {"agent_parked": False})
                 if task.agent_state == "running":
@@ -387,6 +433,8 @@ class Runner:
             self._review_on_status(slug, d)
         elif event.type == "review_requested":
             self._start_review(slug, str(d.get("key")), reconnect=False)
+        elif event.type == "ship_requested":
+            self._start_ship(slug, [str(x) for x in d.get("keys") or []])
         elif event.type == "stage_changed":
             if d.get("to") == "work":
                 self._start_work(slug)
@@ -1084,3 +1132,164 @@ class Runner:
                 or not isinstance(task.review, dict) or task.review.get("state") != "fixing":
             return
         self._start_review(k[0], k[1], reconnect=False)
+
+    # --- отправка в ревью ---
+
+    @staticmethod
+    def _ship_interrupted(board: Board, task: Task) -> None:
+        state = dict(task.ship)
+        if state.get("state") == "running":
+            Runner._kill_leftover(board, task.key, state.get("process"))
+            state["output_tail"] = ship.tail_of(board.store.root / "logs" / (task.key + ".ship.log"))
+        state.update(state="interrupted", process=None)
+        board.update_task(task.key, "system", {"ship": state})
+        board.post_message(task.key, "system", SHIP_INTERRUPTED_TEXT)
+
+    def _start_ship(self, slug: str, keys: List[str]) -> None:
+        self._ship_next(_ShipBatch(slug, keys))
+
+    def _ship_next(self, batch: _ShipBatch) -> None:
+        while batch.queue:
+            key = batch.queue.popleft()
+            try:
+                started = self._ship_task(batch, key)
+            except Exception as e:
+                traceback.print_exc(file=sys.stderr)
+                self._ship_fail(batch, key, SHIP_ERROR_TEXT % repr(e))
+                started = False
+            if started:
+                return
+
+    def _ship_set(self, board: Board, key: str, **state) -> None:
+        board.update_task(key, "system", {"ship": state})
+
+    def _ship_fail(self, batch: _ShipBatch, key: str, error: str) -> None:
+        """Задача не отправлена по причине вне процесса команды: ошибка на карточке и в треде."""
+        board = self._board(batch.slug)
+        batch.failed.add(key)
+        self._ship_set(board, key, state="error", at=self._clock(), error=error, output_tail="", exit_code=None)
+        board.post_message(key, "system", SHIP_ERROR_TEXT % error if not error.startswith("Отправка") else error)
+
+    def _ship_skip(self, batch: _ShipBatch, key: str, reason: str) -> None:
+        batch.failed.add(key)
+        self._ship_set(self._board(batch.slug), key, state="skipped", at=self._clock(), reason=reason)
+
+    @staticmethod
+    def _ship_base(config, task: Task, tasks: Dict[str, Task], default_base: str) -> str:
+        if not config.chains:
+            return default_base
+        unmerged = [tasks[d] for d in task.deps if d in tasks and tasks[d].status in (Status.APPROVED, Status.SENT)]
+        if len(unmerged) > 1:
+            raise ValueError(SHIP_MULTI_DEPS_TEXT)
+        if not unmerged:
+            return default_base
+        if not unmerged[0].branch:
+            raise ValueError("у зависимости %s нет ветки" % unmerged[0].key)
+        return unmerged[0].branch
+
+    def _ship_task(self, batch: _ShipBatch, key: str) -> bool:
+        """Готовит и запускает команду отправки; False — задача завершена без запуска (ошибка или пропуск)."""
+        slug = batch.slug
+        board = self._board(slug)
+        tasks = board.store.load_tasks()
+        task = tasks.get(key)
+        if task is None:
+            batch.failed.add(key)
+            return False
+        blockers = [d for d in task.deps if d in batch.failed]
+        if blockers:
+            self._ship_skip(batch, key, "зависимость %s не отправлена" % ", ".join(blockers))
+            return False
+        if task.status != Status.APPROVED:
+            self._ship_skip(batch, key, "задача уже не одобрена (%s)" % task.status.value)
+            return False
+        try:
+            config = board.store.load_config()
+            command, timeout = ship.settings(config)
+            path = self._own_worktree(config, task)
+            repo, default_base = self._repo(config, task)
+            base = self._ship_base(config, task, tasks, default_base)
+            if not task.branch:
+                raise ValueError("у задачи нет ветки")
+            rendered = ship.render(command, {
+                "key": key, "title": task.title, "branch": task.branch, "base": base,
+                "worktree": str(path), "repo": str(repo)})
+            sha = commit_all(path, "%s %s" % (key, task.title))
+            if sha:
+                board.record("task_committed", {"key": key, "sha": sha})
+        except (ValueError, GitError, _PrepareError) as e:
+            self._ship_fail(batch, key, str(e))
+            return False
+        log = board.store.root / "logs" / (key + ".ship.log")
+        try:
+            proc = ship.start(rendered, path, log, key)
+        except OSError as e:
+            self._ship_fail(batch, key, "не удалось запустить команду: %s" % e)
+            return False
+        sh = _Ship(proc, batch, log)
+        k = (slug, key)
+
+        def watch() -> None:
+            timed_out = False
+            code: Optional[int] = None
+            try:
+                code = proc.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                terminate(proc, SHIP_KILL_GRACE)
+                code = proc.poll()
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+            try:
+                # после команды в группе ничего не остаётся: фоновые потомки не переживают отправку
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            self._inbox.put(("ship_done", k, sh, code, timed_out))
+
+        try:
+            threading.Thread(target=watch, name="board-ship-%s" % key, daemon=True).start()
+        except BaseException:
+            terminate(proc, SHIP_KILL_GRACE)
+            raise
+        self._ships[k] = sh
+        self._ship_set(board, key, state="running", at=self._clock(), output_tail="", exit_code=None,
+                       process=turn_process_record(proc, None))
+        board.record("ship_started", {"key": key})
+        return True
+
+    def _on_ship_done(self, k: Key, sh: _Ship, code: Optional[int], timed_out: bool) -> None:
+        if self._ships.get(k) is not sh:
+            return
+        del self._ships[k]
+        if sh.stopped:
+            return
+        slug, key = k
+        board = self._board(slug)
+        tail = ship.tail_of(sh.log)
+        ok = code == 0 and not timed_out
+        if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system"):
+            ok = False
+            self._ship_fail(sh.batch, key, "команда отправки выполнена, но задача уже не одобрена — статус не изменён")
+            self._ship_set(board, key, output_tail=tail, exit_code=0)
+            board.record("ship_finished", {"key": key, "ok": False, "exit_code": 0})
+        elif ok:
+            self._ship_set(board, key, state="done", at=self._clock(), output_tail=tail, exit_code=0, process=None)
+            board.record("ship_finished", {"key": key, "ok": True, "exit_code": 0})
+        else:
+            sh.batch.failed.add(key)
+            exit_code = None if timed_out else code
+            self._ship_set(board, key, state="error", at=self._clock(), output_tail=tail, exit_code=exit_code,
+                           process=None)
+            head = SHIP_TIMEOUT_TEXT % int(self._ship_timeout(board)) if timed_out else SHIP_FAILED_TEXT % code
+            text = head + ("\n" + tail.strip()[-SHIP_TEXT_CHARS:] if tail.strip() else "")
+            board.post_message(key, "system", text)
+            board.record("ship_finished", {"key": key, "ok": False, "exit_code": exit_code})
+        self._ship_next(sh.batch)
+
+    @staticmethod
+    def _ship_timeout(board: Board) -> float:
+        try:
+            return ship.settings(board.store.load_config())[1]
+        except ValueError:
+            return ship.DEFAULT_TIMEOUT

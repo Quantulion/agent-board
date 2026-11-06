@@ -103,6 +103,8 @@ class Task(_Serializable):
     tracker_url: Optional[str] = None
     # раунды ревью, ведёт раннер: {round, state, url, session, process, error, history}
     review: Optional[dict] = None
+    # отправка в ревью, ведёт раннер: {state: queued|running|done|error|skipped|interrupted, at, output_tail, exit_code, error, reason, process}
+    ship: Optional[dict] = None
     changed_files: List[str] = field(default_factory=list)
     report: Optional[str] = None
     unread: int = 0

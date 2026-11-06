@@ -8,13 +8,14 @@ from typing import Any, Callable, Dict, List, Optional, Set
 
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
+from .ship import check_request, order as ship_order, settings as ship_settings
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
 AGENT_FORBIDDEN = {Status.APPROVED, Status.DONE, Status.SENT, Status.CANCELLED}
 RETURNED_FROM = {Status.IN_REVIEW, Status.APPROVED, Status.SENT, Status.DONE}
 UPDATABLE_FIELDS = {
-    "summary", "todo", "changed_files", "review", "worktree", "branch", "base_branch",
+    "summary", "todo", "changed_files", "review", "ship", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
     "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations", "agent_parked",
@@ -22,7 +23,7 @@ UPDATABLE_FIELDS = {
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process", "agent_parked", "review",
+    "turn_process", "agent_parked", "review", "ship",
 }
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
@@ -66,6 +67,9 @@ EVENT_TYPES: Dict[str, str] = {
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
     "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
     "review_requested": "key — пользователь попросил открыть раунд ревью",
+    "ship_requested": "keys — пользователь попросил отправить задачи в ревью (в порядке отправки)",
+    "ship_started": "key — раннер запустил команду отправки",
+    "ship_finished": "key, ok, exit_code — команда отправки завершена (exit_code пуст при таймауте)",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -309,6 +313,27 @@ class Board:
             if isinstance(task.review, dict) and task.review.get("state") == "open":
                 raise ValueError("Раунд ревью уже открыт")
             return [self._emit("review_requested", {"key": key})]
+
+    def request_ship(self, keys: Any, actor: str) -> List[Event]:
+        """Пользователь просит отправить одобренные задачи в ревью; запросы выполняет раннер по порядку зависимостей."""
+        with self._lock:
+            self._require_user(actor, "Отправляет в ревью только пользователь")
+            if not isinstance(keys, list) or not keys or not all(isinstance(k, str) for k in keys):
+                raise ValueError("keys должен быть непустым списком ключей задач")
+            if len(set(keys)) != len(keys):
+                raise ValueError("Ключи задач в запросе повторяются")
+            tasks = self.store.load_tasks()
+            for key in keys:
+                self._get(tasks, key)
+            ship_settings(self.store.load_config())
+            check_request(keys, tasks)
+            for key in keys:
+                if isinstance(tasks[key].ship, dict) and tasks[key].ship.get("state") in ("queued", "running"):
+                    raise ValueError("Задача %s уже отправляется" % key)
+            ordered = ship_order(keys, tasks)
+            for key in ordered:
+                self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
+            return [self._emit("ship_requested", {"keys": ordered})]
 
     def approve(self, key: str, actor: str, note: Optional[str] = None) -> List[Event]:
         """Одобрение задачи на ревью; note — системное сообщение в тред (например, откуда одобрение)."""

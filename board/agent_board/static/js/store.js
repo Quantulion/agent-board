@@ -8,7 +8,7 @@ export const EVENT_TYPES = [
   'agent_wake', 'question_asked', 'question_answered', 'message_posted', 'thread_read',
   'proposal_created', 'proposal_applied', 'proposal_rejected', 'turn_started', 'turn_finished',
   'turn_failed', 'task_committed', 'lock_waiting', 'lock_acquired', 'lock_released', 'stage_changed',
-  'project_agent_changed', 'review_requested',
+  'project_agent_changed', 'review_requested', 'ship_requested', 'ship_started', 'ship_finished',
 ];
 
 export const COALESCE_MS = 150;

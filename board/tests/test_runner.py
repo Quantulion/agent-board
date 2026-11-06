@@ -1553,3 +1553,199 @@ def test_review_base_falls_back_to_repo_base(make_project, start_server, calls, 
     # assert
     argv = fake_crit.review_calls(crit_dir(store))[0]["argv"]
     assert argv[argv.index("--base-branch") + 1] == "trunk"
+
+
+# --- отправка в ревью ---
+
+def approved(srv, store, key, **extra):
+    add(srv, key, script({"write": {"path": key + ".txt", "text": key}}, {"cli": ["status", key, "in_review"]}), **extra)
+    wait_events(store, "turn_finished", key)
+    srv.board_for("pay").transition(key, Status.APPROVED, "user")
+    wait_events(store, "task_committed", key)
+
+
+def wait_ship(store, key, states=("done", "error", "skipped", "interrupted")):
+    return wait_for(lambda: (task(store, key).ship or {}).get("state") in states and task(store, key).ship,
+                    what="ship %s %s" % (key, states))
+
+
+def send(srv, *keys):
+    return srv.board_for("pay").request_ship(list(keys), "user")
+
+
+def test_ship_command_quotes_title_and_runs_in_worktree(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "out.txt"
+    store = make_project(ship={"command": "printf '%s|%s|%s\\n' {title} \"$AGENT_BOARD_TASK\" \"$PWD\" > " + str(out)})
+    srv = start_server()
+    add(srv, "T-1", script({"write": {"path": "f.txt", "text": "x"}}, {"cli": ["status", "T-1", "in_review"]}), title="it's \"q\" $(touch pwned) x")
+    wait_events(store, "turn_finished", "T-1")
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
+    wait_events(store, "task_committed", "T-1")
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    # assert
+    title, key, cwd = out.read_text().rstrip("\n").split("|")
+    assert state["state"] == "done" and state["exit_code"] == 0 and state["at"]
+    assert title == "it's \"q\" $(touch pwned) x" and key == "T-1"
+    assert Path(cwd).resolve() == Path(task(store, "T-1").worktree).resolve()
+    assert not (Path(task(store, "T-1").worktree) / "pwned").exists()
+    assert task(store, "T-1").status == Status.SENT
+
+
+def test_ship_chain_runs_in_dependency_order_with_dependency_as_base(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "order.txt"
+    store = make_project(ship={"command": "echo {key} {base} | tee -a " + str(out)})
+    srv = start_server()
+    approved(srv, store, "A")
+    approved(srv, store, "B", deps=["A"])
+    # act
+    send(srv, "B", "A")
+    wait_ship(store, "B")
+    # assert
+    assert out.read_text().splitlines() == ["A main", "B A"]
+    assert task(store, "A").status == task(store, "B").status == Status.SENT
+    assert [e.data["key"] for e in events(store, "ship_started")] == ["A", "B"]
+    finished = events(store, "ship_finished")
+    assert [e.data for e in finished] == [{"key": "A", "ok": True, "exit_code": 0},
+                                          {"key": "B", "ok": True, "exit_code": 0}]
+    assert "A main" in (store.root / "logs" / "A.ship.log").read_text()
+    assert "A main" in task(store, "A").ship["output_tail"]
+
+
+def test_ship_failure_skips_dependents_and_keeps_independent_then_retry_succeeds(make_project, start_server, calls,
+                                                                              tmp_path):
+    # arrange
+    flag = tmp_path / "fixed"
+    store = make_project(ship={"command": "echo out-{key}; if [ {key} = A ] && [ ! -e %s ]; then echo boom >&2; exit 3; fi" % flag})
+    srv = start_server()
+    approved(srv, store, "A")
+    approved(srv, store, "B", deps=["A"])
+    approved(srv, store, "C")
+    # act
+    send(srv, "A", "B", "C")
+    wait_ship(store, "B")
+    wait_ship(store, "C")
+    # assert
+    a = task(store, "A")
+    assert a.status == Status.APPROVED and a.ship["state"] == "error" and a.ship["exit_code"] == 3
+    assert "boom" in a.ship["output_tail"]
+    assert task(store, "B").ship["state"] == "skipped" and "A" in task(store, "B").ship["reason"]
+    assert task(store, "B").status == Status.APPROVED
+    assert task(store, "C").status == Status.SENT
+    assert any("код выхода 3" in t and "boom" in t for t in thread_texts(store, "A"))
+    assert [e.data for e in events(store, "ship_finished", "A")] == [{"key": "A", "ok": False, "exit_code": 3}]
+    # act: повтор после исправления
+    flag.write_text("")
+    send(srv, "A", "B")
+    wait_for(lambda: task(store, "B").status == Status.SENT, what="B отправлена")
+    # assert
+    assert task(store, "A").status == Status.SENT and task(store, "A").ship["state"] == "done"
+
+
+def test_ship_timeout_kills_process_group(make_project, start_server, calls, tmp_path):
+    # arrange
+    pidfile = tmp_path / "child.pid"
+    store = make_project(ship={"command": "sleep 300 & echo $! > %s; echo started; wait" % pidfile, "timeout": 1})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    # assert
+    pid = int(pidfile.read_text())
+    wait_for(lambda: not _alive(pid), what="процесс потомка завершён")
+    assert state["state"] == "error" and state["exit_code"] is None and "started" in state["output_tail"]
+    assert task(store, "T-1").status == Status.APPROVED
+    assert any("таймаут" in t for t in thread_texts(store, "T-1"))
+
+
+def _alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_ship_with_several_unmerged_dependencies_is_error(make_project, start_server, calls, tmp_path):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "A")
+    approved(srv, store, "B")
+    send(srv, "A", "B")
+    wait_ship(store, "B")
+    approved(srv, store, "C", deps=["A", "B"])
+    # act
+    send(srv, "C")
+    state = wait_ship(store, "C")
+    # assert
+    assert state["state"] == "error" and "несколько незавершённых зависимостей" in state["error"]
+    assert task(store, "C").status == Status.APPROVED
+
+
+def test_ship_base_is_repo_base_when_dependency_is_done(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "base.txt"
+    store = make_project(ship={"command": "echo {base} > " + str(out)})
+    srv = start_server()
+    approved(srv, store, "A")
+    approved(srv, store, "B", deps=["A"])
+    srv.board_for("pay").transition("A", Status.DONE, "user")
+    # act
+    send(srv, "B")
+    wait_ship(store, "B")
+    # assert
+    assert out.read_text().strip() == "main"
+
+
+def test_ship_commits_leftover_changes_before_command(make_project, start_server, calls, git_repo, tmp_path):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    (Path(task(store, "T-1").worktree) / "late.txt").write_text("late")
+    # act
+    send(srv, "T-1")
+    wait_ship(store, "T-1")
+    # assert
+    assert len(events(store, "task_committed", "T-1")) == 2
+    assert "late.txt" in run_git(git_repo, "show", "--stat", "--format=%s", "T-1")
+
+
+def test_ship_in_progress_is_marked_interrupted_after_restart(make_project, start_server, calls, tmp_path):
+    # arrange
+    pidfile = tmp_path / "ship.pid"
+    store = make_project(ship={"command": "echo $$ > %s; echo partial; sleep 300" % pidfile})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    send(srv, "T-1")
+    wait_events(store, "ship_started", "T-1")
+    wait_for(pidfile.exists, what="команда стартовала")
+    pid = int(pidfile.read_text())
+    # act
+    srv = restart(srv, start_server)
+    state = wait_ship(store, "T-1")
+    # assert
+    assert state["state"] == "interrupted" and "partial" in state["output_tail"]
+    assert task(store, "T-1").status == Status.APPROVED
+    assert not _alive(pid)
+    assert len(events(store, "ship_started", "T-1")) == 1
+    assert any("перезапуском" in t for t in thread_texts(store, "T-1"))
+
+
+def test_ship_foreign_worktree_is_error_and_command_not_run(make_project, start_server, calls, tmp_path):
+    # arrange
+    out = tmp_path / "ran.txt"
+    store = make_project(ship={"command": "touch " + str(out)})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    srv.board_for("pay").update_task("T-1", "system", {"worktree": str(tmp_path)})
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    # assert
+    assert state["state"] == "error" and not out.exists()

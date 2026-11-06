@@ -166,6 +166,10 @@ def cmd_stage(args):
     return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": actor})
 
 
+def cmd_ship(args):
+    return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": "user"})
+
+
 def cmd_propose(args):
     payload = _json_arg(args.json, "--json")
     return _request("POST", _p(args, "proposals"), {"kind": args.kind, "payload": payload, "reason": args.reason or ""})
@@ -303,6 +307,8 @@ def build_parser() -> argparse.ArgumentParser:
     add("add-task", cmd_add_task).add_argument("--json", required=True)
     add("stage", cmd_stage, help="перевести проект на стадию: tracker, work, done (только пользователь)").add_argument(
         "stage")
+    add("ship", cmd_ship, help="отправить одобренные задачи в ревью командой проекта (только пользователь)").add_argument(
+        "keys", nargs="+")
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

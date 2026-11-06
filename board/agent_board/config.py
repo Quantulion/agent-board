@@ -17,7 +17,7 @@ class ProjectConfig(_Serializable):
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
     review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
-    ship_command: Optional[str] = None
+    ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600})
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
