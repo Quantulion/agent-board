@@ -1890,6 +1890,37 @@ def test_ship_foreign_worktree_is_error_and_command_not_run(make_project, start_
     assert state["state"] == "error" and not out.exists()
 
 
+def test_ship_success__card_saved__should_be_sent_with_ship_done_before_finish_event(make_project, start_server,
+                                                                                     calls, monkeypatch):
+    # arrange
+    store = make_project(ship={"command": "true"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    board = srv.board_for("pay")
+    saved, at_finish = [], []
+    save_task, record = board.store.save_task, board.record
+
+    def recording_save(t):
+        saved.append((t.status, (t.ship or {}).get("state")))
+        save_task(t)
+
+    def recording_record(type, data):
+        if type == "ship_finished":
+            t = board.store.load_tasks()["T-1"]
+            at_finish.append((t.status, t.ship["state"]))
+        return record(type, data)
+
+    monkeypatch.setattr(board.store, "save_task", recording_save)
+    monkeypatch.setattr(board, "record", recording_record)
+    # act
+    send(srv, "T-1")
+    wait_events(store, "ship_finished", "T-1")
+    # assert
+    assert (Status.SENT, "running") not in saved
+    assert saved[-1] == (Status.SENT, "done")
+    assert at_finish == [(Status.SENT, "done")]
+
+
 def test_ship_success_after_task_left_approved_is_error_with_full_state(make_project, start_server, calls, tmp_path):
     # arrange
     gate = tmp_path / "gate"

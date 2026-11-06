@@ -203,11 +203,13 @@ def test_review_approval_ship_and_tracker_sync_release_dependent_task(tmp_home, 
 
         # act: отправка командой проекта
         server.call("POST", "ship", {"keys": ["A"], "actor": "user"})
-        wait_for(lambda: store.load_tasks()["A"].status.value == "sent", WAIT, "A отправлена")
+        # событие о завершении пишется последним: после него карточка уже в итоговом состоянии
+        finished = wait_events(store, "ship_finished", "A")
         # assert
+        assert [e.data["ok"] for e in finished] == [True]
         assert marker.read_text().splitlines() == ["A main"]
-        assert store.load_tasks()["A"].ship["state"] == "done"
-        assert [e.data["ok"] for e in store.read_events() if e.type == "ship_finished"] == [True]
+        a = store.load_tasks()["A"]
+        assert a.status.value == "sent" and a.ship["state"] == "done"
 
         # act: первое чтение статусов, затем в Jira «Done»
         server.call("POST", "tracker/sync", {"actor": "user"})
