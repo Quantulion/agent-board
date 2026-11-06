@@ -225,6 +225,14 @@ def cmd_tracker(args):
 
 
 def cmd_config(args):
+    if args.action == "schema":
+        from .schema import config_schema, format_schema
+
+        schema = config_schema()
+        if args.json:
+            return schema
+        print(format_schema(schema))
+        return None
     actor = _user_actor()
     if args.action == "get":
         config = _request("GET", _p(args, "config?actor=" + urllib.parse.quote(actor)))["config"]
@@ -396,6 +404,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp_set.add_argument("--json", dest="fields_json", required=True, help="поля настроек JSON-объектом")
     sp_set.add_argument("--dry-run", action="store_true", help="только проверить, не сохраняя")
     actions.add_parser("validate", help="проверить сохранённые настройки")
+    actions.add_parser("schema", help="допустимые поля настроек: типы, значения по умолчанию, перечисления; "
+                                      "доска не нужна").add_argument("--json", action="store_true",
+                                                                     help="вывести JSON-объектом")
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

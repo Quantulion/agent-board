@@ -631,3 +631,132 @@ def test_server_discovery__contains_version(srv):
 
     # assert
     assert read_discovery()["version"] == __version__
+
+
+# --- схема настроек ---
+
+def _schema(capsys, monkeypatch):
+    monkeypatch.delenv("AGENT_BOARD_PROJECT", raising=False)
+    return {f["name"]: f for f in run_json(capsys, "config", "schema", "--json")["fields"]}
+
+
+def _config_with(**fields):
+    from agent_board.config import ProjectConfig
+
+    return ProjectConfig(slug="pay", title="Платежи", **fields)
+
+
+def _rejected(check, config) -> bool:
+    try:
+        check(config)
+    except ValueError:
+        return True
+    return False
+
+
+def test_config_schema__no_server_no_project__lists_every_settable_field(tmp_home, capsys, monkeypatch):
+    # arrange
+    from dataclasses import fields
+
+    from agent_board.config import NOT_SETTABLE, ProjectConfig
+
+    # act
+    schema = _schema(capsys, monkeypatch)
+    # assert
+    assert set(schema) == {f.name for f in fields(ProjectConfig)} - set(NOT_SETTABLE)
+
+
+def test_config_schema__fields__have_type_english_description_and_real_default(tmp_home, capsys, monkeypatch):
+    # arrange
+    default = _config_with()
+    # act
+    schema = _schema(capsys, monkeypatch)
+    # assert
+    for name, item in schema.items():
+        assert item["type"] in ("string", "integer", "boolean", "array", "object"), name
+        assert item["description"] and item["description"].isascii() and "\n" not in item["description"], name
+        if name != "title":
+            assert item["default"] == getattr(default, name), name
+
+
+def test_config_schema__harness_and_review_enums__match_validators(tmp_home, capsys, monkeypatch):
+    # arrange
+    from agent_board.config import FIELD_CHECKS
+
+    schema = _schema(capsys, monkeypatch)
+    harness_types = schema["harness"]["shape"]["type"]["enum"]
+    review_tools = schema["review"]["shape"]["tool"]["enum"]
+    # act / assert
+    for kind in harness_types:
+        assert not _rejected(FIELD_CHECKS["harness"], _config_with(harness={"type": kind}))
+    assert _rejected(FIELD_CHECKS["harness"], _config_with(harness={"type": "other"}))
+    for tool in review_tools:
+        assert not _rejected(FIELD_CHECKS["review"], _config_with(review={"tool": tool}))
+    assert _rejected(FIELD_CHECKS["review"], _config_with(review={"tool": "other"}))
+
+
+def test_config_schema__tracker_shapes__match_validator(tmp_home, capsys, monkeypatch):
+    # arrange
+    from agent_board.tracker import validate_config
+
+    tracker = _schema(capsys, monkeypatch)["tracker"]["shape"]
+
+    def ok(cfg):
+        return not _rejected(validate_config, cfg)
+
+    # act / assert
+    assert set(tracker["types"]) == set(tracker["variants"])
+    assert not ok({"type": "other"})
+    for kind, variant in tracker["variants"].items():
+        example = variant["example"]
+        assert example["type"] == kind and ok(example), kind
+        for key in variant["required"]:
+            assert not ok({k: v for k, v in example.items() if k != key}), (kind, key)
+        if kind == "none":
+            continue
+        assert not ok(dict(example, unknown_key=1)), kind
+        for key in variant["optional"]:
+            assert key not in variant["required"], (kind, key)
+        for auth_type in variant["auth_types"]:
+            auth = dict(tracker["auth"][auth_type]["example"])
+            assert ok(dict(example, auth=auth)), (kind, auth_type)
+            assert not ok(dict(example, auth=dict(auth, token="secret"))), (kind, auth_type)
+    for target in tracker["statuses"]["targets"]:
+        assert ok(dict(tracker["variants"]["github"]["example"], statuses={"Open": target}))
+    assert not ok(dict(tracker["variants"]["github"]["example"], statuses={"Open": "approved"}))
+
+
+def test_config_schema__tracker_optional_keys__are_all_accepted_keys(tmp_home, capsys, monkeypatch):
+    # arrange
+    from agent_board.tracker import GITHUB_KEYS, JIRA_KEYS
+
+    variants = _schema(capsys, monkeypatch)["tracker"]["shape"]["variants"]
+    # assert
+    for kind, keys in (("jira", JIRA_KEYS), ("github", GITHUB_KEYS)):
+        assert set(variants[kind]["required"]) | set(variants[kind]["optional"]) | {"type"} == keys, kind
+
+
+def test_config_schema__ship_placeholders__match_template_validator(tmp_home, capsys, monkeypatch):
+    # arrange
+    from agent_board.ship import validate_template
+
+    ship = _schema(capsys, monkeypatch)["ship"]["shape"]
+    # act / assert
+    validate_template(" ".join("{%s}" % p for p in ship["placeholders"]))
+    with pytest.raises(ValueError):
+        validate_template("push {unknown}")
+    assert ship["rules"] and all(rule.isascii() for rule in ship["rules"])
+
+
+def test_config_schema__human_output__table_row_per_field(tmp_home, capsys, monkeypatch):
+    # arrange
+    monkeypatch.delenv("AGENT_BOARD_PROJECT", raising=False)
+    from dataclasses import fields
+
+    from agent_board.config import NOT_SETTABLE, ProjectConfig
+
+    # act
+    code, out, _ = run(capsys, "config", "schema")
+    # assert
+    names = [line.split()[0] for line in out.splitlines()[1:] if line.strip() and not line.startswith("-")]
+    assert code == 0 and set(names) >= {f.name for f in fields(ProjectConfig)} - set(NOT_SETTABLE)

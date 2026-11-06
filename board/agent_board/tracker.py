@@ -43,6 +43,11 @@ JIRA_SEARCH_PATH = "/rest/api/2/search"
 STOP_KINDS = ("auth", "config", "network")
 GITHUB_KEYS = {"type", "repo", "labels", "auth", "statuses", "title_template", "api_url", "poll_seconds"}
 GITHUB_API = "https://api.github.com"
+JIRA_REQUIRED = ("url", "project", "issue_type", "auth")
+GITHUB_REQUIRED = ("repo", "auth")
+# допустимые ключи каждого вида авторизации и виды, которые принимает трекер
+AUTH_KEYS = {"token_env": ("type", "env", "user_env"), "cookie_file": ("type", "path")}
+AUTH_TYPES = {"jira": ("token_env", "cookie_file"), "github": ("token_env",)}
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
@@ -118,8 +123,7 @@ def _http_url(value: Any, name: str) -> None:
 def _validate_auth(auth: Any, kinds: tuple) -> None:
     if not isinstance(auth, dict) or auth.get("type") not in kinds:
         raise ValueError("tracker.auth.type должен быть одним из: %s" % ", ".join(kinds))
-    allowed = {"token_env": {"type", "env", "user_env"}, "cookie_file": {"type", "path"}}[auth["type"]]
-    extra = set(auth) - allowed
+    extra = set(auth) - set(AUTH_KEYS[auth["type"]])
     if extra:
         raise ValueError("Недопустимые ключи tracker.auth: %s — секреты задаются только именем переменной "
                          "окружения или путём к файлу" % ", ".join(sorted(map(str, extra))))
@@ -176,13 +180,13 @@ def validate_config(cfg: Any) -> None:
             raise ValueError("tracker.jira_search_path должен быть путём от адреса Jira, например /rest/api/2/search")
         if not isinstance(cfg.get("extra_fields", {}), dict):
             raise ValueError("tracker.extra_fields должен быть объектом")
-        _validate_auth(cfg.get("auth"), ("token_env", "cookie_file"))
+        _validate_auth(cfg.get("auth"), AUTH_TYPES["jira"])
     else:
         if not isinstance(cfg.get("repo"), str) or not _REPO.match(cfg["repo"]):
             raise ValueError("tracker.repo должен быть в виде owner/name")
         if cfg.get("api_url") is not None:
             _http_url(cfg["api_url"], "api_url")
-        _validate_auth(cfg.get("auth"), ("token_env",))
+        _validate_auth(cfg.get("auth"), AUTH_TYPES["github"])
     _str_list(cfg, "labels")
     _validate_statuses(cfg.get("statuses", {}))
     _validate_template(cfg.get("title_template", "{title}"))

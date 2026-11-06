@@ -239,6 +239,11 @@ BOARD_CLI_SUBCOMMANDS = ("status", "update", "ask", "say", "show", "thread", "st
 BOARD_CLI_PERMISSIONS = ["Bash(agent-board %s:*)" % name for name in BOARD_CLI_SUBCOMMANDS]
 
 
+# известные значения режимов: доска передаёт их как есть, а сам харнесс отвергает неизвестные
+CLAUDE_PERMISSION_MODES = ("auto", "acceptEdits", "bypassPermissions", "dontAsk", "manual", "plan")
+CODEX_SANDBOXES = ("workspace-write", "read-only", "danger-full-access")
+
+
 class ClaudeHarness(Harness):
     binary = "claude"
 
