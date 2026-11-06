@@ -4,11 +4,11 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { python } from './python.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '..');
 export const out = path.join(here, 'out');
-const python = path.join(repo, '.venv', 'bin', 'python');
 
 const envs = [];
 

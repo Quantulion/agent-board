@@ -7,10 +7,10 @@ import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
+import { python } from './python.mjs';
 import { cleanupAll, createEnv, out, repo, script, until, withTimeout } from './lib.mjs';
 
 const VIEW = { width: 1440, height: 900 };
-const python = path.join(repo, '.venv', 'bin', 'python');
 const fakeCrit = path.join(repo, 'board', 'tests', 'fakes', 'fake_crit.py');
 const TOKEN_ENV = 'AB_UI_JIRA_TOKEN';
 const TOKEN = 'ui-test-secret-' + Math.random().toString(36).slice(2);
