@@ -22,7 +22,7 @@ UPDATABLE_FIELDS = {
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process", "agent_parked",
+    "turn_process", "agent_parked", "review",
 }
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
@@ -65,6 +65,7 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_released": "key, resource",
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
     "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
+    "review_requested": "key — пользователь попросил открыть раунд ревью",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -81,6 +82,8 @@ WAKE_REASONS: Dict[str, str] = {
     "rebase": "from — зависимость снова одобрена или закрыта, зависимой с сессией нужно подтянуть изменения",
     "interrupted": "ход агента был прерван, нужно продолжить",
     "queued_restart": "следующий ход ждал очереди, когда сервер перезапустился, нужно продолжить",
+    "review": "round, comments [{id, path, line, body}], binary, crit_dir — пользователь завершил раунд ревью "
+              "с комментариями",
 }
 
 
@@ -238,7 +241,8 @@ class Board:
                 events.append(self._emit("agent_wake", {"key": task.key, "reason": "ready"}))
             return events
 
-    def transition(self, key: str, to: Status, actor: str) -> List[Event]:
+    def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None) -> List[Event]:
+        """wake_extra — поля для пробуждения returned (например, комментарий пользователя к возврату)."""
         with self._lock:
             self._reject_project_agent(actor)
             if actor not in ACTORS:
@@ -269,7 +273,8 @@ class Board:
 
             events.extend(self._unblocked(before, affected))
             if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
-                events.append(self._emit("agent_wake", {"key": key, "reason": "returned", "from": prev.value}))
+                events.append(self._emit("agent_wake", dict(wake_extra or {}, key=key, reason="returned",
+                                                            **{"from": prev.value})))
             if actor in ("user", "tracker") and to in (Status.APPROVED, Status.DONE):
                 events.extend(self._rebase_wakes(key, affected))
             if actor == "user":
@@ -282,6 +287,53 @@ class Board:
             if self._get(self.store.load_tasks(), key).status != Status(expected):
                 return []
             return self.transition(key, to, actor)
+
+    # --- ревью ---
+
+    def request_review(self, key: str, actor: str) -> List[Event]:
+        """Пользователь просит открыть раунд ревью; сам раунд запускает раннер."""
+        with self._lock:
+            self._require_user(actor, "Ревью начинает только пользователь")
+            task = self._get(self.store.load_tasks(), key)
+            if task.status != Status.IN_REVIEW:
+                raise ValueError("Ревью начинается только для задачи на ревью (сейчас %s)" % task.status.value)
+            review = self.store.load_config().review
+            if not isinstance(review, dict) or (review.get("tool") or "crit") == "none":
+                raise ValueError("В проекте нет инструмента ревью: смотрите изменения во вкладке «Изменения»")
+            if isinstance(task.review, dict) and task.review.get("state") == "open":
+                raise ValueError("Раунд ревью уже открыт")
+            return [self._emit("review_requested", {"key": key})]
+
+    def approve(self, key: str, actor: str, note: Optional[str] = None) -> List[Event]:
+        """Одобрение задачи на ревью; note — системное сообщение в тред (например, откуда одобрение)."""
+        with self._lock:
+            self._require_user(actor, "Одобряет только пользователь")
+            task = self._get(self.store.load_tasks(), key)
+            if task.status != Status.IN_REVIEW:
+                raise ValueError("Одобрить можно только задачу на ревью (сейчас %s)" % task.status.value)
+            events = self.transition(key, Status.APPROVED, actor)
+            if note:
+                events.extend(self.post_message(key, "system", note))
+            return events
+
+    def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
+        """Возврат в работу с комментарием: агент получает комментарий вместе с пробуждением returned."""
+        with self._lock:
+            self._require_user(actor, "Вернуть в работу с комментарием может только пользователь")
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError("Нужен комментарий")
+            task = self._get(self.store.load_tasks(), key)
+            if task.status not in RETURNED_FROM:
+                raise ValueError("Вернуть в работу можно задачу на ревью или после него (сейчас %s)" % task.status.value)
+            msg, event = self._append_message(key, actor, text)
+            return [event] + self.transition(key, Status.IN_PROGRESS, actor, wake_extra={"message_id": msg.id})
+
+    @staticmethod
+    def _require_user(actor: str, message: str) -> None:
+        if actor not in ACTORS and actor != "project_agent":
+            raise ValueError("Неизвестный актор: %r" % actor)
+        if actor != "user":
+            raise PermissionError(message)
 
     def _terminal_command(self, task: Task) -> Optional[str]:
         hook = self.terminal_command_for
@@ -397,18 +449,8 @@ class Board:
                 if not isinstance(from_task, str):
                     raise ValueError("from_task должен быть строкой")
                 self._get(self.store.load_tasks(), from_task)
-            now = self._clock()
-            msg = Message(id=uuid.uuid4().hex, author=author, text=text, at=now)
-            self.store.append_message(thread, msg)
-            if author != "user":
-                if task is not None:
-                    task.unread += 1
-                    self.store.save_task(task)
-                else:
-                    meta = self.store.load_meta()
-                    meta["project_unread"] += 1
-                    self.store.save_meta(meta)
-            events = [self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})]
+            msg, posted = self._append_message(thread, author, text)
+            events = [posted]
             wakes_agent = author == "user" or (author == "project_agent" and task is not None)
             if author == "user" and task is not None and self.store.load_config().stage == "decomposition":
                 # агентов задач до утверждения разбивки нет: комментарий к задаче читает агент проекта
@@ -421,6 +463,21 @@ class Board:
                 events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task,
                                                         "by": author}))
             return events
+
+    def _append_message(self, thread: str, author: str, text: str):
+        """Сообщение в тред без пробуждений: (сообщение, событие message_posted)."""
+        msg = Message(id=uuid.uuid4().hex, author=author, text=text, at=self._clock())
+        self.store.append_message(thread, msg)
+        if author != "user":
+            if thread != PROJECT_THREAD:
+                task = self._get(self.store.load_tasks(), thread)
+                task.unread += 1
+                self.store.save_task(task)
+            else:
+                meta = self.store.load_meta()
+                meta["project_unread"] += 1
+                self.store.save_meta(meta)
+        return msg, self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})
 
     def mark_read(self, thread: str) -> List[Event]:
         with self._lock:

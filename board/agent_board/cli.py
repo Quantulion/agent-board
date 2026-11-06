@@ -121,7 +121,6 @@ UPDATE_OPTIONS = [
     ("summary", "summary", False),
     ("todo", "todo_json", True),
     ("changed_files", "changed_files_json", True),
-    ("review", "review_json", True),
     ("report", "report", False),
     ("rule_violations", "rule_violations_json", True),
 ]

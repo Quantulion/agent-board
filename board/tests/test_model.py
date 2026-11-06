@@ -21,7 +21,7 @@ def test_status_labels():
 
 def test_config_defaults():
     c = ProjectConfig(slug="pay", title="Платежи")
-    assert c.chains is True and c.max_agents == 3 and c.tracker == {"type": "none"} and c.review == {"tool": "crit"}
+    assert c.chains is True and c.max_agents == 3 and c.tracker == {"type": "none"} and c.review == {"tool": "crit", "binary": "crit"}
 
 
 def test_task_execution_fields_roundtrip_and_defaults():

@@ -101,6 +101,7 @@ class Task(_Serializable):
     base_branch: Optional[str] = None
     tracker_key: Optional[str] = None
     tracker_url: Optional[str] = None
+    # раунды ревью, ведёт раннер: {round, state, url, session, process, error, history}
     review: Optional[dict] = None
     changed_files: List[str] = field(default_factory=list)
     report: Optional[str] = None

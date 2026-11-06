@@ -205,8 +205,8 @@ try {
   await page.waitForFunction(() => !document.querySelector('.tabs [data-tab="thread"] .tb:not([hidden])'), { timeout: 10000 });
   results.unreadAfterRead = (await taskOf('PAY-105')).unread;
 
-  // ревью с историей раундов (формат зафиксирует план 4)
-  await post('tasks/PAY-105/update', { actor: 'agent', fields: { review: { round: 2, state: 'open', url: 'http://localhost:4317/s/pay-105-r2',
+  // ревью с историей раундов: поле ведёт раннер, тест задаёт его от system
+  await post('tasks/PAY-105/update', { actor: 'system', fields: { review: { round: 2, state: 'open', url: 'http://localhost:4317/s/pay-105-r2',
     history: [{ round: 1, state: 'changes', text: '6 комментариев → все исправлены' }, { round: 2, state: 'open', text: '3 комментария ждут вас' }] } } });
   await page.click('.tabs [data-tab="review"]');
   await page.waitForSelector('.drawer .rounds .round.cur', { timeout: 10000 });

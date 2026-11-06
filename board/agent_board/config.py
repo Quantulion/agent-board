@@ -16,7 +16,7 @@ class ProjectConfig(_Serializable):
     language: str = "ru"
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
-    review: dict = field(default_factory=lambda: {"tool": "crit"})
+    review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
     ship_command: Optional[str] = None
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""

@@ -371,3 +371,9 @@ def test_update_rule_violations_json_by_project_agent(srv, capsys, monkeypatch):
     run_json(capsys, "update", "T-1", "--rule-violations-json", '[{"rule": "r", "text": "t"}]')
     # assert
     assert run_json(capsys, "show", "T-1")["rule_violations"] == [{"rule": "r", "text": "t"}]
+
+
+def test_update_has_no_review_option():
+    # arrange / act / assert: состояние ревью ведёт раннер, агент его не задаёт
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["update", "T-1", "--review-json", "{}"])

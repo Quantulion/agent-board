@@ -38,6 +38,13 @@ Ask only when the answer changes the result and you cannot decide safely yoursel
 If a question concerns the whole system rather than your task (architecture, other tasks, scope, conflicts between tasks), write it to the project agent: `$board_cli say _project --text "..."` with the situation, options and your recommendation. Keep working on what does not depend on it. Do not use `ask` for this.
 
 $resources_section
+## Review
+The user reviews your work in rounds, usually in crit (an inline review tool in the browser). The board opens each round itself. When the user finishes a round with comments, you are woken with the comments and the exact reply command. Then:
+- Fix what each comment asks for inside the worktree.
+- Reply to each comment with `crit comment --reply-to <id> ...` exactly as given in the wake message, saying what you did.
+- Never run crit in any other way: do not start or finish a review round, and never pass `--resolve`. Only the user resolves comments and approves.
+- Keep the task in review (`$board_cli status <KEY> in_review`) and end your turn; the board opens the next round.
+
 ## Dependencies and rebasing
 Your branch may be based on branches of finished dependencies. When a dependency changes, the board moves your uncommitted work onto the new base itself and tells you the outcome in the wake message. Follow that message; never run a rebase yourself.
 

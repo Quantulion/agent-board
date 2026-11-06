@@ -1119,3 +1119,311 @@ def test_task_agents_start_only_in_work_stage(make_project, start_server, calls)
     # assert
     assert sorted(c["env"]["AGENT_BOARD_TASK"] for c in calls) == ["T-1", "T-2", "T-3"]
     assert {c["kind"] for c in calls} == {"start"}
+
+
+# --- ревью ---
+
+from fakes import fake_crit  # noqa: E402
+
+
+@pytest.fixture
+def crit_bin(tmp_path):
+    return fake_crit.install(tmp_path / "crit-bin")
+
+
+def review_project(make_project, crit_bin, **kw):
+    kw.setdefault("review", {"tool": "crit", "binary": str(crit_bin)})
+    return make_project(**kw)
+
+
+def to_review(srv, store, key="A"):
+    add(srv, key, script({"write": {"path": "f.txt", "text": "x"}}, {"cli": ["status", key, "in_review"]}))
+    wait_for(lambda: task(store, key).status == Status.IN_REVIEW and task(store, key).agent_state == "idle",
+             what="%s на ревью" % key)
+    runner_sync(srv)
+
+
+def review(store, key="A"):
+    return task(store, key).review or {}
+
+
+def wait_round(store, rnd, key="A"):
+    """Раунд открыт, ссылка известна, и crit этого раунда уже запущен."""
+    def opened():
+        r = review(store, key)
+        started = {c["pid"] for c in fake_crit.review_calls(store.root / "crit")}
+        return r.get("state") == "open" and r.get("round") == rnd and r.get("url") \
+            and (r.get("process") or {}).get("pgid") in started and r
+    return wait_for(opened, what="раунд %d открыт" % rnd)
+
+
+def crit_dir(store):
+    return store.root / "crit"
+
+
+def test_review_round_with_comments_wakes_agent_then_opens_next_round(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    # act
+    fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": "переименуй файл"}])
+    second = wait_round(store, 2)
+    runner_sync(srv)
+    # assert
+    wakes = [e.data for e in events(store, "agent_wake", "A") if e.data["reason"] == "review"]
+    assert len(wakes) == 1 and wakes[0]["round"] == 1
+    assert [(c["path"], c["line"], c["body"]) for c in wakes[0]["comments"]] == [("f.txt", 1, "переименуй файл")]
+    resume = [c for c in calls if c["kind"] == "resume"]
+    assert len(resume) == 1
+    assert "переименуй файл" in resume[0]["text"] and "--reply-to" in resume[0]["text"]
+    assert str(crit_dir(store)) in resume[0]["text"]
+    assert second["url"] == first["url"] and second["session"] == first["session"]
+    assert [(h["round"], h["state"], h["comments"]) for h in second["history"]] == [(1, "changes", 1)]
+    rounds = fake_crit.review_calls(crit_dir(store))
+    assert len(rounds) == 2
+    assert rounds[0]["cwd"] == task(store, "A").worktree and "--session" not in rounds[0]["argv"]
+    assert rounds[1]["argv"][-2:] == ["--session", first["session"]] and "-p" in rounds[1]["argv"]
+    assert "--base-branch" in rounds[0]["argv"] and "main" in rounds[0]["argv"]
+    assert task(store, "A").status == Status.IN_REVIEW
+
+
+def test_review_round_without_comments_approves_as_user_and_commits(make_project, start_server, calls, crit_bin,
+                                                                    git_repo):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    # act
+    fake_crit.finish(crit_dir(store), first["session"])
+    committed = wait_events(store, "task_committed", "A")
+    runner_sync(srv)
+    # assert
+    a = task(store, "A")
+    assert a.status == Status.APPROVED
+    changed = [e.data for e in events(store, "status_changed", "A") if e.data["to"] == "approved"]
+    assert changed == [{"key": "A", "from": "in_review", "to": "approved", "actor": "user"}]
+    assert "Одобрено в ревью (раунд 1)" in thread_texts(store, "A")
+    assert a.review["state"] == "approved" and a.review["process"] is None
+    assert [(h["round"], h["state"], h["comments"]) for h in a.review["history"]] == [(1, "approved", 0)]
+    assert run_git(git_repo, "log", "-1", "--format=%h", "A").strip() == committed[0].data["sha"]
+    assert [c["kind"] for c in calls] == ["start"]
+
+
+def test_restart_during_round_reconnects_with_same_url(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    old_pid = fake_crit.review_calls(crit_dir(store))[0]["pid"]
+    # act
+    srv = restart(srv, start_server)
+    wait_for(lambda: len(fake_crit.review_calls(crit_dir(store))) == 2, what="переподключение к раунду")
+    again = wait_round(store, 1)
+    # assert
+    assert again["url"] == first["url"] and again["session"] == first["session"]
+    assert fake_crit.review_calls(crit_dir(store))[1]["argv"][-2:] == ["--session", first["session"]]
+    assert not harness_mod.group_alive(old_pid)
+    assert again["process"]["pgid"] != old_pid
+    # act: раунд, открытый до перезапуска, завершается как обычно
+    fake_crit.finish(crit_dir(store), first["session"])
+    wait_events(store, "task_committed", "A")
+    assert task(store, "A").status == Status.APPROVED
+
+
+def test_restart_after_review_page_is_gone_reopens_round_on_same_url(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    srv.stop()
+    fake_crit.stop_daemon(crit_dir(store), first["session"])
+    # act
+    start_server()
+    wait_for(lambda: len(fake_crit.review_calls(crit_dir(store))) == 3, what="повторный запуск раунда")
+    again = wait_round(store, 1)
+    # assert
+    argv = [c["argv"] for c in fake_crit.review_calls(crit_dir(store))]
+    assert "--session" in argv[1] and "--session" not in argv[2]
+    assert argv[2][argv[2].index("-p") + 1] == str(fake_crit.daemon(crit_dir(store), first["session"])["port"])
+    assert again["url"] == first["url"] and again["round"] == 1
+
+
+def test_leftover_review_client_from_crashed_server_is_killed_before_reconnect(make_project, start_server, calls,
+                                                                              crit_bin, monkeypatch):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    old_pid = fake_crit.review_calls(crit_dir(store))[0]["pid"]
+    # сервер «упал»: клиент раунда пережил его
+    kill_reviews = runner_mod.Runner._kill_reviews
+    runner_mod.Runner._kill_reviews = lambda self: None
+    try:
+        srv.stop()
+    finally:
+        runner_mod.Runner._kill_reviews = kill_reviews
+    assert harness_mod.group_alive(old_pid)
+    # act
+    start_server()
+    wait_for(lambda: len(fake_crit.review_calls(crit_dir(store))) == 2, what="переподключение")
+    wait_round(store, 1)
+    # assert
+    wait_for(lambda: not harness_mod.group_alive(old_pid), what="старый клиент остановлен")
+
+
+def test_repeated_review_request_starts_one_process(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    # act: второй клик приходит раньше, чем раннер успел открыть раунд
+    board.request_review("A", "user")
+    board.request_review("A", "user")
+    wait_round(store, 1)
+    runner_sync(srv)
+    with pytest.raises(ValueError):
+        board.request_review("A", "user")
+    runner_sync(srv)
+    # assert
+    assert len(fake_crit.review_calls(crit_dir(store))) == 1
+    assert review(store)["round"] == 1
+
+
+def test_missing_review_binary_shows_error_on_card(make_project, start_server, calls, tmp_path):
+    # arrange
+    store = make_project(review={"tool": "crit", "binary": str(tmp_path / "no-crit")})
+    srv = start_server()
+    to_review(srv, store)
+    # act
+    srv.board_for("pay").request_review("A", "user")
+    wait_for(lambda: review(store).get("error"), what="ошибка ревью на карточке")
+    runner_sync(srv)
+    # assert
+    r = review(store)
+    assert r["state"] == "idle" and "не найден" in r["error"]
+    assert any("Ревью не запущено" in t and "не найден" in t for t in thread_texts(store, "A"))
+    assert task(store, "A").status == Status.IN_REVIEW
+    # раннер продолжает работать
+    srv.board_for("pay").post_message("A", "user", "ещё живой?")
+    wait_events(store, "turn_finished", "A", count=2)
+
+
+def test_manual_approve_during_round_stops_crit_and_commits(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    pid = fake_crit.review_calls(crit_dir(store))[0]["pid"]
+    # act
+    srv.board_for("pay").approve("A", "user")
+    wait_events(store, "task_committed", "A")
+    runner_sync(srv)
+    # assert
+    wait_for(lambda: not harness_mod.group_alive(pid), what="crit остановлен")
+    r = review(store)
+    assert r["state"] == "approved" and r["process"] is None
+
+
+def test_return_during_round_stops_crit_and_resets_review(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    pid = fake_crit.review_calls(crit_dir(store))[0]["pid"]
+    # act
+    srv.board_for("pay").return_to_work("A", "user", "доделай")
+    wait_events(store, "turn_finished", "A", count=2)
+    runner_sync(srv)
+    # assert
+    wait_for(lambda: not harness_mod.group_alive(pid), what="crit остановлен")
+    assert review(store)["state"] == "idle"
+    assert len(fake_crit.review_calls(crit_dir(store))) == 1
+
+
+def test_no_review_tool_approve_and_return_with_comment(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project(review={"tool": "none"})
+    srv = start_server()
+    to_review(srv, store, "A")
+    to_review(srv, store, "B")
+    board = srv.board_for("pay")
+    # act
+    board.approve("A", "user")
+    board.return_to_work("B", "user", "добавь тест на пустой ввод")
+    committed = wait_events(store, "task_committed", "A")
+    wait_events(store, "turn_finished", "B", count=2)
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.APPROVED
+    assert run_git(git_repo, "log", "-1", "--format=%h", "A").strip() == committed[0].data["sha"]
+    resumes = [c for c in calls if c["kind"] == "resume" and c["env"]["AGENT_BOARD_TASK"] == "B"]
+    assert len(resumes) == 1
+    assert "добавь тест на пустой ввод" in resumes[0]["text"] and "in_review" in resumes[0]["text"]
+    assert task(store, "B").status == Status.IN_PROGRESS
+
+
+def test_next_round_waits_while_agent_asks_and_opens_after_it_returns_to_review(make_project, start_server, calls,
+                                                                                crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    board.request_review("A", "user")
+    first = wait_round(store, 1)
+    ask = script({"cli": ["ask", "A", "--text", "Как назвать?", "--option", "x", "--option", "y"]})
+    # act: по комментарию агент задаёт вопрос и заканчивает ход
+    fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": ask}])
+    wait_for(lambda: task(store, "A").status == Status.WAITING_ANSWER and task(store, "A").agent_state == "idle",
+             what="агент ждёт ответа")
+    runner_sync(srv)
+    # assert
+    assert review(store)["state"] == "fixing"
+    assert len(fake_crit.review_calls(crit_dir(store))) == 1
+    # act: после ответа агент возвращает задачу на ревью — раннер открывает следующий раунд
+    qid = task(store, "A").questions[0].id
+    board.answer("A", qid, "x", script({"cli": ["status", "A", "in_review"]}))
+    second = wait_round(store, 2)
+    # assert
+    assert second["url"] == first["url"]
+    assert len(fake_crit.review_calls(crit_dir(store))) == 2
+
+
+def test_approval_drops_undelivered_review_comments(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    board.request_review("A", "user")
+    first = wait_round(store, 1)
+    board.post_message("A", "user", script({"sleep": 3}))
+    wait_for(lambda: task(store, "A").agent_state == "running", what="агент занят")
+    fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": "устаревшее замечание"}])
+    wait_for(lambda: review(store).get("state") == "changes", what="раунд с замечаниями")
+    # act
+    board.approve("A", "user")
+    wait_events(store, "task_committed", "A")
+    board.return_to_work("A", "user", "ещё одна правка")
+    wait_events(store, "turn_finished", "A", count=3)
+    runner_sync(srv)
+    # assert
+    resumes = [c["text"] for c in calls if c["kind"] == "resume"]
+    assert "ещё одна правка" in resumes[-1]
+    assert not any("устаревшее замечание" in t for t in resumes)

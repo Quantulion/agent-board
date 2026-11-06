@@ -33,6 +33,9 @@ class WakeContext:
             self._add_message(r, store, str(r.get("task") or key), r.get("message_id"))
         elif reason == "escalation":
             self._add_message(r, store, PROJECT_THREAD, self._last.get((slug, "message", PROJECT_THREAD)))
+        elif reason == "returned" and r.get("message_id"):
+            # комментарий, с которым пользователь вернул задачу в работу
+            self._add_message(r, store, key, r.get("message_id"))
         elif reason == "answer":
             self._add_answer(r, store, key, self._last.pop((slug, "question", key), None))
         elif reason == "proposal_rejected" and not r.get("id"):

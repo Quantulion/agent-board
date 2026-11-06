@@ -457,6 +457,12 @@ class _Handler(BaseHTTPRequestHandler):
             extra["key"] = task.key
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "transition":
             events = board.transition(rest[1], Status(_need(body, "to")), _need(body, "actor"))
+        elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "review":
+            events = board.request_review(rest[1], _need(body, "actor"))
+        elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "approve":
+            events = board.approve(rest[1], _need(body, "actor"))
+        elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "return":
+            events = board.return_to_work(rest[1], _need(body, "actor"), _need(body, "text"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "update":
             events = board.update_task(rest[1], _need(body, "actor"), _need(body, "fields"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "deps":

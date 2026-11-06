@@ -285,3 +285,56 @@ def test_project_prompt_explains_recording_rule_violations():
     text = project_prompt(_config(), {"tasks": [], "proposals": []}, CLI)
     # assert
     assert "update <KEY> --rule-violations-json" in text
+
+
+def test_wake_message__review_round__should_quote_each_comment_and_give_reply_command():
+    # arrange
+    reason = {"key": "PAY-7", "reason": "review", "round": 2, "binary": "crit", "crit_dir": "/b/pay/crit",
+              "comments": [{"id": "c_1", "path": "src/a.py", "line": 12, "body": "Вынеси в `helper`"},
+                           {"id": "r_2", "path": None, "line": None, "body": "В целом ок"}]}
+    # act
+    text = wake_message([reason], "", CLI)
+    # assert
+    assert "round 2" in text and "2 unresolved comments" in text
+    assert "c_1" in text and "src/a.py:12" in text and "Вынеси в `helper`" in text
+    assert "r_2" in text and "В целом ок" in text
+    assert "crit comment --reply-to <id> -o /b/pay/crit --author agent" in text
+    assert "Do not run crit" in text and "--resolve" in text
+    assert "agent-board status PAY-7 in_review" in text and "end your turn" in text
+
+
+def test_wake_message__review_round_with_custom_binary_and_spaces__should_quote_paths():
+    # arrange
+    reason = {"key": "PAY-7", "reason": "review", "round": 1, "binary": "/opt/my crit", "crit_dir": "/b/my pay/crit",
+              "comments": [{"id": "c_1", "path": "a.py", "line": None, "body": "x"}]}
+    # act
+    text = wake_message([reason], "", CLI)
+    # assert
+    assert "'/opt/my crit' comment --reply-to <id> -o '/b/my pay/crit'" in text
+    assert "a.py" in text and "a.py:None" not in text
+
+
+def test_wake_message__review_without_comments__should_point_to_crit_comments():
+    # arrange
+    reason = {"key": "PAY-7", "reason": "review", "round": 1}
+    # act
+    text = wake_message([reason], "", CLI)
+    # assert
+    assert "crit comments" in text and "None" not in text
+
+
+def test_wake_message__returned_with_comment__should_quote_it():
+    # arrange
+    reason = {"key": "PAY-7", "reason": "returned", "from": "in_review", "message_id": "m1", "text": "Поправь тесты"}
+    # act
+    text = wake_message([reason], "", CLI)
+    # assert
+    assert "from status `in_review`" in text and "Поправь тесты" in text and "```" in text
+
+
+def test_task_system_explains_review_rounds():
+    # arrange / act
+    text = task_system(_config(), CLI)
+    # assert
+    assert "## Review" in text and "crit comment --reply-to" in text
+    assert "Never run crit" in text and "--resolve" in text

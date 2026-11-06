@@ -1031,3 +1031,144 @@ def test_store_js_listens_to_every_event_type():
     listed = set(re.findall(r"'([a-z_]+)'", block))
     # assert
     assert listed == set(EVENT_TYPES)
+
+
+# --- ревью ---
+
+def to_review(server, key="T-1"):
+    add_task(server, key)
+    post(server, "/api/p/pay/tasks/%s/transition" % key, {"to": "in_review", "actor": "agent"})
+
+
+def task_state(server, key="T-1"):
+    return next(t for t in get(server, "/api/p/pay/state").json()["tasks"] if t["key"] == key)
+
+
+def test_review_request_records_event_for_in_review_task(server):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
+    # assert
+    assert r.status == 200
+    assert [e["type"] for e in r.json()["events"]] == ["review_requested"]
+    assert r.json()["events"][0]["data"] == {"key": "T-1"}
+
+
+def test_review_request_outside_in_review_is_400(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "ревью" in r.json()["error"]
+
+
+def test_review_request_by_agent_is_403(server):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "agent"})
+    # assert
+    assert r.status == 403
+
+
+def test_review_request_with_open_round_is_400(server):
+    # arrange
+    to_review(server)
+    server.board_for("pay").update_task("T-1", "system", {"review": {"round": 1, "state": "open"}})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
+    # assert
+    assert r.status == 400
+
+
+def test_review_request_without_review_tool_is_400(server):
+    # arrange
+    server.board_for("pay").update_config({"review": {"tool": "none"}})
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
+    # assert
+    assert r.status == 400
+
+
+def test_approve_by_user_moves_to_approved(server):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/approve", {"actor": "user"})
+    # assert
+    assert r.status == 200
+    changed = [e["data"] for e in r.json()["events"] if e["type"] == "status_changed"]
+    assert changed == [{"key": "T-1", "from": "in_review", "to": "approved", "actor": "user"}]
+    assert task_state(server)["status"] == "approved"
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
+def test_approve_by_non_user_is_403(server, actor):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/approve", {"actor": actor})
+    # assert
+    assert r.status == 403 and task_state(server)["status"] == "in_review"
+
+
+def test_approve_outside_in_review_is_400(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/approve", {"actor": "user"})
+    # assert
+    assert r.status == 400
+
+
+def test_return_with_comment_posts_message_and_wakes_once_with_it(server):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/return", {"actor": "user", "text": "поправь тесты"})
+    # assert
+    assert r.status == 200
+    evs = r.json()["events"]
+    assert [e["type"] for e in evs] == ["message_posted", "status_changed", "agent_wake"]
+    wake = evs[2]["data"]
+    assert wake["reason"] == "returned" and wake["from"] == "in_review"
+    assert wake["message_id"] == evs[0]["data"]["message_id"]
+    assert task_state(server)["status"] == "in_progress"
+    thread = get(server, "/api/p/pay/threads/T-1").json()["messages"]
+    assert [(m["author"], m["text"]) for m in thread] == [("user", "поправь тесты")]
+
+
+@pytest.mark.parametrize("body,status", [
+    ({"actor": "user", "text": "  "}, 400),
+    ({"actor": "user"}, 400),
+    ({"actor": "agent", "text": "x"}, 403),
+])
+def test_return_validation(server, body, status):
+    # arrange
+    to_review(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/return", body)
+    # assert
+    assert r.status == status and task_state(server)["status"] == "in_review"
+
+
+def test_return_from_in_progress_is_400(server):
+    # arrange
+    add_task(server)
+    post(server, "/api/p/pay/tasks/T-1/transition", {"to": "in_progress", "actor": "agent"})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/return", {"actor": "user", "text": "x"})
+    # assert
+    assert r.status == 400
+
+
+def test_review_field_is_runner_only(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"review": {"state": "approved"}}})
+    # assert
+    assert r.status == 403 and task_state(server)["review"] is None

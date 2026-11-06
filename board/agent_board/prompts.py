@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 from string import Template
 from typing import Any, Dict, List, Optional
@@ -134,7 +135,12 @@ def _wake_line(r: dict, cli: str) -> str:
     if reason == "returned":
         origin = "from status `%s`" % r["from"] if r.get("from") else \
             "(the previous status is missing here; see `%s show %s`)" % (cli, key)
+        if r.get("text"):
+            return ("The user returned the task to work %s with this comment, verbatim:\n%s\nAddress it, then continue."
+                    % (origin, _quote(str(r["text"]))))
         return ("The task was returned to work %s. Find out why in the card and thread, then continue." % origin)
+    if reason == "review":
+        return _review_line(r, cli, key)
     if reason == "rebase":
         base = r.get("base") or "the new base"
         dep = "dependency %s" % r["from"] if r.get("from") else \
@@ -186,12 +192,37 @@ def _wake_line(r: dict, cli: str) -> str:
     return "Woken: %s." % (reason or "unknown reason")
 
 
+def _review_line(r: dict, cli: str, key: str) -> str:
+    crit = shlex.quote(str(r.get("binary") or "crit"))
+    data = " -o %s" % shlex.quote(str(r["crit_dir"])) if r.get("crit_dir") else ""
+    comments = [c for c in r.get("comments") or [] if isinstance(c, dict)]
+    rnd = " %s" % r["round"] if r.get("round") else ""
+    out = "The user finished review round%s in crit with %d unresolved comments." % (rnd, len(comments))
+    if not comments:
+        out += " Read them in the worktree with `%s comments --json%s`." % (crit, data)
+    for c in comments:
+        where = c.get("path") or "general"
+        if c.get("path") and c.get("line"):
+            where = "%s:%s" % (c["path"], c["line"])
+        out += "\n\nComment %s on %s, verbatim:\n%s" % (c.get("id", "?"), where, _quote(str(c.get("body", ""))))
+    return out + (
+        "\n\nComments stay listed until the user resolves them, so some may be from earlier rounds and already "
+        "answered by you; check their replies with `%s comments --json%s` and do not redo finished work. "
+        "Address every comment in the worktree. Reply to each one from the worktree with "
+        "`%s comment --reply-to <id>%s --author agent '<what you did>'`. "
+        "Do not run crit in any other way: no new round, no Finish Review, never pass --resolve; "
+        "the user resolves comments and approves. When you are done, keep the status in review "
+        "(`%s status %s in_review`) and end your turn; the board opens the next round itself."
+        % (crit, data, crit, data, cli, key))
+
+
 def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board") -> str:
     """Одно сообщение из накопленных пробуждений, в порядке поступления.
 
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text, task (комментарий пользователя к этой задаче для агента проекта); answer -> question_id, question, choice, comment;
-      returned -> from; rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
+      returned -> from, text (комментарий пользователя к возврату); review -> round, comments, binary, crit_dir;
+      rebase -> from, base, rebase_ok, conflict_files, merge_branches, carried_ref;
       escalation -> from, text; proposal_rejected -> id;
       interrupted, queued_restart, unblocked, ready, manual -> без полей.
     Ключ key (задача получателя) используется только в подсказках «прочитай на доске».
