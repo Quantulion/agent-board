@@ -90,6 +90,24 @@ CATALOG: Dict[str, tuple] = {
                      "предложить пользователю изменение графа (агент проекта)"),
     "help.lock_run": ("run a command holding an exclusive resource", "выполнить команду под эксклюзивным ресурсом"),
     "help.events": ("project events after a sequence number", "события проекта после номера"),
+    "help.self_update": ("install the board from a repository commit and switch agent-board to it",
+                         "установить доску из коммита репозитория и переключить на неё agent-board"),
+    "help.ref": ("commit, branch or tag (default: the one from the previous install, else the main branch)",
+                 "коммит, ветка или тег (по умолчанию — из прошлой установки, иначе основная ветка)"),
+    "help.repo": ("repository to install from (default: the one from the previous install)",
+                  "репозиторий, из которого ставить (по умолчанию — из прошлой установки)"),
+    # --- установка ---
+    "install.no_repo": ("no install found: run python3 <repo>/scripts/install.py or pass --repo",
+                        "установка не найдена: запустите python3 <repo>/scripts/install.py или укажите --repo"),
+    "install.failed": ("install failed: {error}", "установка не удалась: {error}"),
+    "install.done": ("installed commit {commit}: {wrapper}", "установлен коммит {commit}: {wrapper}"),
+    "install.unchanged": ("commit {commit} is already installed: {wrapper}",
+                          "коммит {commit} уже установлен: {wrapper}"),
+    "install.restart": ("the running board still uses the old code; restart it: "
+                        "agent-board stop && agent-board serve --detach",
+                        "запущенная доска работает на старом коде; перезапустите её: "
+                        "agent-board stop && agent-board serve --detach"),
+    "install.path_hint": ("add {bin} to PATH to use agent-board", "добавьте {bin} в PATH, чтобы вызывать agent-board"),
     # --- запуск и остановка сервера ---
     "life.restart_hint": ("restart it: agent-board stop && agent-board serve --detach",
                           "перезапустите: agent-board stop && agent-board serve --detach"),

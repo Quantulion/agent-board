@@ -2,6 +2,12 @@
 # Wrapper around the agent-board CLI: finds the repository relative to itself, checks Python, runs the module.
 set -e
 
+# installed from a fixed commit (scripts/install.py): independent of the repository working tree
+installed="${AGENT_BOARD_HOME:-$HOME/.agent-board}/bin/agent-board"
+if [ -x "$installed" ] && [ -z "${AGENT_BOARD_FROM_REPO:-}" ]; then
+    exec "$installed" "$@"
+fi
+
 script="$0"
 while [ -h "$script" ]; do
     dir=$(cd -P "$(dirname "$script")" && pwd)
