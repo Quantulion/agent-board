@@ -9,15 +9,17 @@ user, who decides. `<slug>` is the project slug.
    Empty → say so in the summary, offer to set them (`references/setup.md`, question 8), record nothing.
 2. Split the text into separate rules. Check each task (`agent-board --project <slug> state`) against each rule:
    title, description, `done_when`, `repo`, `kind`, `estimate`, `deps`.
-3. For every task with violations, write the full list (it replaces the previous one), as the user:
+3. For every task with violations, write the full list (it replaces the previous one):
 ```
-AGENT_BOARD_ACTOR=user agent-board --project <slug> update PAY-4 --rule-violations-json '[{"rule": "One deploy per task", "text": "Changes api and worker: two deploys. Fix: split into PAY-4 (api) and PAY-5 (worker), PAY-5 depends on PAY-4."}]'
+agent-board --project <slug> update PAY-4 --rule-violations-json '[{"rule": "One deploy per task", "text": "Changes api and worker: two deploys. Fix: split into PAY-4 (api) and PAY-5 (worker), PAY-5 depends on PAY-4."}]'
 ```
    - `rule`: the rule as the project states it, short.
    - `text`: what exactly is wrong in this task + the concrete fix you suggest.
 4. A task that now complies but had violations recorded earlier → clear them: `--rule-violations-json '[]'`.
 5. Do not fix anything yourself. Splitting, merging, re-scoping is the user's call: list your proposed fixes
-   in the summary and apply one only after the user says yes (then re-check that task).
+   in the summary and apply one only after the user says yes (then re-check that task). Text, estimate and
+   dependencies you may then change (`references/intake.md`, step 5). Cancelling or splitting an existing task
+   needs a status change: that is the user's action on the board; never change statuses yourself.
 
 ## Typical rules and what a violation looks like
 
@@ -36,5 +38,4 @@ AGENT_BOARD_ACTOR=user agent-board --project <slug> update PAY-4 --rule-violatio
 |---|---|
 | Rewriting the task so the violation disappears | Record it; the user decides |
 | `text` says only "violates the rule" | Say what is wrong and how to fix it |
-| `update --rule-violations-json` without `AGENT_BOARD_ACTOR=user` | The board rejects it from an agent |
 | Appending one violation and losing the others | Send the whole list for the task |

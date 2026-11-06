@@ -136,13 +136,49 @@ def test_skill__rule_violation_and_deps_examples__have_board_shape():
         assert isinstance(keys, list) and all(isinstance(k, str) for k in keys), keys
 
 
-def test_skill__rule_violation_updates__run_as_user():
+def test_skill__commands__no_actor_override():
     # arrange
-    for path in FILES:
-        for span in _spans(path):
-            # act / assert: от агента доска не принимает нарушения правил и правку формулировки задачи
-            if span.startswith(("agent-board", "AGENT_BOARD_ACTOR")) and " update " in span and "--" in span:
-                assert span.startswith("AGENT_BOARD_ACTOR=user "), (path.name, span)
+    spans = [(path.name, span) for path in FILES for span in _spans(path)]
+    # act: команды пользователя идут от него без переменных; переменная превращает сессию в агента
+    overridden = [(name, span) for name, span in spans if re.match(r"AGENT_BOARD_[A-Z_]+=", span)]
+    # assert
+    assert not overridden, overridden
+
+
+def _signature(tokens):
+    """Подкоманда без флагов: слова как есть, позиционные аргументы и плейсхолдеры — `<arg>`."""
+    args = tokens[1:]
+    if args[:1] == ["--project"]:
+        args = args[2:]
+    result = []
+    for token in args[:3]:
+        if token.startswith("--") or token == "…":
+            break
+        result.append(token if re.fullmatch(r"[a-z][a-z-]*", token) else "<arg>")
+    return tuple(result)
+
+
+def _forbidden():
+    text = SKILL.read_text(encoding="utf-8")
+    table = text[text.index("## Never"):]
+    table = table[:table.index("\n## ", 1)]
+    rows = [line.split("|")[1] for line in table.splitlines() if line.startswith("| ")]
+    return {_signature(shlex.split(span)) for row in rows for span in _INLINE.findall(row)
+            if span.startswith("agent-board ")}
+
+
+def test_skill__forbidden_commands__not_used_anywhere():
+    # arrange
+    forbidden = _forbidden()
+    never = SKILL.read_text(encoding="utf-8").split("## Never")[1]
+    # act
+    used = [(name, tokens) for name, tokens in _commands()
+            if not (name == "SKILL.md" and " ".join(tokens) in never)]
+    clashes = [(name, tokens) for name, tokens in used
+               if any(_signature(tokens)[:len(f)] == f for f in forbidden)]
+    # assert
+    assert {("stage",), ("tracker", "create"), ("tracker", "sync"), ("ship",)} <= forbidden, forbidden
+    assert not clashes, clashes
 
 
 def test_skill__config_set_examples__use_schema_fields(tmp_path):

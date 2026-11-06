@@ -2574,3 +2574,25 @@ def test_sync_tick__project_is_due__starts_worker(server, jira, clock, monkeypat
     sync.tick()
     # assert
     assert started == ["pay"]
+
+
+def test_add_task__repo_not_in_project_repos__400(server):
+    # arrange
+    store = ProjectStore("pay")
+    config = store.load_config()
+    config.repos = [{"name": "api", "path": "/tmp/api", "base": "main"}]
+    store.save_config(config)
+    # act
+    r = post(server, "/api/p/pay/tasks", {"task": {"key": "T-1", "title": "x", "repo": "worker"}, "actor": "user"})
+    # assert
+    assert r.status == 400 and "worker" in r.json()["error"]
+
+
+def test_set_deps__by_agent__403(server):
+    # arrange
+    add_task(server)
+    add_task(server, "T-2")
+    # act
+    r = post(server, "/api/p/pay/tasks/T-2/deps", {"deps": ["T-1"], "actor": "agent"})
+    # assert
+    assert r.status == 403

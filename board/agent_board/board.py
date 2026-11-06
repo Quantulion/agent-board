@@ -342,6 +342,7 @@ class Board:
                                       "проекта (say _project)")
             tasks = self.store.load_tasks()
             self._check_new_key(task.key, tasks)
+            self._check_repo(task.repo)
             validate_deps(task.key, task.deps, tasks)
             task.status = Status.NOT_STARTED
             task.updated_at = self._clock()
@@ -530,8 +531,11 @@ class Board:
             return events
 
     def set_deps(self, key: str, deps: List[str], actor: str) -> List[Event]:
+        """Зависимости меняет только пользователь; агенты предлагают изменение через агента проекта."""
         with self._lock:
             self._reject_project_agent(actor)
+            self._require_user(actor, "Зависимости меняет только пользователь: нужна правка графа — напишите агенту "
+                                      "проекта (say _project)")
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             validate_deps(key, deps, tasks)
@@ -686,6 +690,7 @@ class Board:
                 raise ValueError("В предложении add_task нужен объект task")
             task = new_task_from_dict(raw)
             self._check_new_key(task.key, tasks)
+            self._check_repo(task.repo)
             validate_deps(task.key, task.deps, tasks)
             return task.key
         key = payload.get("key")
@@ -729,6 +734,12 @@ class Board:
         clash = next((k for k in tasks if k.lower() == key.lower()), None)
         if clash is not None:
             raise ValueError("Задача уже существует: %s" % clash)
+
+    def _check_repo(self, repo: Optional[str]) -> None:
+        """Задача ссылается только на репозиторий проекта, если репозитории заданы."""
+        names = [r.get("name") for r in self.store.load_config().repos if isinstance(r, dict)]
+        if repo and names and repo not in names:
+            raise ValueError("Репозиторий %s не из настроек проекта: %s" % (repo, ", ".join(map(str, names))))
 
     @staticmethod
     def _reject_project_agent(actor: str) -> None:

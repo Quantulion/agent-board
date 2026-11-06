@@ -1108,3 +1108,47 @@ def test_legacy_ship_command__save_fails__board_still_works(tmp_home, monkeypatc
     # assert
     assert store.load_config().ship["command"] == "git push origin {branch}"
     assert board.snapshot()["tasks"] == [] and "read-only" in capsys.readouterr().err
+
+
+def _with_repos(board, *names):
+    config = board.store.load_config()
+    config.repos = [{"name": n, "path": "/tmp/" + n, "base": "main"} for n in names]
+    board.store.save_config(config)
+
+
+def test_add_task__repo_not_in_project_repos__rejected(board):
+    # arrange
+    _with_repos(board, "api")
+    # act / assert
+    with pytest.raises(ValueError, match="worker"):
+        board.add_task(mk("A", repo="worker"), "user")
+    assert board.snapshot()["tasks"] == []
+
+
+def test_add_task__repo_in_project_repos_or_no_repos_configured__accepted(board):
+    # arrange
+    board.add_task(mk("A", repo="anything"), "user")
+    _with_repos(board, "api")
+    # act
+    board.add_task(mk("B", repo="api"), "user")
+    board.add_task(mk("C"), "user")
+    # assert
+    assert [t["key"] for t in board.snapshot()["tasks"]] == ["A", "B", "C"]
+
+
+def test_propose_add_task__repo_not_in_project_repos__rejected(board):
+    # arrange
+    _with_repos(board, "api")
+    # act / assert
+    with pytest.raises(ValueError, match="worker"):
+        board.propose("add_task", {"task": {"key": "A", "title": "a", "repo": "worker"}}, "")
+
+
+def test_set_deps__task_agent__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.set_deps("B", ["A"], "agent")
+    assert board.snapshot()["tasks"][1]["deps"] == []

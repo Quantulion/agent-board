@@ -176,7 +176,7 @@ def cmd_update(args):
         if value is None:
             continue
         fields[field] = _json_arg(value, "--" + attr.replace("_", "-")) if is_json else value
-    return _request("POST", _p(args, "tasks/%s/update" % args.key), {"actor": _actor(), "fields": fields})
+    return _request("POST", _p(args, "tasks/%s/update" % args.key), {"actor": _user_actor(), "fields": fields})
 
 
 def cmd_ask(args):

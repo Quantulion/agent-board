@@ -34,33 +34,40 @@ One task = one reviewable, deployable unit. Follow the project's `decomposition_
 
 ## Steps
 
+0. Read `agent-board --project <slug> config get --json` → `repos`. Empty, or the plan needs a repo that is not
+   there → go back to `references/setup.md`, question 1, before drafting. Every task's `repo` must be one of these
+   names: the board rejects any other.
 1. Read existing tasks: `agent-board --project <slug> state`. A plan task matches an existing one by key,
    or by the same title (ignore case and punctuation).
 2. Draft the list and the graph in memory. Never invent work the plan does not contain. Ambiguity that changes
    the split (unclear scope, which repo) → ask the user, one question at a time. The rest → "open questions"
    in the final summary.
 3. Show the user a compact table (key, title, repo, deps, estimate) and get a yes before writing.
-4. Create new tasks in topological order (dependencies first), one call each:
+   More than 15 tasks: group the table by repo or plan section.
+4. Create new tasks in topological order (dependencies first), one call each. Many tasks: chain the calls in one
+   shell command with `&&`, still in topological order, so the first error stops the rest:
 ```
 agent-board --project <slug> add-task --json '{"key": "PAY-2", "title": "Add PG schema for payments", "description": "Tables payments, refunds; migrations only.", "done_when": "Migrations apply to an empty database in tests", "repo": "api", "kind": "code", "estimate": 2, "deps": ["PAY-1"]}'
 ```
 5. Existing task that matches but whose text or dependencies changed in the plan (stage `decomposition` only).
-   Change only what differs; `AGENT_BOARD_ACTOR=user` makes the edit the user's (agents may not change task text):
+   Change only what differs:
 ```
-AGENT_BOARD_ACTOR=user agent-board --project <slug> update PAY-2 --description 'Tables payments, refunds' --done-when 'Migrations apply in tests' --estimate 2
+agent-board --project <slug> update PAY-2 --description 'Tables payments, refunds' --done-when 'Migrations apply in tests' --estimate 2
 agent-board --project <slug> deps PAY-3 --json '["PAY-1", "PAY-2"]'
 ```
    `--title` works the same way. `deps` replaces the whole list. `repo` or `kind` changed → tell the user;
-   they cancel the old task on the board and you add a new one with a new key.
+   cancelling the old task is their action on the board. Never change a task's status yourself; after they
+   cancel it, add the new one with a new key.
 6. Errors:
    - "Зависимость от неизвестной задачи" → you broke topological order; create the dependency first.
    - "Зависимости образуют цикл" → the plan has a cycle. Find which edge is only order, not a real need, drop it;
      if unsure, ask the user. Never create a task without its real dependency to get past the error.
    - "Задача уже существует" → it is a match from step 1: skip it.
+   - "Репозиторий … не из настроек проекта" → wrong `repo`: use a configured name or add the repo (setup, question 1).
    - Field or JSON error → fix the payload, retry. Put JSON in single quotes; write `'` as `'\''`.
 7. Run `agent-board --project <slug> state` again and check: every plan task is there once, deps match the plan.
 
 ## Summary for the user
 
-Created (keys), updated, skipped as duplicates, open questions. No agent has started: work starts when the user
+Created (keys), updated, skipped as duplicates, open questions (also saved in `project_brief`, SKILL.md step 6). No agent has started: work starts when the user
 approves the decomposition on the page.

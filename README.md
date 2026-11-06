@@ -29,13 +29,13 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 | `state` | снимок проекта целиком |
 | `show <key>` | одна задача |
 | `status <key> <status>` | сменить статус задачи |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N]` | обновить поля задачи; формулировку (`title`, `description`, `done_when`, `estimate`) меняет только пользователь (`AGENT_BOARD_ACTOR=user`), нарушения правил — пользователь или агент проекта |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N]` | обновить поля задачи; без `AGENT_BOARD_ACTOR` команда идёт от пользователя; формулировку (`title`, `description`, `done_when`, `estimate`) меняет только пользователь, нарушения правил — пользователь или агент проекта |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | задать вопрос пользователю |
 | `say <thread> --text T` | написать в тред задачи или в `_project` |
 | `thread <thread>` | прочитать тред |
 | `ship <KEY>...` | отправить одобренные задачи в ревью командой проекта (только пользователь*) |
 | `tracker create\|check\|sync` | завести задачи в трекере (стадия `tracker`), проверить доступ к трекеру или синхронизировать статусы сейчас (только пользователь*; при ошибках — код 1) |
-| `add-task --json '{...}'` | добавить задачу (поля: key, title, description, done_when, repo, kind, estimate, deps); только пользователь*; агенты задач пишут агенту проекта (`say _project`), а он предлагает задачу через `propose` |
+| `add-task --json '{...}'` | добавить задачу (поля: key, title, description, done_when, repo, kind, estimate, deps; `repo` — имя из `repos`, если они заданы); только пользователь*; агенты задач пишут агенту проекта (`say _project`), а он предлагает задачу через `propose` |
 | `deps <KEY> --json '[...]'` | заменить зависимости задачи списком ключей (цикл или неизвестная задача — код 1; только пользователь*) |
 | `propose <add_task\|set_deps\|cancel_task> --json '{...}' [--reason R]` | предложение агента проекта |
 | `stage <stage>` | перевести проект на стадию (только пользователь*) |
@@ -44,7 +44,7 @@ PYTHONPATH=board python3 -m agent_board serve                        # запу�
 | `events [--since N]` | журнал событий |
 | `lock-run <ресурс> -- <команда...>` | выполнить команду под эксклюзивным ресурсом проекта (очередь на ресурс) |
 
-\* Команды пользователя (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`) идут от пользователя только без переменной `AGENT_BOARD_ACTOR`; агенты запускаются с ней (пустое значение тоже считается агентом), поэтому получают отказ на действиях только для пользователя.
+\* Команды пользователя (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`, `update`) идут от пользователя только без переменной `AGENT_BOARD_ACTOR`; агенты запускаются с ней (пустое значение тоже считается агентом), поэтому получают отказ на действиях только для пользователя.
 
 Все команды, кроме `serve` и `init`, обращаются к запущенной доске; если её нет — код выхода 2. Ошибки запроса — код 1.
 

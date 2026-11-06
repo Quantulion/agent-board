@@ -5,6 +5,9 @@ description: Use when the user wants a plan, spec or task list laid out on a tas
 
 # agent-board
 
+If `AGENT_BOARD_TASK` or `AGENT_BOARD_ACTOR` is set, you are a board agent: do not use this skill.
+Write to the project agent instead (`agent-board say _project --text "…"`).
+
 Turn a plan into a task graph on a local board, then hand the conversation over to the board.
 The board server runs the agents; this session only prepares the decomposition and gives the user a link.
 
@@ -25,11 +28,13 @@ Talk to the user in their language. Ask one question at a time.
 
 1. **Board up.** Run `agent-board status`.
    - User asked to bring back an existing board → follow `references/resume.md` instead of this list.
-   - "доска не запущена" → `agent-board serve --detach`. Exit 3 (other version running) → `references/resume.md`.
+   - "доска не запущена" → `agent-board serve --detach`. Exit 3 (other version running) → `references/resume.md`,
+     section "Version mismatch", then continue with step 2.
 2. **Project.** Pick from the `status` list.
    - New: propose a slug from the plan title (latin, lower case, `-`, short: `payments-pg`) and a title;
      confirm with the user, then `agent-board init <slug> --title "<title>"`.
    - Existing, stage `decomposition`: show the task count, ask whether to add to / update this decomposition.
+     No → give `<board url>#/p/<slug>/decomposition` and stop.
    - Existing, any later stage: the decomposition is approved. Give
      `<board url>#/p/<slug>` (board url from `status`) and stop.
 3. **Setup.** Follow `references/setup.md`. It skips fields that are already configured.
@@ -37,6 +42,7 @@ Talk to the user in their language. Ask one question at a time.
 5. **Rules.** Follow `references/decomposition-rules.md`: check every task, record violations.
 6. **Brief and links.** One `config set` (dry run first, as in setup.md) with:
    - `project_brief`: goal, key decisions, constraints — 5–15 lines, written for the project agent;
+     end with an "Open questions" list when intake left any;
    - `links`: the plan, spec and mockups as `{"title", "href"}`: http(s) URLs or absolute paths; the board opens
      files only inside the project's repos.
    Each field is replaced whole: on a re-run start from the current values (`config get --json`), keep the old links.
@@ -53,9 +59,9 @@ agent-board --project <slug> config set --json '{"project_brief": "Goal: move pa
 | Don't | Instead |
 |---|---|
 | Implement a task yourself, edit project repos | Tasks are for task agents after approval |
-| `agent-board stage …`, approve, press anything for the user | Give the link; the user approves on the page |
+| `agent-board stage …`, `agent-board status <KEY> …`, approve, press anything for the user | Give the link; the user approves on the page |
 | Start or wake task agents | They start when the user approves the decomposition |
-| `agent-board tracker …`, create issues by hand | Tracker stage is the user's button after approval |
+| `agent-board tracker create`, `agent-board tracker sync`, issues by hand | Tracker stage is the user's button after approval (`tracker check` in setup is fine) |
 | `agent-board ship`, `git push`, commits | Shipping is the user's button |
 | Write `project.json` or any file under the board home | `config set`, `add-task`, `update`, `deps` |
 | Ask for or store a token, password, cookie | Env var name or file path (`references/setup.md`, Secrets) |

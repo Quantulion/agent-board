@@ -819,7 +819,6 @@ def test_deps__cycle__rejected_with_exit_code_1(srv, capsys):
 def test_update__task_text_by_user__changes_title_description_done_when_estimate(srv, capsys, monkeypatch):
     # arrange
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "user")
     # act
     run_json(capsys, "update", "T-1", "--title", "Новый", "--description", "что делать", "--done-when", "тесты",
              "--estimate", "1.5")
@@ -829,11 +828,51 @@ def test_update__task_text_by_user__changes_title_description_done_when_estimate
         ("Новый", "что делать", "тесты", 1.5)
 
 
-def test_update__task_text_by_agent__rejected(srv, capsys):
+@pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
+@pytest.mark.parametrize("option,value", [("--title", "t"), ("--description", "d"), ("--done-when", "ничего"),
+                                          ("--estimate", "9")])
+def test_update__task_text_by_agent__rejected(srv, capsys, monkeypatch, actor, option, value):
     # arrange
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
     # act
-    code, _, err = run(capsys, "update", "T-1", "--done-when", "ничего")
+    code, _, err = run(capsys, "update", "T-1", option, value)
     # assert
     assert code == 1 and err.strip()
-    assert run_json(capsys, "show", "T-1")["done_when"] == ""
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    task = run_json(capsys, "show", "T-1")
+    assert (task["title"], task["description"], task["done_when"], task["estimate"]) == ("x", "", "", None)
+
+
+def test_update__no_actor_env__acts_as_user(srv, capsys):
+    # arrange: человек в терминале — пользователь, агентам раннер всегда задаёт AGENT_BOARD_ACTOR
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    # act
+    run_json(capsys, "update", "T-1", "--done-when", "тесты", "--rule-violations-json", '[{"rule": "r", "text": "t"}]')
+    # assert
+    task = run_json(capsys, "show", "T-1")
+    assert task["done_when"] == "тесты" and task["rule_violations"] == [{"rule": "r", "text": "t"}]
+
+
+def test_update__rule_violations_by_task_agent__rejected(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    # act
+    code, _, err = run(capsys, "update", "T-1", "--rule-violations-json", "[]")
+    # assert
+    assert code == 1 and err.strip()
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent"])
+def test_deps__by_agent__rejected(srv, capsys, monkeypatch, actor):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
+    # act
+    code, _, err = run(capsys, "deps", "T-2", "--json", '["T-1"]')
+    # assert
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "show", "T-2")["deps"] == []
