@@ -20,6 +20,8 @@ class FakeJira(FakeServer):
         self.issues: Dict[str, dict] = {}
         self.links: List[dict] = []
         self.statuses: Dict[str, str] = {}
+        # подмена ответа поиска (например, не объект)
+        self.search_response = None
 
     def authorized(self, headers) -> bool:
         if self.authorization is not None and headers.get("Authorization") != self.authorization:
@@ -45,7 +47,9 @@ class FakeJira(FakeServer):
         if method == "POST" and url.path == "/rest/api/2/issueLink":
             self.links.append(body)
             return 201, None
-        if method == "GET" and url.path == "/rest/api/2/search":
+        if method == "GET" and url.path in ("/rest/api/2/search", "/rest/api/2/search/jql"):
+            if self.search_response is not None:
+                return 200, self.search_response
             jql = parse_qs(url.query).get("jql", [""])[0]
             keys = re.findall(r"[A-Z]+-\d+", jql)
             return 200, {"issues": [{"key": k, "fields": {"status": {"name": self.statuses[k]}}}

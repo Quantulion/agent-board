@@ -14,6 +14,7 @@ class FakeGitHub(FakeServer):
         self.token = token
         self.issues: Dict[int, dict] = {}
         self.comments: Dict[int, list] = {}
+        self.html_url = "https://github.example/{repo}/issues/{number}"
 
     def authorized(self, headers) -> bool:
         return self.token is None or headers.get("Authorization") == "Bearer " + self.token
@@ -25,7 +26,7 @@ class FakeGitHub(FakeServer):
         if method == "POST" and path == base + "/issues":
             number = len(self.issues) + 1
             self.issues[number] = dict(body, state="open")
-            return 201, {"number": number, "html_url": "https://github.example/%s/issues/%d" % (self.repo, number)}
+            return 201, {"number": number, "html_url": self.html_url.format(repo=self.repo, number=number)}
         m = re.fullmatch(re.escape(base) + r"/issues/(\d+)(/comments)?", path)
         if m and int(m.group(1)) in self.issues:
             number = int(m.group(1))

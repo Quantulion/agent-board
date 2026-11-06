@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import signal
+import socket
 import sys
 import subprocess
 import threading
@@ -73,6 +74,9 @@ def _request(method: str, path: str, body: Optional[dict] = None, timeout: float
         raise CliError(str(message))
     except urllib.error.URLError:
         raise CliError(NOT_RUNNING, 2)
+    except socket.timeout:
+        # соединение есть, ответа нет: сервер мог не закончить запрос
+        raise CliError("Доска не ответила за %g с: запрос всё ещё выполняется на сервере — проверьте доску" % timeout, 2)
 
 
 def _p(args, suffix: str) -> str:

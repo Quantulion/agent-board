@@ -446,3 +446,26 @@ def test_tracker_errors_exit_1(srv, capsys, fake_jira):
     # assert
     assert created[0] == 1 and "JIRA_TOKEN" in created[2]
     assert checked[0] == 1 and "авторизац" in checked[2]
+
+
+def test_request_read_timeout_says_request_still_runs(tmp_home):
+    # arrange: доска приняла соединение, но не отвечает
+    import socket
+
+    from agent_board import cli
+    from agent_board.store import atomic_write_json, board_home
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    try:
+        board_home().mkdir(parents=True, exist_ok=True)
+        atomic_write_json(board_home() / "server.json",
+                          {"port": listener.getsockname()[1], "token": "t", "pid": os.getpid()})
+        # act
+        with pytest.raises(cli.CliError) as info:
+            cli._request("POST", "/api/p/pay/tracker/create", {"actor": "user"}, timeout=0.3)
+    finally:
+        listener.close()
+    # assert
+    assert info.value.code == 2 and "всё ещё выполняется" in str(info.value)

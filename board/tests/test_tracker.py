@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import json
+import socket
+import urllib.parse
 
 import pytest
 
@@ -9,6 +11,7 @@ from agent_board import tracker
 from agent_board.model import Status
 
 from conftest import make_task
+from fakes import fake_http
 from fakes.fake_github import FakeGitHub
 from fakes.fake_jira import FakeJira
 
@@ -204,7 +207,7 @@ def test_create__link_failure__rerun_creates_only_missing_links(board, jira):
     third = tracker.create_issues(board, "user")
     # assert
     assert [e["key"] for e in first["errors"]] == ["B"] and first["linked"] == [["B", "C"]]
-    assert second == {"created": [], "linked": [["A", "B"]], "errors": [], "events": second["events"]}
+    assert second == {"created": [], "linked": [["A", "B"]], "errors": [], "warnings": [], "events": second["events"]}
     assert third["created"] == [] and third["linked"] == []
     assert len(jira.links) == 2 and len(jira.issues) == 4
 
@@ -433,9 +436,18 @@ def test_check__github_401__is_auth_error_without_token(board, github):
     assert info.value.kind == "auth" and TOKEN not in str(info.value)
 
 
+def free_port() -> int:
+    """Порт только что закрытого сокета: на нём никто не слушает."""
+    sock = socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    port = sock.getsockname()[1]
+    sock.close()
+    return port
+
+
 def test_check__unreachable__is_network_error():
     # arrange: порт без слушателя
-    cfg = jira_config("http://127.0.0.1:9")
+    cfg = jira_config("http://127.0.0.1:%d" % free_port())
     # act / assert
     with pytest.raises(tracker.TrackerError) as info:
         tracker.adapter_for(cfg).check()
@@ -486,3 +498,139 @@ def test_create__multiline_cookie_file__is_joined(board, tmp_path):
         fake.stop()
     # assert
     assert result["errors"] == []
+
+
+
+# --- сетевые сбои ---
+
+def test_create__tracker_hangs__stops_after_one_request_and_rerun_continues(board, jira, monkeypatch):
+    # arrange: первый запрос висит дольше таймаута
+    monkeypatch.setattr(tracker, "TIMEOUT", 0.3)
+    setup_board(board, jira_config(jira.url))
+    jira.fail_on[1] = fake_http.HANG
+    # act
+    first = tracker.create_issues(board, "user")
+    # assert
+    assert len(jira.requests) == 1 and first["created"] == []
+    assert [e["key"] for e in first["errors"]] == ["A"] and "не ответил" in first["errors"][0]["error"]
+    # act: трекер ожил
+    second = tracker.create_issues(board, "user")
+    # assert
+    assert second["errors"] == [] and [c["key"] for c in second["created"]] == ["A", "B", "C", "D"]
+
+
+def test_create__tracker_refuses__stops_after_first_task(board):
+    # arrange
+    setup_board(board, jira_config("http://127.0.0.1:%d" % free_port()))
+    # act
+    result = tracker.create_issues(board, "user")
+    # assert
+    assert len(result["errors"]) == 1 and "Нет связи" in result["errors"][0]["error"]
+
+
+def test_create__network_error_on_link__stops_linking(board, jira, monkeypatch):
+    # arrange: 4 задачи, связи — 5-й и 6-й запросы, 5-й висит
+    monkeypatch.setattr(tracker, "TIMEOUT", 0.3)
+    setup_board(board, jira_config(jira.url))
+    jira.fail_on[5] = fake_http.HANG
+    # act
+    result = tracker.create_issues(board, "user")
+    # assert
+    assert len(jira.requests) == 5 and result["linked"] == [] and [e["key"] for e in result["errors"]] == ["B"]
+
+
+def test_call__truncated_response__is_network_error(jira):
+    # arrange
+    jira.fail_all = fake_http.TRUNCATE
+    # act / assert
+    with pytest.raises(tracker.TrackerError) as info:
+        tracker.adapter_for(jira_config(jira.url)).create_issue(make_task("A"))
+    assert info.value.kind == "network"
+
+
+def test_call__redirect__is_not_followed(jira):
+    # arrange: трекер перенаправляет на другой сервер
+    other = FakeJira().start()
+    try:
+        jira.fail_all = (302, None, {"Location": other.url + "/rest/api/2/myself"})
+        # act
+        with pytest.raises(tracker.TrackerError) as info:
+            tracker.adapter_for(jira_config(jira.url)).check()
+    finally:
+        other.stop()
+    # assert
+    assert info.value.kind == "auth" and "HTTP 302" in str(info.value)
+    assert other.requests == [] and len(jira.requests) == 1
+
+
+def test_call__429__is_retryable(jira):
+    # arrange
+    jira.fail_all = (429, {"errorMessages": ["slow down"]})
+    # act / assert
+    with pytest.raises(tracker.TrackerError) as info:
+        tracker.adapter_for(jira_config(jira.url)).check()
+    assert info.value.kind == "retryable" and "HTTP 429" in str(info.value)
+
+
+# --- ссылки и статусы ---
+
+def test_create__non_http_issue_url__is_not_stored(board, github):
+    # arrange
+    github.html_url = "javascript:alert({number})"
+    setup_board(board, github_config(github.url), [make_task("A")])
+    # act
+    result = tracker.create_issues(board, "user")
+    # assert
+    task = board.store.load_tasks()["A"]
+    assert task.tracker_key == "#1" and task.tracker_url is None
+    assert result["created"][0]["url"] is None
+    assert [w["key"] for w in result["warnings"]] == ["A"] and "javascript" not in json.dumps(result)
+
+
+def test_get_statuses__non_object_response__is_validation_error(jira):
+    # arrange
+    jira.search_response = ["not", "an", "object"]
+    # act / assert
+    with pytest.raises(tracker.TrackerError) as info:
+        tracker.adapter_for(jira_config(jira.url)).get_statuses(["MNZ-1"])
+    assert info.value.kind == "validation"
+
+
+def test_get_statuses__github_non_object_response__is_validation_error(github):
+    # arrange
+    adapter = tracker.adapter_for(github_config(github.url))
+    adapter.create_issue(make_task("A"))
+    github.fail_all = (200, ["x"])
+    # act / assert
+    with pytest.raises(tracker.TrackerError) as info:
+        adapter.get_statuses(["#1"])
+    assert info.value.kind == "validation"
+
+
+def test_get_statuses__custom_search_path(jira):
+    # arrange
+    adapter = tracker.adapter_for(jira_config(jira.url, jira_search_path="/rest/api/2/search/jql"))
+    key = adapter.create_issue(make_task("A"))["key"]
+    # act
+    statuses = adapter.get_statuses([key])
+    # assert
+    assert statuses == {"MNZ-1": "Open"} and jira.requests[-1].path.startswith("/rest/api/2/search/jql?")
+
+
+def test_update_config__bad_search_path__is_rejected(board):
+    # act / assert
+    with pytest.raises(ValueError, match="jira_search_path"):
+        board.update_config({"tracker": jira_config("http://x", jira_search_path="https://evil/search")})
+
+
+# --- маскирование ---
+
+def test_scrub__masks_json_escaped_and_url_encoded_forms():
+    # arrange
+    secret = 'a/b+c"d\\e f&g'
+    text = " | ".join([json.dumps({"t": secret}), urllib.parse.quote(secret, safe=""),
+                       urllib.parse.quote_plus(secret)])
+    # act
+    scrubbed = tracker.scrub(text, [tracker.Secret(secret)])
+    # assert
+    assert scrubbed == '{"t": "***"} | *** | ***'

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import base64
+import http.client
 import json
 import os
 import re
@@ -29,7 +30,10 @@ TITLE_PLACEHOLDERS = ("key", "title")
 JIRA_SEARCH_BATCH = 50
 TYPES = ("none", "jira", "github")
 JIRA_KEYS = {"type", "url", "project", "issue_type", "epic", "epic_field", "components", "labels", "extra_fields",
-             "link_type", "auth", "statuses", "title_template", "poll_seconds"}
+             "link_type", "auth", "statuses", "title_template", "poll_seconds", "jira_search_path"}
+JIRA_SEARCH_PATH = "/rest/api/2/search"
+# после этих ошибок следующие запросы бессмысленны: заведение останавливается
+STOP_KINDS = ("auth", "config", "network")
 GITHUB_KEYS = {"type", "repo", "labels", "auth", "statuses", "title_template", "api_url", "poll_seconds"}
 GITHUB_API = "https://api.github.com"
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
@@ -60,10 +64,20 @@ class Secret:
     __str__ = __repr__
 
 
+def _forms(value: str) -> List[str]:
+    """Значение секрета и его виды в JSON-строке и в URL."""
+    return [value, json.dumps(value)[1:-1], json.dumps(value, ensure_ascii=False)[1:-1],
+            urllib.parse.quote(value, safe=""), urllib.parse.quote_plus(value)]
+
+
 def scrub(text: str, secrets: Iterable[Union[Secret, str]]) -> str:
-    """Заменяет в тексте значения секретов на ***."""
-    values = [s.reveal() if isinstance(s, Secret) else s for s in secrets]
-    for value in sorted((v for v in values if v and len(v) >= MIN_SECRET_CHARS), key=len, reverse=True):
+    """Заменяет в тексте значения секретов (в том числе экранированные для JSON и URL) на ***."""
+    values = set()
+    for s in secrets:
+        raw = s.reveal() if isinstance(s, Secret) else s
+        if raw and len(raw) >= MIN_SECRET_CHARS:
+            values.update(_forms(raw))
+    for value in sorted(values, key=len, reverse=True):
         text = text.replace(value, "***")
     return text
 
@@ -145,6 +159,9 @@ def validate_config(cfg: Any) -> None:
             if cfg.get(name) is not None and not isinstance(cfg[name], str):
                 raise ValueError("tracker.%s должен быть строкой" % name)
         _str_list(cfg, "components")
+        path = cfg.get("jira_search_path")
+        if path is not None and (not isinstance(path, str) or not re.fullmatch(r"/[A-Za-z0-9/_.-]*", path)):
+            raise ValueError("tracker.jira_search_path должен быть путём от адреса Jira, например /rest/api/2/search")
         if not isinstance(cfg.get("extra_fields", {}), dict):
             raise ValueError("tracker.extra_fields должен быть объектом")
         _validate_auth(cfg.get("auth"), ("token_env", "cookie_file"))
@@ -276,10 +293,13 @@ class _Http:
             raise self._http_error(e.code, e.read() if e.fp is not None else b"") from None
         except urllib.error.URLError as e:
             if isinstance(e.reason, socket.timeout):
-                raise self._fail("Трекер не ответил за %d с" % TIMEOUT, "network") from None
+                raise self._timeout() from None
             raise self._fail("Нет связи с трекером %s: %s" % (self.base, e.reason), "network") from None
-        except (socket.timeout, OSError) as e:
-            raise self._fail("Нет связи с трекером %s: %s" % (self.base, e), "network") from None
+        except socket.timeout:
+            raise self._timeout() from None
+        except (OSError, http.client.HTTPException) as e:
+            raise self._fail("Нет связи с трекером %s: %s" % (self.base, type(e).__name__ if not str(e) else e),
+                             "network") from None
         except ValueError:
             # текст такой ошибки содержит значение заголовка — не показываем его
             raise TrackerError("Некорректный запрос к трекеру: проверьте адрес и %s" % self.auth.hint,
@@ -290,6 +310,16 @@ class _Http:
             return json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             raise self._fail("Трекер вернул ответ не в JSON (%s %s)" % (method, path), "error") from None
+
+    def _timeout(self) -> TrackerError:
+        return self._fail("Трекер не ответил за %g с" % TIMEOUT, "network")
+
+    def object(self, method: str, path: str) -> dict:
+        """Ответ, который должен быть JSON-объектом."""
+        data = self.call(method, path)
+        if not isinstance(data, dict):
+            raise TrackerError("Трекер вернул неожиданный ответ (%s %s)" % (method, path.split("?")[0]), "validation")
+        return data
 
     def _http_error(self, code: int, raw: bytes) -> TrackerError:
         message = _tracker_message(raw)
@@ -395,11 +425,16 @@ class JiraTracker(TrackerAdapter):
             batch = keys[i:i + JIRA_SEARCH_BATCH]
             jql = "key in (%s)" % ", ".join(json.dumps(k) for k in batch)
             query = urllib.parse.urlencode({"jql": jql, "fields": "status", "maxResults": len(batch)})
-            data = self.http.call("GET", "/rest/api/2/search?" + query) or {}
-            for issue in data.get("issues") or []:
-                status = ((issue.get("fields") or {}).get("status") or {}).get("name")
-                if isinstance(issue.get("key"), str) and isinstance(status, str):
-                    result[issue["key"]] = status
+            data = self.http.object("GET", (self.cfg.get("jira_search_path") or JIRA_SEARCH_PATH) + "?" + query)
+            issues = data.get("issues") or []
+            if not isinstance(issues, list):
+                raise TrackerError("Jira вернула неожиданный ответ поиска", "validation")
+            for issue in issues:
+                fields = issue.get("fields") if isinstance(issue, dict) else None
+                status = fields.get("status") if isinstance(fields, dict) else None
+                name = status.get("name") if isinstance(status, dict) else None
+                if isinstance(issue.get("key"), str) and isinstance(name, str):
+                    result[issue["key"]] = name
         return result
 
     def check(self) -> None:
@@ -444,7 +479,7 @@ class GitHubTracker(TrackerAdapter):
     def get_statuses(self, keys: List[str]) -> Dict[str, str]:
         result: Dict[str, str] = {}
         for key in keys:
-            data = self.http.call("GET", "/repos/%s/issues/%d" % (self.repo, self._number(key))) or {}
+            data = self.http.object("GET", "/repos/%s/issues/%d" % (self.repo, self._number(key)))
             if isinstance(data.get("state"), str):
                 result[key] = data["state"]
         return result
@@ -504,7 +539,8 @@ def create_issues(board, actor: str) -> dict:
     """Заводит в трекере задачи без ключа (зависимости раньше зависимых), затем недостающие связи.
 
     Уже заведённые задачи и связи пропускаются, поэтому повтор после сбоя продолжает с несделанного.
-    Возвращает {created: [{key, tracker_key, url}], linked: [[blocker, blocked]], errors: [{key, error}], events}.
+    Возвращает {created: [{key, tracker_key, url}], linked: [[blocker, blocked]], errors: [{key, error}],
+    warnings: [{key, warning}], events}.
     """
     _require_user(actor, "Заводит задачи в трекере только пользователь")
     config = board.store.load_config()
@@ -528,6 +564,7 @@ def _create(board, adapter: TrackerAdapter) -> dict:
     created: List[dict] = []
     linked: List[List[str]] = []
     errors: List[dict] = []
+    warnings: List[dict] = []
     events: list = []
     stopped = False
 
@@ -550,13 +587,17 @@ def _create(board, adapter: TrackerAdapter) -> dict:
             issue = adapter.create_issue(task, [tasks[d].tracker_key for d in deps])
         except TrackerError as e:
             errors.append({"key": key, "error": str(e)})
-            if e.kind in ("auth", "config"):
+            if e.kind in STOP_KINDS:
                 stopped = True
                 break
             continue
-        events.extend(board.update_task(key, "system", {"tracker_key": issue["key"], "tracker_url": issue["url"]}))
-        task.tracker_key, task.tracker_url = issue["key"], issue["url"]
-        created.append({"key": key, "tracker_key": issue["key"], "url": issue["url"]})
+        url = issue["url"] if _is_http(issue["url"]) else None
+        if url is None:
+            warnings.append({"key": key, "warning": "Трекер вернул ссылку на задачу %s не по http(s): ссылка не сохранена"
+                                                    % issue["key"]})
+        events.extend(board.update_task(key, "system", {"tracker_key": issue["key"], "tracker_url": url}))
+        task.tracker_key, task.tracker_url = issue["key"], url
+        created.append({"key": key, "tracker_key": issue["key"], "url": url})
         if adapter.links_in_body:
             for dep in deps:
                 remember(dep, key)
@@ -573,7 +614,7 @@ def _create(board, adapter: TrackerAdapter) -> dict:
                     adapter.link(tasks[dep].tracker_key, task.tracker_key)
                 except TrackerError as e:
                     errors.append({"key": key, "error": "Связь %s → %s: %s" % (dep, key, e)})
-                    if e.kind in ("auth", "config"):
+                    if e.kind in STOP_KINDS:
                         stopped = True
                         break
                     continue
@@ -583,4 +624,12 @@ def _create(board, adapter: TrackerAdapter) -> dict:
 
     events.append(board.record("tracker_created", {
         "created": [c["key"] for c in created], "linked": linked, "errors": [e["key"] for e in errors]}))
-    return {"created": created, "linked": linked, "errors": errors, "events": [e.to_dict() for e in events]}
+    return {"created": created, "linked": linked, "errors": errors, "warnings": warnings,
+            "events": [e.to_dict() for e in events]}
+
+
+def _is_http(url: Any) -> bool:
+    if not isinstance(url, str):
+        return False
+    parts = urllib.parse.urlsplit(url)
+    return parts.scheme in ("http", "https") and bool(parts.netloc)

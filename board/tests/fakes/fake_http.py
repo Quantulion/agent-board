@@ -1,14 +1,22 @@
 """Основа поддельных трекеров: HTTP-сервер на localhost в отдельном потоке, который записывает запросы.
 
 Сбои настраиваются по номеру запроса (`fail_on[n] = (status, body)`, счёт с 1) или для всех запросов
-(`fail_all = (status, body)`); тело — объект, он отдаётся как JSON.
+(`fail_all = (status, body)`); тело — объект, он отдаётся как JSON; третьим элементом можно передать заголовки
+ответа. Вместо ответа можно задать HANG (ответа нет HANG_SECONDS, потом соединение закрывается) или TRUNCATE
+(тело короче заявленного Content-Length).
 """
 from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
+
+
+HANG = "hang"
+TRUNCATE = "truncate"
+HANG_SECONDS = 2.0
 
 
 class Recorded:
@@ -25,8 +33,8 @@ class Recorded:
 class FakeServer:
     def __init__(self):
         self.requests: List[Recorded] = []
-        self.fail_on: Dict[int, Tuple[int, object]] = {}
-        self.fail_all: Optional[Tuple[int, object]] = None
+        self.fail_on: Dict[int, object] = {}
+        self.fail_all: Optional[object] = None
         self._lock = threading.Lock()
         self._httpd: Optional[ThreadingHTTPServer] = None
         self._thread: Optional[threading.Thread] = None
@@ -46,11 +54,23 @@ class FakeServer:
                 length = int(self.headers.get("Content-Length") or 0)
                 raw = self.rfile.read(length) if length else b""
                 body = json.loads(raw.decode("utf-8")) if raw else None
-                status, payload = fake._handle(self.command, self.path, dict(self.headers), body)
+                result = fake._handle(self.command, self.path, dict(self.headers), body)
+                if result == HANG:
+                    time.sleep(HANG_SECONDS)
+                    return
+                if result == TRUNCATE:
+                    self.send_response(200)
+                    self.send_header("Content-Length", "100")
+                    self.end_headers()
+                    self.wfile.write(b'{"key"')
+                    return
+                status, payload = result[0], result[1]
                 data = b"" if payload is None else json.dumps(payload).encode("utf-8")
                 self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(data)))
+                for name, value in (result[2] if len(result) > 2 else {}).items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(data)
 
