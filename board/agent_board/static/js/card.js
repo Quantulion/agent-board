@@ -24,7 +24,7 @@ const MIN_WIDTH = 420;
 
 registerCardAction({
   id: 'close-research',
-  label: T.card.closeResearch,
+  label: () => T.card.closeResearch,
   icon: 'check',
   visible: isResearch,
   run: (ctx, task) => requestMove(ctx, task, 'done'),
@@ -38,7 +38,7 @@ export function tabsFor(task, filesCount) {
   const tabs = [
     { id: 'overview', label: T.card.tabs.overview, count: task.open_questions > 0 ? '? ' + task.open_questions : '', cls: 'q' },
     { id: 'thread', label: T.card.tabs.thread, count: task.unread > 0 ? String(task.unread) : '', cls: 'unread' },
-    { id: 'review', label: T.card.tabs.review, count: round ? 'р' + round : '', cls: '' },
+    { id: 'review', label: T.card.tabs.review, count: round ? T.roundShort(round) : '', cls: '' },
     { id: 'changes', label: T.card.tabs.changes, count: files ? String(files) : '', cls: '' },
   ];
   return isResearch(task) ? tabs.slice(0, 2) : tabs;

@@ -178,7 +178,7 @@ export function shipOne(ctx, task) {
 
 registerCardAction({
   id: 'ship',
-  label: T.ship.action,
+  label: () => T.ship.action,
   icon: 'send',
   visible: (task, snap) => !isResearch(task) && statusOf(task) === 'approved' && Boolean(shipCommand(snap)),
   enabled: (task, snap) => !isShipping(task) && !unsentDep(snap, task),
@@ -190,7 +190,7 @@ registerCardAction({
 // Задачу с неотправленной одобренной зависимостью отправляют вместе с ней — из пакетной отправки.
 registerCardAction({
   id: 'ship-batch',
-  label: T.ship.openBatch,
+  label: () => T.ship.openBatch,
   icon: 'send',
   visible: (task, snap) => !isResearch(task) && statusOf(task) === 'approved' && Boolean(shipCommand(snap))
     && !isShipping(task) && Boolean(unsentDep(snap, task)),

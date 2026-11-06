@@ -267,5 +267,5 @@ def digest(events: List[Event], limit: int = 40) -> str:
             lines.append("#%d %s" % (e.seq, line))
     if len(lines) > limit:
         hidden = len(lines) - limit
-        lines = ["…ещё %d событий" % hidden] + lines[-limit:]
+        lines = ["…%d more events" % hidden] + lines[-limit:]
     return "\n".join(lines)

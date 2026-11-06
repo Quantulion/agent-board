@@ -383,7 +383,7 @@ body.resizing { cursor: col-resize; user-select: none; }
 .stmenu .menu button { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; padding: 7px 9px; border-radius: 6px; font-size: 13px; cursor: pointer; text-align: left; }
 .stmenu .menu button:hover { background: var(--surface-2); }
 .stmenu .menu button.cur { font-weight: 600; }
-.stmenu .menu button.cur::after { content: "текущий"; margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 400; }
+.stmenu .menu button.cur::after { content: attr(data-cur); margin-left: auto; font-size: 11px; color: var(--faint); font-weight: 400; }
 .banner { margin: 0; padding: 10px 22px; display: flex; gap: 12px; align-items: center; font-size: 13px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .banner svg { width: 16px; height: 16px; flex: none; }
 .banner.queue { background: color-mix(in srgb, var(--s-queue) 10%, var(--surface)); color: color-mix(in srgb, var(--s-queue) 60%, var(--fg)); }

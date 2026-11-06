@@ -3,14 +3,17 @@ import { mountBoard } from './board.js';
 import { closeCard, openCard } from './card.js';
 import { mountDecomposition } from './decomposition.js';
 import { h, icon, patchList } from './dom.js';
-import { STAGES, T, tasksCount } from './i18n.js';
+import { STAGES, T, currentLanguage, setLanguage, tasksCount, uiLanguage } from './i18n.js';
 import { boardHref, decompositionHref, parseRoute, withTask } from './router.js';
 import { createStore } from './store.js';
 
 const THEME_KEY = 'ab-theme';
+// последний язык интерфейса: до загрузки проекта показываем его, чтобы не мигать другим языком
+const LANG_KEY = 'ab-lang';
 const root = document.getElementById('app');
 let view = null;
 
+setLanguage(storage(LANG_KEY) || 'ru');
 dropTokenFromAddress();
 window.addEventListener('hashchange', route);
 route();
@@ -55,6 +58,18 @@ function themeButton() {
 
 function brand() {
   return h('a', { class: 'brand', href: '#/' }, h('span', { class: 'logo' }, icon('logo')), T.appName);
+}
+
+// Переключает язык интерфейса и пересобирает текущий экран, если язык сменился.
+function applyLanguage(language, owner) {
+  if (!setLanguage(language)) return;
+  storage(LANG_KEY, currentLanguage());
+  setTimeout(() => {
+    if (view !== owner) return;
+    view.destroy();
+    view = null;
+    route();
+  }, 0);
 }
 
 function route() {
@@ -109,11 +124,15 @@ function projectsView() {
     }
     const states = await Promise.all(projects.map(slug => api(slug).get('/state').catch(() => null)));
     if (!alive) return;
+    // общий язык всех проектов становится языком списка
+    const langs = new Set(states.filter(Boolean).map(st => uiLanguage(st.config.language)));
+    if (langs.size === 1) applyLanguage([...langs][0], self);
     patchList(list, projects.map((slug, i) => ({ slug, state: states[i] })), 'slug', projectCard);
   }).catch(err => {
     if (alive) page.replaceChildren(errorNotice(err));
   });
-  return { slug: null, setMode() {}, setTask() {}, destroy() { alive = false; } };
+  const self = { slug: null, setMode() {}, setTask() {}, setFocus() {}, destroy() { alive = false; } };
+  return self;
 }
 
 function projectCard({ slug, state }) {
@@ -167,8 +186,7 @@ function projectView(slug, mode) {
     destroyMode = next === 'board' ? mountBoard(root, store, ctx) : mountDecomposition(root, store, ctx);
   };
   mount(mode);
-  store.start();
-  return {
+  const self = {
     slug,
     setMode: mount,
     setTask: key => (key ? openCard(ctx, key) : closeCard()),
@@ -176,6 +194,11 @@ function projectView(slug, mode) {
       ctx.pendingFocus = key;
       if (key) ctx.applyFocus();
     },
-    destroy() { closeCard(false); destroyMode(); store.stop(); },
+    destroy() { unsubscribe(); closeCard(false); destroyMode(); store.stop(); },
   };
+  const unsubscribe = store.subscribe(st => {
+    if (st.snapshot && st.snapshot.config) applyLanguage(st.snapshot.config.language, self);
+  });
+  store.start();
+  return self;
 }

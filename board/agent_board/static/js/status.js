@@ -30,6 +30,7 @@ export function statusMenu(current, onPick) {
   return h('div', { class: 'menu', role: 'menu', 'aria-label': T.statusMenuAria },
     STATUSES.map(s => h('button', {
       type: 'button', role: 'menuitem', class: s.id === current ? 'cur' : null,
+      'data-cur': s.id === current ? T.current : null,
       onclick: () => onPick(s.id),
     }, sdot(s.id), s.id === 'blocked' ? T.externalBlockerItem : s.label)));
 }
