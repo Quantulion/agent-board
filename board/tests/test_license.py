@@ -27,9 +27,11 @@ def test_license_is_consistent_across_manifests():
     heading = (ROOT / "LICENSE").read_text(encoding="utf-8").strip().splitlines()[0].strip()
     plugin = json.loads((ROOT / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_ru = (ROOT / "README.ru.md").read_text(encoding="utf-8")
 
     # assert
     assert spdx in LICENSE_HEADINGS
     assert heading == LICENSE_HEADINGS[spdx]
     assert plugin["license"] == spdx
-    assert re.search(r"^## Лицензия\s*$\s*^.*\b" + re.escape(spdx) + r"\b", readme, re.M)
+    assert re.search(r"^## License\s*$\s*^.*\b" + re.escape(spdx) + r"\b", readme, re.M)
+    assert re.search(r"^## Лицензия\s*$\s*^.*\b" + re.escape(spdx) + r"\b", readme_ru, re.M)
