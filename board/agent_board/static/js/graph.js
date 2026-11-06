@@ -1,5 +1,6 @@
 // Граф зависимостей: раскладка по слоям (чистая функция) и SVG-схема, которая правится на месте при обновлениях.
 import { h } from './dom.js';
+import { color, statusOf } from './chips.js';
 import { T, statusInfo } from './i18n.js';
 
 // Узел фиксированного размера: текст в нём обрезается стилями, а не раздвигает схему.
@@ -13,7 +14,6 @@ const LANE_TOP = 52;
 const SWEEPS = 4;
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
-const statusOf = t => t.display_status || t.status;
 // задача без оценки весит один день
 const weight = t => (typeof t.estimate === 'number' && Number.isFinite(t.estimate) && t.estimate >= 0 ? t.estimate : 1);
 
@@ -211,8 +211,6 @@ function svg(tag, attrs, ...children) {
   for (const c of children) if (c) el.append(c);
   return el;
 }
-
-const color = id => 'var(' + statusInfo(id).color + ')';
 
 function edgePath(a, b) {
   const x1 = a.x + a.w;

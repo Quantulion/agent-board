@@ -52,3 +52,42 @@ test('statusOf предпочитает display_status', () => {
   assert.equal(statusOf({ status: 'a', display_status: 'b' }), 'b');
   assert.equal(statusOf({ status: 'a' }), 'a');
 });
+
+import { createActionRunner } from '../../agent_board/static/js/actions.js';
+
+test('runner: исключение синхронного run показывается ошибкой, кнопка снова доступна', async () => {
+  const errors = [];
+  const runner = createActionRunner(m => errors.push(m));
+  const btn = { disabled: false };
+  await runner.click('a', btn, () => { throw new Error('boom'); });
+  assert.deepEqual(errors, ['boom']);
+  assert.equal(btn.disabled, false);
+  assert.equal(runner.busy('a'), false);
+});
+
+test('runner: отклонённый промис run показывается ошибкой', async () => {
+  const errors = [];
+  const runner = createActionRunner(m => errors.push(m));
+  const btn = { disabled: false };
+  await runner.click('a', btn, () => Promise.reject(new Error('нет сети')));
+  assert.deepEqual(errors, ['нет сети']);
+  assert.equal(btn.disabled, false);
+});
+
+test('runner: двойной клик во время выполнения вызывает run один раз', async () => {
+  const runner = createActionRunner(() => {});
+  const btn = { disabled: false };
+  let calls = 0;
+  let release;
+  const run = () => { calls++; return new Promise(r => { release = r; }); };
+  const first = runner.click('a', btn, run);
+  assert.equal(btn.disabled, true);
+  assert.equal(runner.busy('a'), true);
+  await runner.click('a', btn, run);
+  assert.equal(calls, 1);
+  release();
+  await first;
+  assert.equal(btn.disabled, false);
+  await runner.click('a', btn, () => { calls++; });
+  assert.equal(calls, 2);
+});

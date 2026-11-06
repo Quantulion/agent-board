@@ -31,3 +31,25 @@ export function cardActions(task, snapshot) {
 
 // Подпись видимого набора действий: по ней шапка решает, нужна ли перерисовка.
 export const actionsSignature = actions => JSON.stringify(actions.map(a => [a.id, a.label, a.icon, a.enabled, a.title]));
+
+// Запуск действий кнопками: пока действие выполняется, повторный клик игнорируется,
+// а ошибка (синхронная или отклонённый промис) уходит в onError.
+export function createActionRunner(onError) {
+  const running = new Set();
+  return {
+    busy: id => running.has(id),
+    async click(id, btn, run) {
+      if (running.has(id)) return;
+      running.add(id);
+      btn.disabled = true;
+      try {
+        await Promise.resolve().then(run);
+      } catch (err) {
+        onError((err && err.message) || String(err));
+      } finally {
+        running.delete(id);
+        btn.disabled = false;
+      }
+    },
+  };
+}

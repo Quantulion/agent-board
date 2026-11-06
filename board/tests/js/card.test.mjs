@@ -1,8 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  authorOf, createDrafts, diffFiles, diffLines, formatTime, initialTab, reportHref, tabsFor,
-} from '../../agent_board/static/js/card.js';
+import { authorOf, createDrafts, formatTime, initialTab, tabsFor } from '../../agent_board/static/js/card.js';
+import { diffFiles, diffLines, reportHref } from '../../agent_board/static/js/changes.js';
 
 function task(extra = {}) {
   return {
