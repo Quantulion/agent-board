@@ -1,6 +1,7 @@
 // Модальное окно «Новая задача»: поля задачи, зависимости с поиском, проверка до отправки и ошибки сервера под полями.
 import { h, icon } from './dom.js';
-import { STATUSES, T, statusInfo } from './i18n.js';
+import { spill, statusOf } from './chips.js';
+import { STATUSES, T } from './i18n.js';
 import { openModal, toast } from './ui.js';
 
 const KEY_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,99}$/;
@@ -9,7 +10,6 @@ const KEYS = new Intl.Collator('ru', { numeric: true });
 // зависимость в этих статусах уже не держит новую задачу
 const SATISFIED = new Set(['approved', 'sent', 'done']);
 
-const statusOf = t => t.display_status || t.status;
 const parseEstimate = v => Number(String(v ?? '').trim().replace(',', '.'));
 
 // --- Чистые функции ---
@@ -132,10 +132,6 @@ function whenInSnapshot(store, key) {
     const timer = setTimeout(() => done(false), SNAPSHOT_WAIT_MS);
   });
 }
-
-const color = id => 'var(' + statusInfo(id).color + ')';
-const spill = id => h('span', { class: 'spill', style: { '--c': color(id) } },
-  h('span', { class: 'sdot', style: { '--c': color(id) } }), statusInfo(id).label);
 
 // Список задач с галочками и поиском: отмеченные остаются отмеченными, поиск только прячет строки.
 function taskPicker(id, label, tasks, onChange) {

@@ -1,8 +1,10 @@
 // Карточка задачи: выезжающая панель поверх доски с вкладками «Обзор / Тред / Ревью / Изменения».
 // Панель и вкладки создаются один раз на открытую карточку; живые обновления правят их на месте.
-import { externalBlockerDialog, requestMove, statusMenu } from './board.js';
+import { actionsSignature, cardActions, registerCardAction } from './actions.js';
+import { spill, statusOf } from './chips.js';
 import { h, icon, patchList, safeMarkdown, safeUrl } from './dom.js';
 import { T, statusInfo } from './i18n.js';
+import { externalBlockerDialog, requestMove, statusMenu } from './status.js';
 import { proposalNote, proposalSignature, proposalsTouching } from './project.js';
 import { createThread, draftsFor, formatTime } from './thread.js';
 import { toast } from './ui.js';
@@ -13,8 +15,15 @@ const WIDTH_KEY = 'ab-dw';
 const TAB_KEY = 'ab-card-tab';
 const MIN_WIDTH = 420;
 
-const statusOf = t => t.display_status || t.status;
 const isResearch = t => t.kind === 'research';
+
+registerCardAction({
+  id: 'close-research',
+  label: T.card.closeResearch,
+  icon: 'check',
+  visible: isResearch,
+  run: (ctx, task) => requestMove(ctx, task, 'done'),
+});
 
 // --- Чистые функции ---
 
@@ -133,9 +142,6 @@ function storageSet(store, key, value) {
   }
 }
 
-const color = id => 'var(' + statusInfo(id).color + ')';
-const sdot = id => h('span', { class: 'sdot', style: { '--c': color(id) } });
-const spill = id => h('span', { class: 'spill', style: { '--c': color(id) } }, sdot(id), statusInfo(id).label);
 const md = (text, cls) => h('div', { class: cls ? 'md ' + cls : 'md' }, safeMarkdown(text));
 const sec = (title, ...children) => h('section', { class: 'sec' }, h('h3', null, title), ...children);
 
@@ -332,7 +338,7 @@ function createCard(ctx, key, returnFocus) {
       paint(t, snap) {
         task = t;
         snapshot = snap;
-        head.paint(t);
+        head.paint(t, snap);
         banners.paint(bannerModel(t, snap), () => bannerNodes(t, snap));
         for (const p of Object.values(panes)) p.paint(t, snap);
         paintTabs();
@@ -666,12 +672,8 @@ function createCard(ctx, key, returnFocus) {
     const title = h('h2');
     const terminal = h('button', { class: 'btn', type: 'button', onclick: () => { if (lastTask.terminal_command) copyText(lastTask.terminal_command); } },
       icon('term'), T.card.terminal);
-    const plan4 = { disabled: true, title: T.card.plan4 };
-    const acts = isResearch(first)
-      ? [h('button', { class: 'btn', type: 'button', onclick: () => requestMove(ctx, lastTask, 'done') }, icon('check'), T.card.closeResearch)]
-      : [h('button', { class: 'btn', type: 'button', ...plan4 }, icon('eye'), T.card.review),
-        h('button', { class: 'btn', type: 'button', ...plan4 }, icon('send'), T.card.sendToReview),
-        h('span', { class: 'note' }, icon('lock'), T.card.plan4Note)];
+    const acts = h('span', { class: 'slot' });
+    let actsSig = null;
     const el = h('div', { class: 'dh' },
       h('div', { class: 'l1' }, keySlot, chips, stmenu, h('span', { class: 'sp' }),
         h('button', { class: 'btn icon ghost', type: 'button', 'aria-label': T.close, title: T.close, onclick: () => ctx.closeCard() }, icon('x'))),
@@ -680,6 +682,18 @@ function createCard(ctx, key, returnFocus) {
     let lastTask = first;
     let sig = null;
     let menu = null;
+
+    // кнопки действий пересобираются, только когда меняется их набор или состояние
+    function paintActions(t, snap) {
+      const list = cardActions(t, snap);
+      const next = actionsSignature(list);
+      if (next === actsSig) return;
+      actsSig = next;
+      acts.replaceChildren(...list.map(a => h('button', {
+        class: 'btn', type: 'button', 'data-action': a.id, disabled: !a.enabled, title: a.title,
+        onclick: () => a.run(ctx, lastTask),
+      }, a.icon ? icon(a.icon) : null, a.label)));
+    }
 
     function closeMenu(refocus) {
       if (!menu) return;
@@ -710,8 +724,9 @@ function createCard(ctx, key, returnFocus) {
       el,
       menuOpen: () => Boolean(menu),
       closeMenu,
-      paint(t) {
+      paint(t, snap) {
         lastTask = t;
+        paintActions(t, snap);
         const next = JSON.stringify([t.title, t.tracker_url, t.repo, t.kind, t.estimate, statusOf(t), t.terminal_command]);
         if (next === sig) return;
         sig = next;

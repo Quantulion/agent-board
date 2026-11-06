@@ -1,6 +1,7 @@
 // Согласование разбивки: задачи с нарушениями правил и комментариями, граф по шагам, общий тред с агентом проекта
 // и утверждение, которое переводит проект на следующую стадию. После утверждения страница только для чтения.
-import { connectionIndicator, paintStageAction, paintStepper } from './board.js';
+import { statusOf } from './chips.js';
+import { connectionIndicator, paintStageAction, paintStepper } from './header.js';
 import { h, icon, patchList, safeMarkdown } from './dom.js';
 import { criticalPath, layoutGraph, laneLabels, mountGraph } from './graph.js';
 import { T } from './i18n.js';
@@ -13,7 +14,6 @@ const KEYS = new Intl.Collator('ru', { numeric: true });
 const REPO_PALETTE = ['--s-progress', '--s-approved', '--s-answer', '--s-sent', '--s-review', '--s-queue', '--s-done'];
 const HIGHLIGHT_MS = 1600;
 
-const statusOf = t => t.display_status || t.status;
 const text = v => (typeof v === 'string' ? v.trim() : '');
 const estimateOf = t => (typeof t.estimate === 'number' && Number.isFinite(t.estimate) && t.estimate >= 0 ? t.estimate : null);
 const violationsOf = t => (Array.isArray(t.rule_violations) ? t.rule_violations : [])

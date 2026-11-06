@@ -1,6 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, cardSignature, columnsOf, connectionIndicator, reactionText, stageAction, stepperModel, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { cardModel, cardSignature, columnsOf, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import { connectionIndicator, stageAction, stepperModel } from '../../agent_board/static/js/header.js';
+import { reactionText } from '../../agent_board/static/js/status.js';
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
