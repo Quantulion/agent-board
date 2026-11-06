@@ -82,7 +82,7 @@ Limitations:
 | `state` | full project snapshot |
 | `show <key>` | a single task |
 | `status <key> <status>` | change a task's status |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | update task fields; without `AGENT_BOARD_ACTOR` the command acts as the user; the wording (`title`, `description`, `done_when`, `estimate`) and the link to an already existing tracker issue (`tracker_key`, `tracker_url` — an http(s) link) can be changed only by the user, rule violations — by the user or the project agent |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | update task fields; without `AGENT_BOARD_ACTOR` the command acts as the user; the wording (`title`, `description`, `done_when`, `estimate`) and the link to an already existing tracker issue (`tracker_key`, `tracker_url` — an http(s) link; an empty value, `null` in the API, removes the link) can be changed and removed only by the user, rule violations — by the user or the project agent |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | ask the user a question |
 | `say <thread> --text T` | post to a task thread or to `_project` |
 | `thread <thread>` | read a thread |

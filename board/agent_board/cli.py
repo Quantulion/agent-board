@@ -170,6 +170,9 @@ UPDATE_OPTIONS = [
     ("tracker_url", "tracker_url", False),
 ]
 
+# пустое значение снимает привязку задачи к трекеру
+CLEARABLE_FIELDS = {"tracker_key", "tracker_url"}
+
 
 def cmd_update(args):
     fields = {}
@@ -177,7 +180,10 @@ def cmd_update(args):
         value = getattr(args, attr)
         if value is None:
             continue
-        fields[field] = _json_arg(value, "--" + attr.replace("_", "-")) if is_json else value
+        if field in CLEARABLE_FIELDS and value == "":
+            fields[field] = None
+        else:
+            fields[field] = _json_arg(value, "--" + attr.replace("_", "-")) if is_json else value
     return _request("POST", _p(args, "tasks/%s/update" % args.key), {"actor": _user_actor(), "fields": fields})
 
 

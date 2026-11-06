@@ -81,7 +81,7 @@ sh scripts/install-codex.sh --uninstall  # удалить ссылку
 | `state` | снимок проекта целиком |
 | `show <key>` | одна задача |
 | `status <key> <status>` | сменить статус задачи |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | обновить поля задачи; без `AGENT_BOARD_ACTOR` команда идёт от пользователя; формулировку (`title`, `description`, `done_when`, `estimate`) и привязку к уже существующей задаче трекера (`tracker_key`, `tracker_url` — ссылка http(s)) меняет только пользователь, нарушения правил — пользователь или агент проекта |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | обновить поля задачи; без `AGENT_BOARD_ACTOR` команда идёт от пользователя; формулировку (`title`, `description`, `done_when`, `estimate`) и привязку к уже существующей задаче трекера (`tracker_key`, `tracker_url` — ссылка http(s); пустое значение, в API — `null`, снимает привязку) меняет и снимает только пользователь, нарушения правил — пользователь или агент проекта |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | задать вопрос пользователю |
 | `say <thread> --text T` | написать в тред задачи или в `_project` |
 | `thread <thread>` | прочитать тред |

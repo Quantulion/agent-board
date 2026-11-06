@@ -206,6 +206,29 @@ def test_update_task__tracker_link_by_user__is_saved(board):
     assert (task.tracker_key, task.tracker_url) == ("PRJ-123", "https://tracker.example/PRJ-123")
 
 
+def test_update_task__tracker_link_cleared_by_user__is_removed(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.update_task("A", "user", {"tracker_key": "PRJ-123", "tracker_url": "https://tracker.example/PRJ-123"})
+    # act
+    board.update_task("A", "user", {"tracker_key": None, "tracker_url": None})
+    # assert
+    task = board.store.load_tasks()["A"]
+    assert (task.tracker_key, task.tracker_url) == (None, None)
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "tracker"])
+def test_update_task__tracker_link_cleared_by_non_user__rejected(board, actor):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.update_task("A", "user", {"tracker_key": "PRJ-123", "tracker_url": "https://tracker.example/PRJ-123"})
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.update_task("A", actor, {"tracker_key": None, "tracker_url": None})
+    task = board.store.load_tasks()["A"]
+    assert (task.tracker_key, task.tracker_url) == ("PRJ-123", "https://tracker.example/PRJ-123")
+
+
 @pytest.mark.parametrize("actor", ["agent", "project_agent", "tracker"])
 @pytest.mark.parametrize("field", ["tracker_key", "tracker_url"])
 def test_update_task__tracker_link_by_non_user__rejected(board, actor, field):

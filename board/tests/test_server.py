@@ -1438,6 +1438,31 @@ def test_tracker_create_missing_env_is_400_naming_variable(server, jira, monkeyp
     assert r.status == 400 and "JIRA_TOKEN" in r.json()["error"]
 
 
+def test_update__tracker_link_cleared_by_user__is_removed(server):
+    # arrange
+    add_task(server)
+    link = {"tracker_key": "PROJ-9", "tracker_url": "https://tracker.example/PROJ-9"}
+    assert post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": link}).status == 200
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update",
+             {"actor": "user", "fields": {"tracker_key": None, "tracker_url": None}})
+    # assert
+    assert r.status == 200
+    task = get(server, "/api/p/pay/state").json()["tasks"][0]
+    assert (task["tracker_key"], task["tracker_url"]) == (None, None)
+
+
+def test_update__tracker_link_cleared_by_agent__forbidden(server):
+    # arrange
+    add_task(server)
+    post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"tracker_key": "PROJ-9"}})
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": None}})
+    # assert
+    assert r.status == 403
+    assert get(server, "/api/p/pay/state").json()["tasks"][0]["tracker_key"] == "PROJ-9"
+
+
 def test_agent_cannot_write_tracker_key(server):
     # arrange
     add_task(server)
