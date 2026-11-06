@@ -6,6 +6,7 @@ import threading
 from typing import Dict, List, Optional
 
 from .board import Board
+from .messages import msg
 from .model import Status
 from .store import atomic_write_json
 
@@ -118,9 +119,10 @@ class ResourceQueue:
     def _check(self, resource: str, task: str) -> None:
         declared = [r.get("name") for r in self._board.store.load_config().resources]
         if resource not in declared:
-            raise ValueError("Ресурс %r не объявлен в проекте. Объявленные: %s" % (resource, ", ".join(declared) or "нет"))
+            raise ValueError(msg("board.undeclared_resource", resource=resource,
+                                 names=", ".join(map(str, declared)) or msg("board.none")))
         if task not in self._board.store.load_tasks():
-            raise KeyError("Неизвестная задача: %s" % task)
+            raise KeyError(msg("board.unknown_task", key=task))
 
     def _find(self, resource: str, task: str, pid: int) -> _Entry:
         return next(e for e in self._queues[resource] if e.task == task and e.pid == pid)

@@ -12,6 +12,7 @@ from .config import (
     validate_fields, validate_structure,
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
+from .messages import msg
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
 from .tracker import is_http_url, validate_config as validate_tracker
@@ -111,24 +112,24 @@ WAKE_REASONS: Dict[str, str] = {
 def new_task_from_dict(d: Any) -> Task:
     """Новая задача из пользовательского ввода: только поля, которые задаются при создании."""
     if not isinstance(d, dict):
-        raise ValueError("Задача должна быть объектом")
+        raise ValueError(msg("board.task_not_object"))
     extra = set(d) - set(CREATABLE_FIELDS)
     if extra:
-        raise ValueError("Недопустимые поля задачи: %s" % ", ".join(sorted(map(str, extra))))
+        raise ValueError(msg("board.task_extra_fields", names=", ".join(sorted(map(str, extra)))))
     for name in ("key", "title"):
         if not isinstance(d.get(name), str):
-            raise ValueError("Поле задачи %s должно быть строкой" % name)
+            raise ValueError(msg("board.task_field_str", name=name))
     for name in ("description", "done_when", "repo"):
         if name in d and not isinstance(d[name], str):
-            raise ValueError("Поле задачи %s должно быть строкой" % name)
+            raise ValueError(msg("board.task_field_str", name=name))
     if "kind" in d and (not isinstance(d["kind"], str) or d["kind"] not in TASK_KINDS):
-        raise ValueError("Вид задачи должен быть одним из: %s" % ", ".join(TASK_KINDS))
+        raise ValueError(msg("board.task_kind", kinds=", ".join(TASK_KINDS)))
     estimate = d.get("estimate")
     if estimate is not None and (isinstance(estimate, bool) or not isinstance(estimate, (int, float))):
-        raise ValueError("Оценка задачи должна быть числом")
+        raise ValueError(msg("board.task_estimate"))
     deps = d.get("deps", [])
     if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
-        raise ValueError("deps задачи должен быть списком строк")
+        raise ValueError(msg("board.task_deps"))
     return Task(**dict(d, deps=list(deps)))
 
 
@@ -136,29 +137,29 @@ def _check_tracker_link(fields: dict) -> None:
     key = fields.get("tracker_key")
     if key is not None and (not isinstance(key, str) or not key or len(key) > MAX_TRACKER_KEY_CHARS
                             or any(c.isspace() for c in key)):
-        raise ValueError("tracker_key: непустая строка без пробелов, до %d символов" % MAX_TRACKER_KEY_CHARS)
+        raise ValueError(msg("board.tracker_key", max=MAX_TRACKER_KEY_CHARS))
     url = fields.get("tracker_url")
     if url is not None and not is_http_url(url):
-        raise ValueError("tracker_url: ссылка http(s)")
+        raise ValueError(msg("board.tracker_url"))
 
 
 def _check_task_text(fields: dict) -> None:
     for name in ("title", "description", "done_when"):
         if name in fields and not isinstance(fields[name], str):
-            raise ValueError("Поле задачи %s должно быть строкой" % name)
+            raise ValueError(msg("board.task_field_str", name=name))
     estimate = fields.get("estimate")
     if estimate is not None and (isinstance(estimate, bool) or not isinstance(estimate, (int, float))):
-        raise ValueError("Оценка задачи должна быть числом")
+        raise ValueError(msg("board.task_estimate"))
 
 
 def _clean_rule_violations(value: Any) -> List[dict]:
     """Проверяет нарушения правил и оставляет в них только правило и текст разумной длины."""
     if not isinstance(value, list) or len(value) > MAX_RULE_VIOLATIONS:
-        raise ValueError("rule_violations должен быть списком не длиннее %d" % MAX_RULE_VIOLATIONS)
+        raise ValueError(msg("board.rule_violations", max=MAX_RULE_VIOLATIONS))
     result = []
     for item in value:
         if not isinstance(item, dict) or not isinstance(item.get("rule"), str) or not isinstance(item.get("text"), str):
-            raise ValueError("Элемент rule_violations должен быть объектом со строками rule и text")
+            raise ValueError(msg("board.rule_violation_item"))
         result.append({"rule": item["rule"][:MAX_RULE_CHARS], "text": item["text"][:MAX_RULE_TEXT_CHARS]})
     return result
 
@@ -196,7 +197,7 @@ class Board:
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
         if type not in EVENT_TYPES:
-            raise ValueError("Неизвестный тип события: %r" % type)
+            raise ValueError(msg("board.unknown_event", type=type))
         with self._lock:
             return self._emit(type, dict(data))
 
@@ -229,9 +230,9 @@ class Board:
         Медленные проверки (диск, git, трекер) идут до блокировки доски и только для изменившихся полей; под блокировкой
         настройки перечитываются, и итог проверяется по форме. Если заданное поле успели изменить, пока шли проверки,
         попытка повторяется. Пустой fields — полная проверка сохранённых настроек."""
-        self._require_user(actor, "Настройки проекта меняет только пользователь")
+        self._require_user(actor, msg("board.config_user_only"))
         if not isinstance(fields, dict):
-            raise ValueError("fields должен быть объектом")
+            raise ValueError(msg("board.fields_not_object"))
         check_field_names(fields)
         for _ in range(CONFIG_ATTEMPTS):
             base = self.store.load_config()
@@ -255,8 +256,7 @@ class Board:
                 changed = sorted(k for k in fields if result.get(k) != before.get(k))
                 events = [] if dry_run or not changed else [self._emit("config_changed", {"fields": changed})]
                 return {"config": result, "saved": not dry_run, "events": [e.to_dict() for e in events]}
-        raise ConfigConflict("Настройки (%s) одновременно меняются из другого места — повторите позже"
-                             % ", ".join(sorted(fields)))
+        raise ConfigConflict(msg("board.config_conflict", names=", ".join(sorted(fields))))
 
     @staticmethod
     def _merged_config(config: ProjectConfig, fields: dict) -> ProjectConfig:
@@ -290,11 +290,11 @@ class Board:
         """Переводит проект на следующую стадию; стадии меняет только пользователь."""
         with self._lock:
             if actor != "user":
-                raise PermissionError("Стадию проекта меняет только пользователь")
+                raise PermissionError(msg("board.stage_user_only"))
             config = self.store.load_config()
             prev = config.stage
             if stage not in STAGE_TRANSITIONS.get(prev, ()):
-                raise ValueError("Недопустимый переход стадии: %s -> %r" % (prev, stage))
+                raise ValueError(msg("board.bad_stage", prev=prev, stage=stage))
             config.stage = stage
             self.store.save_config(config)
             return [self._emit("stage_changed", {"from": prev, "to": stage})]
@@ -351,8 +351,7 @@ class Board:
         """Новую задачу добавляет только пользователь; агенты предлагают её через агента проекта (propose)."""
         with self._lock:
             self._reject_project_agent(actor)
-            self._require_user(actor, "Задачи добавляет только пользователь: нужна новая задача — напишите агенту "
-                                      "проекта (say _project)")
+            self._require_user(actor, msg("board.add_task_user_only"))
             tasks = self.store.load_tasks()
             self._check_new_key(task.key, tasks)
             self._check_repo(task.repo)
@@ -402,12 +401,12 @@ class Board:
         """Проверяет переход без изменений; возвращает целевой статус."""
         self._reject_project_agent(actor)
         if actor not in ACTORS:
-            raise ValueError("Неизвестный актор: %r" % actor)
+            raise ValueError(msg("board.unknown_actor", actor=actor))
         to = Status(to)
         if to == Status.BLOCKED:
-            raise ValueError("Статус blocked вычисляется по зависимостям; внешнюю блокировку задают полем external_blocker")
+            raise ValueError(msg("board.blocked_computed"))
         if actor == "agent" and to in AGENT_FORBIDDEN:
-            raise PermissionError("Агент не может ставить статус %s" % to.value)
+            raise PermissionError(msg("board.agent_status", status=to.value))
         self._get(self.store.load_tasks(), key)
         return to
 
@@ -423,25 +422,25 @@ class Board:
     def request_review(self, key: str, actor: str) -> List[Event]:
         """Пользователь просит открыть раунд ревью; сам раунд запускает раннер."""
         with self._lock:
-            self._require_user(actor, "Ревью начинает только пользователь")
+            self._require_user(actor, msg("board.review_user_only"))
             task = self._get(self.store.load_tasks(), key)
             if task.status != Status.IN_REVIEW:
-                raise ValueError("Ревью начинается только для задачи на ревью (сейчас %s)" % task.status.value)
+                raise ValueError(msg("board.review_not_in_review", status=task.status.value))
             review = self.store.load_config().review
             if not isinstance(review, dict) or (review.get("tool") or "crit") == "none":
-                raise ValueError("В проекте нет инструмента ревью: смотрите изменения во вкладке «Изменения»")
+                raise ValueError(msg("board.no_review_tool"))
             if isinstance(task.review, dict) and task.review.get("state") == "open":
-                raise ValueError("Раунд ревью уже открыт")
+                raise ValueError(msg("board.review_open"))
             return [self._emit("review_requested", {"key": key})]
 
     def request_ship(self, keys: Any, actor: str) -> List[Event]:
         """Пользователь просит отправить одобренные задачи в ревью; запросы выполняет раннер по порядку зависимостей."""
         with self._lock:
-            self._require_user(actor, "Отправляет в ревью только пользователь")
+            self._require_user(actor, msg("board.ship_user_only"))
             if not isinstance(keys, list) or not keys or not all(isinstance(k, str) for k in keys):
-                raise ValueError("keys должен быть непустым списком ключей задач")
+                raise ValueError(msg("board.ship_keys"))
             if len(set(keys)) != len(keys):
-                raise ValueError("Ключи задач в запросе повторяются")
+                raise ValueError(msg("board.ship_duplicate"))
             tasks = self.store.load_tasks()
             for key in keys:
                 self._get(tasks, key)
@@ -449,7 +448,7 @@ class Board:
             check_request(keys, tasks)
             for key in keys:
                 if isinstance(tasks[key].ship, dict) and tasks[key].ship.get("state") in ("queued", "running"):
-                    raise ValueError("Задача %s уже отправляется" % key)
+                    raise ValueError(msg("board.ship_in_progress", key=key))
             ordered = ship_order(keys, tasks)
             for key in ordered:
                 self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
@@ -458,10 +457,10 @@ class Board:
     def approve(self, key: str, actor: str, note: Optional[str] = None) -> List[Event]:
         """Одобрение задачи на ревью; note — системное сообщение в тред (например, откуда одобрение)."""
         with self._lock:
-            self._require_user(actor, "Одобряет только пользователь")
+            self._require_user(actor, msg("board.approve_user_only"))
             task = self._get(self.store.load_tasks(), key)
             if task.status != Status.IN_REVIEW:
-                raise ValueError("Одобрить можно только задачу на ревью (сейчас %s)" % task.status.value)
+                raise ValueError(msg("board.approve_not_in_review", status=task.status.value))
             events = self.transition(key, Status.APPROVED, actor)
             if note:
                 events.extend(self.post_message(key, "system", note))
@@ -470,20 +469,20 @@ class Board:
     def return_to_work(self, key: str, actor: str, text: str) -> List[Event]:
         """Возврат в работу с комментарием: агент получает комментарий вместе с пробуждением returned."""
         with self._lock:
-            self._require_user(actor, "Вернуть в работу с комментарием может только пользователь")
+            self._require_user(actor, msg("board.return_user_only"))
             if not isinstance(text, str) or not text.strip():
-                raise ValueError("Нужен комментарий")
+                raise ValueError(msg("board.comment_required"))
             task = self._get(self.store.load_tasks(), key)
             if task.status not in RETURNED_FROM:
-                raise ValueError("Вернуть в работу можно задачу на ревью или после него (сейчас %s)" % task.status.value)
+                raise ValueError(msg("board.return_status", status=task.status.value))
             self._check_transition(key, Status.IN_PROGRESS, actor)
-            msg, event = self._append_message(key, actor, text)
-            return [event] + self.transition(key, Status.IN_PROGRESS, actor, wake_extra={"message_id": msg.id})
+            message, event = self._append_message(key, actor, text)
+            return [event] + self.transition(key, Status.IN_PROGRESS, actor, wake_extra={"message_id": message.id})
 
     @staticmethod
     def _require_user(actor: str, message: str) -> None:
         if actor not in ACTORS and actor != "project_agent":
-            raise ValueError("Неизвестный актор: %r" % actor)
+            raise ValueError(msg("board.unknown_actor", actor=actor))
         if actor != "user":
             raise PermissionError(message)
 
@@ -516,24 +515,24 @@ class Board:
     def update_task(self, key: str, actor: str, fields: dict) -> List[Event]:
         with self._lock:
             if not isinstance(fields, dict):
-                raise ValueError("fields должен быть объектом")
+                raise ValueError(msg("board.fields_not_object"))
             unknown = set(fields) - UPDATABLE_FIELDS
             if unknown:
-                raise ValueError("Недопустимые поля: %s" % ", ".join(sorted(map(str, unknown))))
+                raise ValueError(msg("board.unknown_fields", names=", ".join(sorted(map(str, unknown)))))
             owned = set(fields) & RUNNER_FIELDS
             if owned and actor != "system":
-                raise PermissionError("Эти поля меняет только раннер: %s" % ", ".join(sorted(owned)))
+                raise PermissionError(msg("board.runner_fields", names=", ".join(sorted(owned))))
             if set(fields) & TRACKER_LINK_FIELDS:
                 if actor not in ("user", "system"):
-                    raise PermissionError("Привязку к трекеру меняет только пользователь")
+                    raise PermissionError(msg("board.tracker_user_only"))
                 _check_tracker_link(fields)
             if set(fields) & TASK_TEXT_FIELDS:
                 if actor not in ("user", "system"):
-                    raise PermissionError("Формулировку задачи меняет только пользователь")
+                    raise PermissionError(msg("board.wording_user_only"))
                 _check_task_text(fields)
             if "rule_violations" in fields:
                 if actor not in RULE_VIOLATION_AUTHORS:
-                    raise PermissionError("Нарушения правил фиксируют пользователь и агент проекта")
+                    raise PermissionError(msg("board.violations_actor"))
                 fields = dict(fields, rule_violations=_clean_rule_violations(fields["rule_violations"]))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
@@ -551,8 +550,7 @@ class Board:
         """Зависимости меняет только пользователь; агенты предлагают изменение через агента проекта."""
         with self._lock:
             self._reject_project_agent(actor)
-            self._require_user(actor, "Зависимости меняет только пользователь: нужна правка графа — напишите агенту "
-                                      "проекта (say _project)")
+            self._require_user(actor, msg("board.deps_user_only"))
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             validate_deps(key, deps, tasks)
@@ -579,26 +577,26 @@ class Board:
 
     def answer(self, key: str, qid: str, choice: Optional[str], comment: str) -> List[Event]:
         if choice is not None and not isinstance(choice, str):
-            raise ValueError("choice должен быть строкой или null")
+            raise ValueError(msg("api.bad_choice"))
         if not isinstance(comment, str):
-            raise ValueError("comment должен быть строкой")
+            raise ValueError(msg("api.bad_comment"))
         with self._lock:
             task = self._get(self.store.load_tasks(), key)
             question = next((q for q in task.questions if q.id == qid), None)
             if question is None:
-                raise KeyError("Неизвестный вопрос: %s" % qid)
+                raise KeyError(msg("board.unknown_question", id=qid))
             if question.answer is not None:
-                raise ValueError("На вопрос уже ответили: %s" % qid)
+                raise ValueError(msg("board.question_answered", id=qid))
             now = self._clock()
             question.answer = {"choice": choice, "comment": comment, "at": now}
             task.updated_at = now
             self.store.save_task(task)
             text = "\n".join(p for p in (choice, comment) if p)
-            msg = Message(id=uuid.uuid4().hex, author="user", text=text, at=now, question_id=qid)
-            self.store.append_message(key, msg)
+            message = Message(id=uuid.uuid4().hex, author="user", text=text, at=now, question_id=qid)
+            self.store.append_message(key, message)
             events = [
                 self._emit("question_answered", {"key": key, "question_id": qid}),
-                self._emit("message_posted", {"thread": key, "message_id": msg.id, "author": "user"}),
+                self._emit("message_posted", {"thread": key, "message_id": message.id, "author": "user"}),
                 self._emit("agent_wake", {"key": key, "reason": "answer"}),
             ]
             if task.status == Status.WAITING_ANSWER and all(q.answer is not None for q in task.questions):
@@ -614,17 +612,17 @@ class Board:
                 from_task = None
             elif from_task is not None:
                 if not isinstance(from_task, str):
-                    raise ValueError("from_task должен быть строкой")
+                    raise ValueError(msg("api.bad_from_task"))
                 self._get(self.store.load_tasks(), from_task)
-            msg, posted = self._append_message(thread, author, text)
+            message, posted = self._append_message(thread, author, text)
             events = [posted]
             wakes_agent = author == "user" or (author == "project_agent" and task is not None)
             if author == "user" and task is not None and self.store.load_config().stage == "decomposition":
                 # агентов задач до утверждения разбивки нет: комментарий к задаче читает агент проекта
                 events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "message", "task": thread,
-                                                        "message_id": msg.id, "by": author}))
+                                                        "message_id": message.id, "by": author}))
             elif wakes_agent:
-                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": msg.id,
+                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": message.id,
                                                         "by": author}))
             elif author == "agent" and from_task:
                 events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task,
@@ -633,8 +631,8 @@ class Board:
 
     def _append_message(self, thread: str, author: str, text: str):
         """Сообщение в тред без пробуждений: (сообщение, событие message_posted)."""
-        msg = Message(id=uuid.uuid4().hex, author=author, text=text, at=self._clock())
-        self.store.append_message(thread, msg)
+        message = Message(id=uuid.uuid4().hex, author=author, text=text, at=self._clock())
+        self.store.append_message(thread, message)
         if author != "user":
             if thread != PROJECT_THREAD:
                 task = self._get(self.store.load_tasks(), thread)
@@ -644,7 +642,7 @@ class Board:
                 meta = self.store.load_meta()
                 meta["project_unread"] += 1
                 self.store.save_meta(meta)
-        return msg, self._emit("message_posted", {"thread": thread, "message_id": msg.id, "author": author})
+        return message, self._emit("message_posted", {"thread": thread, "message_id": message.id, "author": author})
 
     def mark_read(self, thread: str) -> List[Event]:
         with self._lock:
@@ -701,14 +699,14 @@ class Board:
     def _check_proposal(self, kind: str, payload: dict) -> str:
         """Проверяет предложение на текущем состоянии графа, возвращает ключ затронутой задачи."""
         if kind not in ("add_task", "set_deps", "cancel_task"):
-            raise ValueError("Неизвестный вид предложения: %r" % kind)
+            raise ValueError(msg("board.unknown_proposal_kind", kind=kind))
         if not isinstance(payload, dict):
-            raise ValueError("payload предложения должен быть объектом")
+            raise ValueError(msg("board.proposal_payload"))
         tasks = self.store.load_tasks()
         if kind == "add_task":
             raw = payload.get("task")
             if not isinstance(raw, dict):
-                raise ValueError("В предложении add_task нужен объект task")
+                raise ValueError(msg("board.proposal_task"))
             task = new_task_from_dict(raw)
             self._check_new_key(task.key, tasks)
             self._check_repo(task.repo)
@@ -716,11 +714,11 @@ class Board:
             return task.key
         key = payload.get("key")
         if not isinstance(key, str):
-            raise ValueError("В предложении нужен строковый key")
+            raise ValueError(msg("board.proposal_key"))
         if kind == "set_deps":
             deps = payload.get("deps")
             if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
-                raise ValueError("В предложении set_deps deps должен быть списком строк")
+                raise ValueError(msg("board.proposal_deps"))
             key = self._get(tasks, key).key
             validate_deps(key, list(deps), tasks)
             return key
@@ -730,9 +728,9 @@ class Board:
     def _open_proposal(proposals: List[Proposal], pid: str) -> Proposal:
         proposal = next((p for p in proposals if p.id == pid), None)
         if proposal is None:
-            raise KeyError("Неизвестное предложение: %s" % pid)
+            raise KeyError(msg("board.unknown_proposal", id=pid))
         if proposal.status != "open":
-            raise ValueError("Предложение уже обработано: %s (%s)" % (pid, proposal.status))
+            raise ValueError(msg("board.proposal_done", id=pid, status=proposal.status))
         return proposal
 
     @staticmethod
@@ -747,25 +745,25 @@ class Board:
     @staticmethod
     def _check_new_key(key: str, tasks) -> None:
         if not isinstance(key, str):
-            raise ValueError("Ключ задачи должен быть строкой")
+            raise ValueError(msg("board.key_not_str"))
         if key.startswith("_"):
-            raise ValueError("Ключ задачи не может начинаться с «_»: %s" % key)
-        _check_ident(key, "задача")
+            raise ValueError(msg("board.key_underscore", key=key))
+        _check_ident(key, "board.ident_task")
         # файлы задач на регистронезависимой ФС перезаписали бы друг друга
         clash = next((k for k in tasks if k.lower() == key.lower()), None)
         if clash is not None:
-            raise ValueError("Задача уже существует: %s" % clash)
+            raise ValueError(msg("board.task_exists", key=clash))
 
     def _check_repo(self, repo: Optional[str]) -> None:
         """Задача ссылается только на репозиторий проекта, если репозитории заданы."""
         names = [r.get("name") for r in self.store.load_config().repos if isinstance(r, dict)]
         if repo and names and repo not in names:
-            raise ValueError("Репозиторий %s не из настроек проекта: %s" % (repo, ", ".join(map(str, names))))
+            raise ValueError(msg("board.unknown_repo", repo=repo, names=", ".join(map(str, names))))
 
     @staticmethod
     def _reject_project_agent(actor: str) -> None:
         if actor == "project_agent":
-            raise PermissionError("Агент проекта меняет граф только через предложения")
+            raise PermissionError(msg("board.graph_via_proposals"))
 
     def _emit(self, type: str, data: dict) -> Event:
         event = self.store.append_event(type, data, self._clock())
@@ -792,5 +790,5 @@ class Board:
     @staticmethod
     def _get(tasks, key: str) -> Task:
         if key not in tasks:
-            raise KeyError("Неизвестная задача: %s" % key)
+            raise KeyError(msg("board.unknown_task", key=key))
         return tasks[key]

@@ -36,7 +36,8 @@ class Resp:
 
 
 def call(server, method, path, body=None, token="default", headers=None):
-    h = dict(headers or {})
+    # тексты ошибок сверяются по-русски
+    h = dict({"X-Board-Lang": "ru"}, **(headers or {}))
     if token == "default":
         token = server.token
     if token:

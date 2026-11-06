@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional, Tuple
 
+from .messages import msg
 from .model import DEP_SATISFIED_CHAINS, DEP_SATISFIED_STRICT, Status, Task
 
 _UNMERGED = (Status.APPROVED, Status.SENT)
@@ -69,14 +70,14 @@ def find_cycle(tasks: Dict[str, Task]) -> Optional[List[str]]:
 def validate_deps(key: str, deps: List[str], tasks: Dict[str, Task]) -> None:
     for dep in deps:
         if dep == key:
-            raise ValueError("Задача не может зависеть от себя: %s" % key)
+            raise ValueError(msg("board.self_dep", key=key))
         if dep not in tasks:
-            raise ValueError("Зависимость от неизвестной задачи: %s" % dep)
+            raise ValueError(msg("board.unknown_dep", key=dep))
     graph = {k: list(t.deps) for k, t in tasks.items()}
     graph[key] = list(deps)
     cycle = _find_cycle(graph)
     if cycle:
-        raise ValueError("Зависимости образуют цикл: %s" % " → ".join(cycle))
+        raise ValueError(msg("board.cycle", cycle=" → ".join(cycle)))
 
 
 def base_for(task: Task, tasks: Dict[str, Task], chains: bool, default_base: str) -> Tuple[str, List[str]]:
@@ -98,7 +99,7 @@ def critical_path(tasks: Dict[str, Task]) -> List[str]:
     active = {k: t for k, t in tasks.items() if t.status != Status.CANCELLED}
     cycle = _find_cycle({k: [d for d in t.deps if d in active] for k, t in active.items()})
     if cycle:
-        raise ValueError("Зависимости образуют цикл: %s" % " → ".join(cycle))
+        raise ValueError(msg("board.cycle", cycle=" → ".join(cycle)))
 
     best: Dict[str, Tuple[float, List[str]]] = {}
 

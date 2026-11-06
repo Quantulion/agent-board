@@ -32,7 +32,7 @@ Talk to the user in their language. Ask one question at a time.
 
 1. **Board up.** Run `agent-board status`.
    - User only asks to open / bring back a board → `references/resume.md` instead of this list.
-   - "доска не запущена" → `agent-board serve --detach`. Exit 3 (other version running) → `references/resume.md`,
+   - "the board is not running" → `agent-board serve --detach`. Exit 3 (other version running) → `references/resume.md`,
      section "Version mismatch", then continue with step 2.
 2. **Project.** Pick from the `status` list.
    - New: propose a slug from the plan title (latin, lower case, `-`, short: `payments-pg`) and a title;
