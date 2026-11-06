@@ -2,7 +2,8 @@
 const registry = new Map();
 
 // Регистрирует действие; повторная регистрация с тем же id заменяет его на прежнем месте.
-// def: { id, label, icon, title?, visible(task, snapshot), enabled(task, snapshot), run(ctx, task) }
+// def: { id, label, icon, title?, visible(task, snapshot), enabled(task, snapshot), run(ctx, task) };
+// label — строка или функция: функция читает подпись при каждой отрисовке, поэтому учитывает смену языка.
 export function registerCardAction(def) {
   if (!def || !def.id || typeof def.run !== 'function') throw new Error('card action needs id and run');
   registry.set(def.id, def);
@@ -21,7 +22,7 @@ export function cardActions(task, snapshot) {
     .filter(def => call(def.visible, true, task, snapshot))
     .map(def => ({
       id: def.id,
-      label: def.label,
+      label: call(def.label, def.label, task, snapshot),
       icon: def.icon,
       enabled: Boolean(call(def.enabled, true, task, snapshot)),
       title: call(def.title, def.title, task, snapshot) || null,

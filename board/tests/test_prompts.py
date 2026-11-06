@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from agent_board.config import ProjectConfig
@@ -47,7 +48,7 @@ def test_task_prompt_forbids_commit_and_push_and_describes_cli():
                 "--todo-json", "--changed-files-json", "ask <KEY>", "--context", "--recommended",
                 "say _project", "lock-run <resource> -- <command>"):
         assert "agent-board " + cmd in text or cmd in text
-    assert "agent-board lock-run" in text and "Общайся с пользователем на языке: ru" in text
+    assert "agent-board lock-run" in text and "Talk to the user in this language: ru" in text
     assert "$board_cli" not in text and "$language" not in text
 
 
@@ -141,7 +142,7 @@ def test_digest_truncates_to_limit_and_mentions_turn_failure():
 
     # assert
     lines = text.splitlines()
-    assert lines[0] == "…ещё 8 событий" and len(lines) == 4
+    assert lines[0] == "…8 more events" and len(lines) == 4
     assert "FAILED" in lines[-1] and "boom" in lines[-1] and "T10" in lines[-2]
 
 
@@ -356,3 +357,30 @@ def test_project_prompt__decomposition_rules__included_or_none():
     # assert
     assert "## Decomposition rules\nОдна задача — один репозиторий" in with_rules
     assert "## Decomposition rules\n(none)" in without
+
+
+def test_prompts__english_project__should_contain_no_cyrillic():
+    # arrange
+    config = ProjectConfig(slug="pay", title="Payments", language="en", agent_rules="Run make test",
+                           project_brief="Payment service", decomposition_rules="One repo per task",
+                           resources=[{"name": "functests", "description": "shared DB"}])
+    task = Task(key="PAY-7", title="Add retry", description="Retry payments", done_when="Tests pass",
+                repo="svc", deps=["PAY-3"])
+    snapshot = {"tasks": [{"key": "PAY-1", "title": "A", "display_status": "blocked", "open_deps": ["PAY-0"]}],
+                "proposals": [{"id": "p1", "kind": "add_task", "status": "open"}]}
+    reasons = [{"reason": r} for r in ("message", "answer", "returned", "review", "rebase", "interrupted",
+                                       "queued_restart", "escalation", "proposal_rejected", "unblocked",
+                                       "ready", "manual", "unknown")]
+    events = [Event(seq=i, type="task_added", at="", data={"key": "T%d" % i}) for i in range(1, 6)]
+
+    # act
+    texts = [
+        task_system(config, CLI),
+        task_prompt(task, config, Path("/repo/wt"), "main", CLI),
+        project_prompt(config, snapshot, CLI),
+        wake_message(reasons, digest(events, limit=2), CLI),
+    ]
+
+    # assert
+    for text in texts:
+        assert not re.search("[А-Яа-яЁё]", text), text

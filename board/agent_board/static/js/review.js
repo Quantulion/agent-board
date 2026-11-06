@@ -42,7 +42,7 @@ export function reviewChip(task) {
   if (r.state === 'idle') return r.error ? { text: T.review.chipError, cls: 'err' } : null;
   const label = T.review.chip[r.state];
   if (!label || !r.round) return null;
-  return { text: 'р' + r.round + ' · ' + label, cls: r.state === 'open' ? 'rv' : '' };
+  return { text: T.roundShort(r.round) + ' · ' + label, cls: r.state === 'open' ? 'rv' : '' };
 }
 
 const inReview = task => statusOf(task) === 'in_review';
@@ -92,7 +92,7 @@ export function openReview(task) {
 
 registerCardAction({
   id: 'review-start',
-  label: T.review.start,
+  label: () => T.review.start,
   icon: 'eye',
   visible: (task, snap) => !isResearch(task) && inReview(task) && reviewTool(snap) === 'crit'
     && !['open', 'fixing'].includes(roundState(task)),
@@ -101,7 +101,7 @@ registerCardAction({
 
 registerCardAction({
   id: 'review-open',
-  label: T.review.open,
+  label: () => T.review.open,
   icon: 'ext',
   visible: task => !isResearch(task) && roundState(task) === 'open' && Boolean(reviewOf(task).url),
   title: task => (reviewOf(task) || {}).url || null,
@@ -110,7 +110,7 @@ registerCardAction({
 
 registerCardAction({
   id: 'review-approve',
-  label: T.review.approve,
+  label: () => T.review.approve,
   icon: 'check',
   visible: task => !isResearch(task) && inReview(task),
   run: approveTask,
@@ -118,7 +118,7 @@ registerCardAction({
 
 registerCardAction({
   id: 'review-return',
-  label: T.review.return,
+  label: () => T.review.return,
   icon: 'chat',
   visible: task => !isResearch(task) && ['in_review', 'approved', 'sent'].includes(statusOf(task)),
   run: returnDialog,

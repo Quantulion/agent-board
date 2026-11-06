@@ -11,7 +11,8 @@
     "decomposition": "node decomposition.mjs",
     "smoke": "node smoke.mjs",
     "integrations": "node integrations.mjs",
-    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs"
+    "english": "node english.mjs",
+    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"

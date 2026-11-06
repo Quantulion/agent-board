@@ -70,8 +70,6 @@ export function decompositionSummary(snapshot) {
 
 // --- Вид ---
 
-const days = n => String(Math.round(n * 10) / 10).replace('.', ',') + ' д';
-
 export function mountDecomposition(root, store, ctx) {
   const slug = ctx.slug;
   const drafts = draftsFor(slug);
@@ -313,8 +311,8 @@ export function mountDecomposition(root, store, ctx) {
     const nd = s.missingDod.length;
     stats.replaceChildren(
       stat(s.tasks.length, T.dc.statTasks(s.tasks.length, s.repos.length)),
-      stat(days(s.estimate), T.dc.statEstimate),
-      stat(days(s.critical.total), T.dc.statCritical),
+      stat(T.days(s.estimate), T.dc.statEstimate),
+      stat(T.days(s.critical.total), T.dc.statCritical),
       stat(s.steps, T.dc.statSteps(s.steps, s.parallel)),
       stat(nv, T.dc.statViolations(nv), nv ? 'bad' : ''),
       stat(nd, T.dc.statNoDod, nd ? 'warn' : ''),
