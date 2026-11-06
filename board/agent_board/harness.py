@@ -235,17 +235,20 @@ BOARD_CLI_PERMISSIONS = ["Bash(agent-board %s:*)" % name for name in BOARD_CLI_S
 class ClaudeHarness(Harness):
     binary = "claude"
 
-    def __init__(self, permission_mode: str, model: Optional[str] = None, system_prompt: str = DEFAULT_SYSTEM_PROMPT):
+    def __init__(self, permission_mode: str, model: Optional[str] = None, system_prompt: str = DEFAULT_SYSTEM_PROMPT,
+                 allowed_tools: Optional[List[str]] = None):
         self.permission_mode = permission_mode
         self.model = model
         self.system_prompt = system_prompt
+        # дополнительные разрешения проекта (например, ответы на комментарии ревью)
+        self.allowed_tools = list(allowed_tools or [])
 
     def new_session_id(self) -> Optional[str]:
         return str(uuid.uuid4())
 
     def _common(self) -> List[str]:
         return ["--output-format", "stream-json", "--verbose", "--permission-mode", self.permission_mode,
-                "--allowedTools"] + BOARD_CLI_PERMISSIONS
+                "--allowedTools"] + BOARD_CLI_PERMISSIONS + self.allowed_tools
 
     def build_start_args(self, session_id: str, system_file: Path) -> List[str]:
         args = [self.binary, "-p", "--session-id", session_id] + self._common()
@@ -367,7 +370,8 @@ class FakeHarness(ClaudeHarness):
 def make_harness(config: dict) -> Harness:
     kind = config.get("type", "claude")
     if kind == "claude":
-        return ClaudeHarness(config.get("permission_mode") or "auto", config.get("model"))
+        return ClaudeHarness(config.get("permission_mode") or "auto", config.get("model"),
+                             allowed_tools=config.get("allowed_tools"))
     if kind == "codex":
         return CodexHarness(config.get("sandbox") or "workspace-write", config.get("model"))
     if kind == "fake":

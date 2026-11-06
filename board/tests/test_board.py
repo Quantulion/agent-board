@@ -883,3 +883,20 @@ def test_snapshot_thread_summary_follows_new_messages(board):
     # assert
     task = board.snapshot()["tasks"][0]
     assert task["thread_size"] == 2 and task["last_message"]["text"] == "два"
+
+
+def test_return_to_work__transition_rejected__should_not_leave_message(board, monkeypatch):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_REVIEW, "agent")
+
+    def reject(key, to, actor):
+        raise ValueError("переход отклонён")
+
+    monkeypatch.setattr(board, "_check_transition", reject)
+    # act
+    with pytest.raises(ValueError):
+        board.return_to_work("A", "user", "доделай")
+    # assert
+    assert board.store.read_thread("A") == []
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW

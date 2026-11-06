@@ -69,6 +69,10 @@ REVIEW_APPROVED_TEXT = "Одобрено в ревью (раунд %d)"
 REVIEW_FAILED_TEXT = "Ревью не запущено: %s"
 REVIEW_ABORTED_TEXT = "Раунд ревью %d прерван: %s. Откройте ревью снова."
 REVIEW_ERROR_CHARS = 1000
+REVIEW_DURING_TURN_TEXT = "Ревью завершено во время хода агента — одобрите вручную"
+REVIEW_NOT_IN_REVIEW_TEXT = ("Раунд ревью %d завершён без замечаний, но задача уже не на ревью (%s): "
+                             "одобрите её вручную, когда она будет готова")
+REVIEW_TOOL_OFF_TEXT = "Инструмент ревью в проекте отключён: открытый раунд %d закрыт"
 
 Key = Tuple[str, str]
 
@@ -267,9 +271,13 @@ class Runner:
 
     @staticmethod
     def _harness(board: Board, task: Optional[Task] = None) -> Harness:
-        config = dict(board.store.load_config().harness)
+        project = board.store.load_config()
+        config = dict(project.harness)
         if task is not None and task.harness:
             config["type"] = task.harness
+        review = project.review if isinstance(project.review, dict) else {}
+        if (review.get("tool") or "crit") == "crit":
+            config["allowed_tools"] = ["Bash(%s comment:*)" % (review.get("binary") or "crit")]
         return make_harness(config)
 
     def _env(self, board: Board, key: str) -> dict:
@@ -896,6 +904,10 @@ class Runner:
             config = board.store.load_config()
             reviewer = make_review(config.review)
             if not reviewer.interactive:
+                if isinstance(task.review, dict) and task.review.get("state") == "open":
+                    text = REVIEW_TOOL_OFF_TEXT % int(task.review.get("round") or 0)
+                    self._set_review(board, key, state="idle", process=None, error=text)
+                    board.post_message(key, "system", text)
                 return
             if task.status != Status.IN_REVIEW:
                 self._set_review(board, key, state="idle", process=None)
@@ -904,7 +916,8 @@ class Runner:
             rnd = max(int(state.get("round") or 0) + (0 if reconnect else 1), 1)
             path = self._own_worktree(config, task)
             session = state.get("session") if use_session else None
-            proc = reviewer.start(path, task.base_branch or "main", self._crit_dir(board), session=session,
+            base = task.base_branch or self._repo(config, task)[1]
+            proc = reviewer.start(path, base, self._crit_dir(board), session=session,
                                   port=port_of(state.get("url")))
         except Exception as e:
             if not isinstance(e, (ValueError, GitError)):
@@ -952,11 +965,35 @@ class Runner:
                     return
                 threading.Event().wait(0.05)
 
-    def _stop_review(self, k: Key) -> None:
+    def _close_review(self, k: Key) -> None:
+        """Ревью закончено насовсем: останавливается клиент раунда и закрывается страница crit."""
         rv = self._reviews.pop(k, None)
         if rv is not None:
             rv.stopped = True
-            threading.Thread(target=terminate, args=(rv.proc, STOP_GRACE_SECONDS), daemon=True).start()
+        board = self._board(k[0])
+        task = board.store.load_tasks().get(k[1])
+        session = task.review.get("session") if task is not None and isinstance(task.review, dict) else None
+        stop_page = None
+        if session:
+            try:
+                config = board.store.load_config()
+                reviewer = make_review(config.review)
+                path = self._own_worktree(config, task)
+            except Exception:
+                reviewer = path = None
+            if getattr(reviewer, "interactive", False):
+                stop_page = (reviewer, path, self._crit_dir(board), session)
+        if rv is None and stop_page is None:
+            return
+
+        def close() -> None:
+            if rv is not None:
+                terminate(rv.proc, STOP_GRACE_SECONDS)
+            if stop_page is not None:
+                reviewer, path, data_dir, sid = stop_page
+                reviewer.stop_daemon(path, data_dir, sid)
+
+        threading.Thread(target=close, name="board-review-close-%s" % k[1], daemon=True).start()
 
     def _review_on_status(self, slug: str, d: dict) -> None:
         """Задача ушла с ревью (одобрена, отменена или возвращена пользователем): раунд закрывается."""
@@ -966,7 +1003,7 @@ class Runner:
         if not ended:
             return
         k = (slug, str(d.get("key")))
-        self._stop_review(k)
+        self._close_review(k)
         if to == Status.APPROVED.value and self._pending.get(k):
             # замечания одобренного ревью агенту больше не нужны
             self._pending[k] = [r for r in self._pending[k] if r.get("reason") != "review"]
@@ -1005,15 +1042,25 @@ class Runner:
         if result.outcome in ("approved", "changes"):
             state["history"] = list(state.get("history") or []) + [
                 {"round": rv.round, "state": result.outcome, "comments": len(result.comments), "at": self._clock()}]
-        if result.outcome == "approved":
+        if result.outcome == "approved" and k in self._turns:
+            # раунд мог завершить сам агент: одобрение во время его хода оставляем пользователю
+            state.update(state="idle", error=REVIEW_DURING_TURN_TEXT)
+            board.update_task(key, "system", {"review": state})
+            board.post_message(key, "system", REVIEW_DURING_TURN_TEXT)
+        elif result.outcome == "approved" and task.status != Status.IN_REVIEW:
+            text = REVIEW_NOT_IN_REVIEW_TEXT % (rv.round, task.status.value)
+            state.update(state="idle", error=text)
+            board.update_task(key, "system", {"review": state})
+            board.post_message(key, "system", text)
+        elif result.outcome == "approved":
             state.update(state="approved", error="")
             board.update_task(key, "system", {"review": state})
-            if task.status == Status.IN_REVIEW:
-                # завершение раунда без замечаний — решение самого пользователя в crit
-                try:
-                    board.approve(key, "user", REVIEW_APPROVED_TEXT % rv.round)
-                except ValueError:
-                    pass
+            # завершение раунда без замечаний — решение самого пользователя в crit
+            try:
+                board.approve(key, "user", REVIEW_APPROVED_TEXT % rv.round)
+            except ValueError as e:
+                self._set_review(board, key, state="idle", error=str(e))
+                board.post_message(key, "system", REVIEW_NOT_IN_REVIEW_TEXT % (rv.round, e))
         elif result.outcome == "changes":
             state.update(state="changes", error="")
             board.update_task(key, "system", {"review": state})
@@ -1033,7 +1080,7 @@ class Runner:
                 or self._pending.get(k) or k in self._reviews:
             return
         task = self._board(k[0]).store.load_tasks().get(k[1])
-        if task is None or task.status != Status.IN_REVIEW or not isinstance(task.review, dict) \
-                or task.review.get("state") != "fixing":
+        if task is None or task.status != Status.IN_REVIEW or task.agent_state == "error" \
+                or not isinstance(task.review, dict) or task.review.get("state") != "fixing":
             return
         self._start_review(k[0], k[1], reconnect=False)

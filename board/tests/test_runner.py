@@ -1128,7 +1128,8 @@ from fakes import fake_crit  # noqa: E402
 
 @pytest.fixture
 def crit_bin(tmp_path):
-    return fake_crit.install(tmp_path / "crit-bin")
+    yield fake_crit.install(tmp_path / "crit-bin")
+    fake_crit.cleanup(tmp_path / "crit-bin")
 
 
 def review_project(make_project, crit_bin, **kw):
@@ -1427,3 +1428,128 @@ def test_approval_drops_undelivered_review_comments(make_project, start_server, 
     resumes = [c["text"] for c in calls if c["kind"] == "resume"]
     assert "ещё одна правка" in resumes[-1]
     assert not any("устаревшее замечание" in t for t in resumes)
+
+
+
+def busy_agent(srv, store, key="A", seconds=3):
+    srv.board_for("pay").post_message(key, "user", script({"sleep": seconds}))
+    wait_for(lambda: task(store, key).agent_state == "running", what="агент занят")
+
+
+@pytest.mark.parametrize("action", ["approve", "cancel", "return"])
+@pytest.mark.parametrize("phase", ["changes", "next_round"])
+def test_closing_review_stops_crit_daemon(make_project, start_server, calls, crit_bin, action, phase):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    board.request_review("A", "user")
+    first = wait_round(store, 1)
+    if phase == "changes":
+        busy_agent(srv, store)
+    fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": "замечание"}])
+    if phase == "changes":
+        wait_for(lambda: review(store).get("state") == "changes", what="раунд с замечаниями")
+    else:
+        wait_round(store, 2)
+    daemon = fake_crit.daemon_pid(crit_dir(store), first["session"])
+    assert daemon
+    # act
+    if action == "approve":
+        board.approve("A", "user")
+    elif action == "cancel":
+        board.transition("A", Status.CANCELLED, "user")
+    else:
+        board.return_to_work("A", "user", "доделай")
+    # assert
+    wait_for(lambda: not harness_mod.group_alive(daemon), what="демон crit остановлен")
+    assert fake_crit.daemon(crit_dir(store), first["session"]) is None
+
+
+def test_review_approved_during_agent_turn_is_left_to_the_user(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    first = wait_round(store, 1)
+    busy_agent(srv, store)
+    # act
+    fake_crit.finish(crit_dir(store), first["session"])
+    wait_for(lambda: runner_mod.REVIEW_DURING_TURN_TEXT in thread_texts(store, "A"), what="сообщение на карточке")
+    wait_events(store, "turn_finished", "A", count=2)
+    runner_sync(srv)
+    # assert
+    a = task(store, "A")
+    assert a.status == Status.IN_REVIEW and not events(store, "task_committed", "A")
+    assert a.review["state"] == "idle" and a.review["history"][-1]["state"] == "approved"
+    assert len(fake_crit.review_calls(crit_dir(store))) == 1
+
+
+def test_review_approved_when_task_left_review_reports_on_card(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    board.request_review("A", "user")
+    first = wait_round(store, 1)
+    board.transition("A", Status.IN_PROGRESS, "agent")
+    runner_sync(srv)
+    # act
+    fake_crit.finish(crit_dir(store), first["session"])
+    wait_for(lambda: review(store).get("state") == "idle", what="раунд закрыт")
+    runner_sync(srv)
+    # assert
+    r = review(store)
+    assert r["error"] and task(store, "A").status == Status.IN_PROGRESS
+    assert any("не на ревью" in t for t in thread_texts(store, "A"))
+
+
+def test_next_round_not_opened_for_agent_in_error(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    board = srv.board_for("pay")
+    board.update_task("A", "system", {"agent_state": "error", "review": {"round": 1, "state": "fixing"}})
+    runner_sync(srv)
+    # act
+    srv.runner._maybe_next_round(("pay", "A"))
+    runner_sync(srv)
+    # assert
+    assert fake_crit.review_calls(crit_dir(store)) == [] and review(store)["state"] == "fixing"
+
+
+def test_recovery_closes_open_round_when_review_tool_removed(make_project, start_server, calls, crit_bin):
+    # arrange
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    srv.stop()
+    srv.board_for("pay").update_config({"review": {"tool": "none"}})
+    # act
+    srv = start_server()
+    wait_for(lambda: review(store).get("state") == "idle", what="раунд закрыт")
+    runner_sync(srv)
+    # assert
+    assert review(store)["error"] and len(fake_crit.review_calls(crit_dir(store))) == 1
+    assert any("ревью" in t and "отключ" in t for t in thread_texts(store, "A"))
+
+
+def test_review_base_falls_back_to_repo_base(make_project, start_server, calls, crit_bin, git_repo):
+    # arrange
+    run_git(git_repo, "branch", "trunk")
+    store = review_project(make_project, crit_bin, repos=[{"name": "app", "path": str(git_repo), "base": "trunk"}])
+    srv = start_server()
+    to_review(srv, store)
+    srv.board_for("pay").update_task("A", "system", {"base_branch": None})
+    # act
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    # assert
+    argv = fake_crit.review_calls(crit_dir(store))[0]["argv"]
+    assert argv[argv.index("--base-branch") + 1] == "trunk"

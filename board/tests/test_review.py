@@ -15,7 +15,8 @@ TIMEOUT = 10.0
 
 @pytest.fixture
 def crit(tmp_path):
-    return fake_crit.install(tmp_path / "bin")
+    yield fake_crit.install(tmp_path / "bin")
+    fake_crit.cleanup(tmp_path / "bin")
 
 
 @pytest.fixture
@@ -164,3 +165,61 @@ def test_comments_fall_back_to_round_output_when_listing_fails(crit, data_dir, g
                           finish=lambda s: fake_crit.finish(data_dir, s, [{"path": "a.txt", "line": 2, "body": "x"}]))
     # assert
     assert result.outcome == "changes" and [c["body"] for c in result.comments] == ["x"]
+
+
+def test_not_approved_with_empty_listing_uses_round_output(crit, data_dir, git_repo, tmp_path):
+    # arrange: crit сказал approved: false, а список комментариев ещё не записан на диск
+    review = CritReview(str(crit))
+    fake_crit.configure(data_dir, empty_listing=True)
+    # act
+    result, _ = run_round(review, git_repo, data_dir, tmp_path,
+                          finish=lambda s: fake_crit.finish(data_dir, s, [{"path": "a.txt", "line": 1, "body": "y"}]))
+    # assert
+    assert result.outcome == "changes" and [c["body"] for c in result.comments] == ["y"]
+
+
+def test_not_approved_without_readable_comments_fails_instead_of_approving(tmp_path, data_dir, git_repo, monkeypatch):
+    # arrange
+    monkeypatch.setattr(review_mod, "COMMENTS_RETRY_DELAY", 0.01)
+    bad = tmp_path / "bad-crit"
+    bad.write_text("#!/bin/sh\n"
+                   "if [ \"$1\" = comments ]; then echo '[]'; exit 0; fi\n"
+                   "echo 'Started crit daemon at http://localhost:4000 (session s1, PID 1)' >&2\n"
+                   "echo 'The review finished with 2 unresolved comments.'\n"
+                   "echo 'approved: false' >&2\n")
+    bad.chmod(0o755)
+    # act
+    result, _ = run_round(CritReview(str(bad)), git_repo, data_dir, tmp_path)
+    # assert
+    assert result.outcome == "failed" and "комментари" in result.error
+
+
+def test_not_approved_with_zero_unresolved_everywhere_is_approved(tmp_path, data_dir, git_repo):
+    # arrange
+    bad = tmp_path / "zero-crit"
+    bad.write_text("#!/bin/sh\n"
+                   "if [ \"$1\" = comments ]; then echo '[]'; exit 0; fi\n"
+                   "echo 'The review finished with 0 unresolved comments.'\n"
+                   "echo '[]'\n"
+                   "echo 'approved: false' >&2\n")
+    bad.chmod(0o755)
+    # act
+    result, _ = run_round(CritReview(str(bad)), git_repo, data_dir, tmp_path)
+    # assert
+    assert result.outcome == "approved"
+
+
+def test_stop_daemon_terminates_review_page_and_ignores_foreign_pid(crit, data_dir, git_repo, tmp_path):
+    # arrange
+    review = CritReview(str(crit))
+    session = fake_crit.session_for(git_repo)
+    fake_crit.finish(data_dir, session, [{"body": "x"}])
+    run_round(review, git_repo, data_dir, tmp_path)
+    pid = fake_crit.daemon_pid(data_dir, session)
+    assert pid
+    # act / assert: чужая сессия не трогается
+    assert review.stop_daemon(git_repo, data_dir, "other-session") is False
+    assert fake_crit.daemon_pid(data_dir, session) == pid
+    # act / assert
+    assert review.stop_daemon(git_repo, data_dir, session) is True
+    wait_for(lambda: fake_crit.daemon(data_dir, session) is None, "демон остановлен")

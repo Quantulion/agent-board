@@ -15,6 +15,7 @@ import shutil
 import signal
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
@@ -22,10 +23,13 @@ from typing import Callable, List, Optional
 REVIEW_TOOLS = ("crit", "none")
 DEFAULT_BINARY = "crit"
 COMMENTS_TIMEOUT = 30.0
+# crit записывает комментарии на диск с задержкой: пустой список перечитывается один раз
+COMMENTS_RETRY_DELAY = 1.5
 OUTPUT_TAIL = 4000
 _URL_LINE = re.compile(r"crit daemon at (\S+) \(session ([A-Za-z0-9_.-]+)")
 _APPROVED_LINE = re.compile(r"^approved:\s*(true|false)\s*$")
 _PORT = re.compile(r"^https?://[^/:]+:(\d+)")
+_UNRESOLVED_COUNT = re.compile(r"finished with (\d+) unresolved comments")
 NO_SESSION_MARK = "no review found for session"
 DAEMON_GONE_MARK = "shut down before review was finished"
 # переменные, которые отключают у crit сетевую проверку обновлений и подсказки об интеграциях
@@ -144,14 +148,33 @@ class CritReview:
             return RoundResult("failed", error=error, url=url, session=session)
         if verdict:
             return RoundResult("approved", url=url, session=session)
-        try:
-            comments = self.fetch_comments(proc.review_cwd, proc.review_data_dir)
-        except ReviewError:
-            # тот же список crit печатает в stdout для агента
-            comments = _comments_from_output(stdout)
-            if comments is None:
-                return RoundResult("failed", error="не удалось прочитать комментарии раунда", url=url, session=session)
+        comments = self._round_comments(proc, stdout)
+        if comments is None:
+            return RoundResult("failed", error="crit не одобрил раунд, но прочитать его комментарии не удалось",
+                               url=url, session=session)
         return RoundResult("approved" if not comments else "changes", comments=comments, url=url, session=session)
+
+    def _round_comments(self, proc, stdout: str) -> Optional[List[dict]]:
+        """Комментарии неодобренного раунда; [] — только если и crit в выводе раунда показал ноль; None — не прочитаны."""
+        printed = _comments_from_output(stdout)
+        m = _UNRESOLVED_COUNT.search(stdout)
+        count = int(m.group(1)) if m else None
+        printed_zero = (count is not None or printed is not None) and not count and not printed
+        for attempt in range(2):
+            try:
+                listed = self.fetch_comments(proc.review_cwd, proc.review_data_dir)
+            except ReviewError:
+                listed = None
+            if listed:
+                return listed
+            # тот же список crit печатает в stdout для агента
+            if printed:
+                return printed
+            if listed == [] and printed_zero:
+                return []
+            if attempt == 0:
+                time.sleep(COMMENTS_RETRY_DELAY)
+        return None
 
     def fetch_comments(self, cwd: Path, data_dir: Path) -> List[dict]:
         """Нерешённые комментарии ревью в виде {id, path, line, body}."""
@@ -171,6 +194,36 @@ class CritReview:
         if not isinstance(raw, list):
             raise ReviewError("crit comments: ожидался список")
         return normalize_comments(raw)
+
+
+    def stop_daemon(self, cwd: Path, data_dir: Path, session: str) -> bool:
+        """Закрывает страницу ревью сессии; True — демон найден, опознан и остановлен."""
+        env = dict(os.environ)
+        env.update(QUIET_ENV)
+        try:
+            res = subprocess.run([self.binary, "status", "--json", "-o", str(data_dir)], cwd=str(cwd), env=env,
+                                 capture_output=True, text=True, timeout=COMMENTS_TIMEOUT)
+            status = json.loads(res.stdout or "{}")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return False
+        sessions = status.get("sessions") if isinstance(status, dict) else None
+        entry = next((x for x in sessions or [] if isinstance(x, dict) and x.get("id") == session), None)
+        pid = entry.get("pid") if entry else None
+        if not isinstance(pid, int) or pid <= 0:
+            return False
+        # pid мог достаться другому процессу: останавливаем только демон crit с нашим каталогом данных
+        try:
+            command = subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
+                                     timeout=10).stdout
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if "_serve" not in command or str(data_dir) not in command:
+            return False
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except OSError:
+            return False
+        return True
 
 
 def _comments_from_output(stdout: str) -> Optional[List[dict]]:

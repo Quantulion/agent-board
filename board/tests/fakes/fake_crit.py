@@ -1,16 +1,19 @@
 """Поддельный crit для тестов: тот же интерфейс командной строки и вывода, что у crit 0.20 (плагин 1.8.x).
 
 Настоящий crit поднимает демон (страница ревью) и клиент, который блокируется до «Finish Review».
-Здесь демон — файл состояния в каталоге данных (`-o`), а «Finish Review» тест нажимает функцией finish().
+Здесь демон — тоже отдельный процесс (`_serve`, своя группа процессов), его состояние — файл
+`daemon-<session>.json` в каталоге данных (`-o`); «Finish Review» тест нажимает функцией finish().
 
 Вывод клиента как у настоящего:
   stderr: «Started crit daemon at http://localhost:<port> (session <id>, PID <n>)» при новом демоне,
           «Connected to crit daemon at http://localhost:<port> (session <id>)» при подключении к живому,
           «no review found for session <id>» (код 1), если с --session демона нет;
           по завершении раунда — «approved: true|false».
-  stdout: текст для агента; при остановке демона до завершения —
+  stdout: текст для агента; если демон остановился до завершения —
           «crit daemon shut down before review was finished.» (и approved: false, код 0).
-SIGTERM клиента останавливает и демон (как у настоящего), SIGKILL — нет.
+Как у настоящего: SIGTERM клиента, который запустил демон, останавливает и демон; SIGTERM подключившегося
+клиента и SIGKILL любого — нет; SIGTERM демона останавливает его; одобрение завершает демон.
+Клиент и демон живут не дольше LIFETIME секунд, чтобы упавший тест не оставил процессов надолго.
 """
 from __future__ import annotations
 
@@ -19,12 +22,15 @@ import json
 import os
 import random
 import signal
+import subprocess
 import sys
 import time
 from pathlib import Path
 from typing import List, Optional
 
 STATE = "fake-crit"
+LIFETIME = 120.0
+REGISTRY_ENV = "FAKE_CRIT_REGISTRY"
 
 
 # --- помощники для тестов ---
@@ -33,9 +39,25 @@ def install(bin_dir: Path) -> Path:
     """Исполняемый `crit` в bin_dir, запускающий этот модуль тем же интерпретатором."""
     bin_dir.mkdir(parents=True, exist_ok=True)
     path = bin_dir / "crit"
-    path.write_text("#!/bin/sh\nexec %s %s \"$@\"\n" % (sys.executable, Path(__file__).resolve()), encoding="utf-8")
+    path.write_text("#!/bin/sh\n%s=%s\nexport %s\nexec %s %s \"$@\"\n" % (
+        REGISTRY_ENV, bin_dir / "daemons.txt", REGISTRY_ENV, sys.executable, Path(__file__).resolve()),
+        encoding="utf-8")
     path.chmod(0o755)
     return path
+
+
+def cleanup(bin_dir: Path) -> None:
+    """Останавливает все демоны, запущенные через `crit` из bin_dir."""
+    registry = Path(bin_dir) / "daemons.txt"
+    if not registry.exists():
+        return
+    for line in registry.read_text(encoding="utf-8").split():
+        pid = int(line)
+        if _alive(pid) and "fake_crit" in _command(pid):
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
 
 
 def state_dir(data_dir) -> Path:
@@ -45,7 +67,8 @@ def state_dir(data_dir) -> Path:
 
 
 def configure(data_dir, **cfg) -> None:
-    """session — id сессии вместо вычисленного по каталогу; delay — пауза перед выводом ссылки; port."""
+    """session — id сессии вместо вычисленного по каталогу; delay — пауза перед выводом ссылки; port;
+    empty_listing — `comments --json` отдаёт пустой список, даже если комментарии есть."""
     _write(state_dir(data_dir) / "config.json", cfg)
 
 
@@ -58,20 +81,26 @@ def finish(data_dir, session: str, comments=(), approved: Optional[bool] = None)
     _write(state_dir(data_dir) / ("finish-%s.json" % session), {"comments": list(comments), "approved": approved})
 
 
-def kill_daemon(data_dir, session: str) -> None:
-    (state_dir(data_dir) / ("kill-%s" % session)).write_text("", encoding="utf-8")
-
-
-def stop_daemon(data_dir, session: str) -> None:
-    """Страница ревью закрылась без клиента (например, после перезагрузки машины); комментарии остаются."""
-    try:
-        (state_dir(data_dir) / ("daemon-%s.json" % session)).unlink()
-    except OSError:
-        pass
-
-
 def daemon(data_dir, session: str) -> Optional[dict]:
-    return _read(state_dir(data_dir) / ("daemon-%s.json" % session))
+    """Запись живого демона или None."""
+    record = _read(state_dir(data_dir) / ("daemon-%s.json" % session))
+    return record if record and _alive(record.get("pid")) else None
+
+
+def daemon_pid(data_dir, session: str) -> Optional[int]:
+    record = daemon(data_dir, session)
+    return record["pid"] if record else None
+
+
+def kill_daemon(data_dir, session: str) -> None:
+    """Демон остановился (страница ревью закрыта), пока клиент ждёт; комментарии остаются."""
+    pid = daemon_pid(data_dir, session)
+    if pid:
+        os.kill(pid, signal.SIGTERM)
+        _wait_gone(pid)
+
+
+stop_daemon = kill_daemon
 
 
 def calls(data_dir) -> List[dict]:
@@ -82,7 +111,7 @@ def calls(data_dir) -> List[dict]:
 
 
 def review_calls(data_dir) -> List[dict]:
-    """Запуски клиента раунда (без подкоманд comments/comment/status)."""
+    """Запуски клиента раунда (без подкоманд comments/comment/status/_serve)."""
     return [c for c in calls(data_dir) if not c["argv"] or c["argv"][0].startswith("-")]
 
 
@@ -103,6 +132,37 @@ def _read(path: Path):
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _alive(pid) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    # зомби считается остановленным
+    try:
+        res = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return True
+    return bool(res.stdout.strip()) and not res.stdout.strip().startswith("Z")
+
+
+def _command(pid: int) -> str:
+    try:
+        return subprocess.run(["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True,
+                              timeout=5).stdout
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+
+
+def _wait_gone(pid: int, timeout: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout
+    while _alive(pid) and time.monotonic() < deadline:
+        time.sleep(0.02)
 
 
 def _opt(argv: List[str], *names: str) -> Optional[str]:
@@ -157,6 +217,46 @@ def _unresolved(items: List[dict]) -> List[dict]:
     return [c for c in items if not c.get("resolved")]
 
 
+def _serve(argv: List[str]) -> int:
+    """Демон: живёт, пока его запись на месте; SIGTERM удаляет запись и завершает его."""
+    st = state_dir(_data_dir(argv))
+    daemon_file = st / ("daemon-%s.json" % _opt(argv, "--session"))
+    me = os.getpid()
+
+    def on_term(signum, frame):
+        record = _read(daemon_file)
+        if record and record.get("pid") == me:
+            try:
+                daemon_file.unlink()
+            except OSError:
+                pass
+        os._exit(0)
+
+    signal.signal(signal.SIGTERM, on_term)
+    deadline = time.monotonic() + LIFETIME
+    while time.monotonic() < deadline:
+        # запись создаётся до запуска демона: её нет — ревью одобрено или удалено
+        record = _read(daemon_file)
+        if record is None and not daemon_file.exists():
+            return 0
+        if record is not None and record.get("pid") not in (0, me):
+            return 0
+        time.sleep(0.05)
+    on_term(None, None)
+    return 0
+
+
+def _spawn_daemon(data: Path, session: str) -> int:
+    proc = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "_serve", "-o", str(data),
+                             "--session", session], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
+    registry = os.environ.get(REGISTRY_ENV)
+    if registry:
+        with open(registry, "a", encoding="utf-8") as f:
+            f.write("%d\n" % proc.pid)
+    return proc.pid
+
+
 def _review(argv: List[str]) -> int:
     data = _data_dir(argv)
     st = state_dir(data)
@@ -165,43 +265,46 @@ def _review(argv: List[str]) -> int:
     session = wanted or _session(data)
     daemon_file = st / ("daemon-%s.json" % session)
     comments_file = st / ("comments-%s.json" % session)
-    record = _read(daemon_file)
+    record = daemon(data, session)
     if cfg.get("delay"):
         time.sleep(float(cfg["delay"]))
     if wanted and record is None:
         _err("no review found for session %s" % session)
         return 1
+    owner = record is None
     if record is None:
         port = int(_opt(argv, "-p", "--port") or cfg.get("port") or random.randrange(40000, 60000))
         rnd = max([c.get("review_round", 1) for c in _read(comments_file) or []] + [0]) + 1
-        record = {"session": session, "port": port, "round": rnd, "finished": False, "cwd": os.getcwd()}
+        record = {"session": session, "port": port, "round": rnd, "finished": False, "cwd": os.getcwd(), "pid": 0}
         _write(daemon_file, record)
-        _err("Started crit daemon at http://localhost:%d (session %s, PID %d)" % (port, session, os.getpid()))
+        record["pid"] = _spawn_daemon(data, session)
+        _write(daemon_file, record)
+        _err("Started crit daemon at http://localhost:%d (session %s, PID %d)" % (port, session, record["pid"]))
     else:
         # повторный запуск после завершённого раунда сообщает «раунд готов» и открывает следующий
         if record.get("finished"):
             record.update(round=record["round"] + 1, finished=False)
             _write(daemon_file, record)
         _err("Connected to crit daemon at http://localhost:%d (session %s)" % (record["port"], session))
+    daemon_pid_ = record["pid"]
 
     def on_term(signum, frame):
-        # как у настоящего: остановка клиента останавливает демон, файл ревью остаётся
-        try:
-            daemon_file.unlink()
-        except OSError:
-            pass
+        # как у настоящего: клиент, запустивший демон, останавливает его вместе с собой
+        if owner:
+            try:
+                os.kill(daemon_pid_, signal.SIGTERM)
+            except OSError:
+                pass
         os._exit(143)
 
     signal.signal(signal.SIGTERM, on_term)
     finish_file = st / ("finish-%s.json" % session)
-    kill_file = st / ("kill-%s" % session)
+    deadline = time.monotonic() + LIFETIME
     while True:
-        if kill_file.exists():
-            kill_file.unlink()
-            try:
-                daemon_file.unlink()
-            except OSError:
-                pass
+        if time.monotonic() > deadline:
+            _err("fake crit: время жизни клиента истекло")
+            return 2
+        if not _alive(daemon_pid_):
             sys.stdout.write("crit daemon shut down before review was finished.\n")
             sys.stdout.flush()
             _err("approved: false")
@@ -224,11 +327,16 @@ def _review(argv: List[str]) -> int:
     if approved is None:
         approved = not open_items
     if approved:
+        # одобрение завершает демон и удаляет ревью
         for path in (daemon_file, comments_file):
             try:
                 path.unlink()
             except OSError:
                 pass
+        try:
+            os.kill(daemon_pid_, signal.SIGTERM)
+        except OSError:
+            pass
         sys.stdout.write("Review approved with no comments — no changes requested.")
         sys.stdout.flush()
         _err("approved: true")
@@ -249,7 +357,7 @@ def _review(argv: List[str]) -> int:
 
 def _comments(argv: List[str]) -> int:
     data = _data_dir(argv)
-    items = _read(state_dir(data) / ("comments-%s.json" % _session(data))) or []
+    items = [] if _config(data).get("empty_listing") else _read(state_dir(data) / ("comments-%s.json" % _session(data))) or []
     shown = items if "--all" in argv else _unresolved(items)
     # общие комментарии первыми, как у настоящего
     shown = sorted(shown, key=lambda c: c.get("scope") != "review")
@@ -291,13 +399,13 @@ def _comment(argv: List[str]) -> int:
 def _status(argv: List[str]) -> int:
     data = _data_dir(argv)
     session = _session(data)
-    record = _read(state_dir(data) / ("daemon-%s.json" % session))
+    record = daemon(data, session)
     review_file = str(data / "reviews" / session / "review.json")
-    out = {"daemon": {"running": record is not None}, "review_file": review_file, "vcs": "git",
-           "sessions": []}
+    out = {"daemon": {"running": record is not None}, "review_file": review_file, "vcs": "git", "sessions": []}
     if record is not None:
-        out["daemon"].update(port=record["port"])
-        out["sessions"].append({"id": session, "port": record["port"], "review_file": review_file})
+        out["daemon"].update(pid=record["pid"], port=record["port"])
+        out["sessions"].append({"id": session, "pid": record["pid"], "port": record["port"],
+                                "review_file": review_file})
     print(json.dumps(out, indent=2))
     return 0
 
@@ -310,6 +418,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     command = argv[0] if argv and not argv[0].startswith("-") else None
     if command is None:
         return _review(argv)
+    if command == "_serve":
+        return _serve(argv)
     if command == "comments":
         return _comments(argv)
     if command == "comment":

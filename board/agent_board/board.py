@@ -244,14 +244,7 @@ class Board:
     def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None) -> List[Event]:
         """wake_extra — поля для пробуждения returned (например, комментарий пользователя к возврату)."""
         with self._lock:
-            self._reject_project_agent(actor)
-            if actor not in ACTORS:
-                raise ValueError("Неизвестный актор: %r" % actor)
-            to = Status(to)
-            if to == Status.BLOCKED:
-                raise ValueError("Статус blocked вычисляется по зависимостям; внешнюю блокировку задают полем external_blocker")
-            if actor == "agent" and to in AGENT_FORBIDDEN:
-                raise PermissionError("Агент не может ставить статус %s" % to.value)
+            to = self._check_transition(key, to, actor)
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
@@ -280,6 +273,19 @@ class Board:
             if actor == "user":
                 events.extend(self._manual_wake(task, prev))
             return events
+
+    def _check_transition(self, key: str, to: Status, actor: str) -> Status:
+        """Проверяет переход без изменений; возвращает целевой статус."""
+        self._reject_project_agent(actor)
+        if actor not in ACTORS:
+            raise ValueError("Неизвестный актор: %r" % actor)
+        to = Status(to)
+        if to == Status.BLOCKED:
+            raise ValueError("Статус blocked вычисляется по зависимостям; внешнюю блокировку задают полем external_blocker")
+        if actor == "agent" and to in AGENT_FORBIDDEN:
+            raise PermissionError("Агент не может ставить статус %s" % to.value)
+        self._get(self.store.load_tasks(), key)
+        return to
 
     def transition_if(self, key: str, expected: Status, to: Status, actor: str) -> List[Event]:
         """Переводит задачу, только если она сейчас в статусе expected; иначе ничего не делает."""
@@ -325,6 +331,7 @@ class Board:
             task = self._get(self.store.load_tasks(), key)
             if task.status not in RETURNED_FROM:
                 raise ValueError("Вернуть в работу можно задачу на ревью или после него (сейчас %s)" % task.status.value)
+            self._check_transition(key, Status.IN_PROGRESS, actor)
             msg, event = self._append_message(key, actor, text)
             return [event] + self.transition(key, Status.IN_PROGRESS, actor, wake_extra={"message_id": msg.id})
 

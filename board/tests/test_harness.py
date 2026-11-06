@@ -409,3 +409,38 @@ def test_claude_start_writes_system_file_and_pipes_prompt(tmp_path):
     # assert
     assert res.ok is True and json.loads(log.read_text())["result"] == "--привет"
     assert (tmp_path / "logs" / "T1.jsonl.system.md").read_text() == "SYS"
+
+
+def test_claude_extra_allowed_tools_from_config_go_after_board_rules(tmp_path):
+    # arrange
+    from agent_board.harness import make_harness
+
+    h = make_harness({"type": "claude", "permission_mode": "default", "allowed_tools": ["Bash(crit comment:*)"]})
+    # act
+    start = h.build_start_args("sid", tmp_path / "s.md")
+    resume = h.build_resume_args("sid", tmp_path / "s.md")
+    # assert
+    for args in (start, resume):
+        i = args.index("--allowedTools")
+        assert args[i + 1:i + 1 + len(BOARD_RULES) + 1] == [*BOARD_RULES, "Bash(crit comment:*)"]
+
+
+def test_runner_harness_allows_crit_comment_only_for_crit_review(tmp_home):
+    # arrange
+    from agent_board.board import Board
+    from agent_board.config import ProjectConfig
+    from agent_board.runner import Runner
+    from agent_board.store import ProjectStore
+
+    store = ProjectStore("pay")
+    store.create(ProjectConfig(slug="pay", title="p", harness={"type": "claude"}))
+    board = Board(store)
+
+    def tools(review):
+        board.update_config({"review": review})
+        return Runner._harness(board).build_start_args("sid", tmp_home / "s.md")
+
+    # act / assert
+    assert "Bash(crit comment:*)" in tools({"tool": "crit"})
+    assert "Bash(/opt/crit comment:*)" in tools({"tool": "crit", "binary": "/opt/crit"})
+    assert not any("crit" in a for a in tools({"tool": "none"}))
