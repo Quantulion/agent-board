@@ -189,3 +189,16 @@ def test_copy_output_long_line_without_newline_is_written_in_parts_and_masked(tm
     ship.copy_output(stream, log, lambda text: text.replace(secret, "***"))
     # assert
     assert log.read_text() == ("x" * 60 + "***") * 5
+
+
+@pytest.mark.parametrize("scrub", [None, lambda text: text])
+def test_start__previous_log__replaced_by_new_output(tmp_path, scrub):
+    # arrange: лог отправки не копится между отправками
+    log = tmp_path / "x.ship.log"
+    log.write_bytes(b"old\n" * 500000)
+    # act
+    proc = ship.start("echo new", tmp_path, log, "X", scrub=scrub)
+    proc.wait(10)
+    ship.finish_output(proc)
+    # assert
+    assert log.read_text() == "new\n"

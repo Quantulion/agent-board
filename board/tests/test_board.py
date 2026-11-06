@@ -900,3 +900,190 @@ def test_return_to_work__transition_rejected__should_not_leave_message(board, mo
     # assert
     assert board.store.read_thread("A") == []
     assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+
+
+# --- настройки проекта: проверки вне блокировки ---
+
+def test_set_config__slow_git_check__does_not_hold_board_lock(board, git_repo, monkeypatch):
+    # arrange
+    import threading
+
+    from agent_board import config as config_module
+
+    started, release = threading.Event(), threading.Event()
+    real_check = config_module._git_work_tree
+
+    def slow_check(path):
+        started.set()
+        release.wait(10)
+        return real_check(path)
+
+    monkeypatch.setattr(config_module, "_git_work_tree", slow_check)
+    result = {}
+    worker = threading.Thread(target=lambda: result.update(
+        r=board.set_config("user", {"repos": [{"name": "app", "path": str(git_repo)}]})))
+    worker.start()
+    assert started.wait(10)
+    added = {}
+    writer = threading.Thread(target=lambda: added.update(e=board.add_task(mk("A"), "user")))
+    # act
+    writer.start()
+    writer.join(5)
+    finished_while_checking = not writer.is_alive()
+    release.set()
+    worker.join(10)
+    # assert
+    assert finished_while_checking and added["e"]
+    assert result["r"]["saved"] is True and board.store.load_config().repos[0]["name"] == "app"
+
+
+def test_set_config__stored_config_with_outdated_fields__other_field_can_change(board):
+    # arrange: репозиторий удалён с диска, команда отправки записана по старым правилам
+    cfg = board.store.load_config()
+    cfg.repos = [{"name": "old", "path": "/nonexistent/repo/path"}]
+    cfg.ship = {"command": 'git push "{branch}"', "timeout": 600}
+    board.store.save_config(cfg)
+    # act
+    result = board.set_config("user", {"max_agents": 2})
+    # assert
+    stored = board.store.load_config()
+    assert result["saved"] is True and stored.max_agents == 2 and stored.repos[0]["name"] == "old"
+
+
+def test_set_config__unchanged_repos__are_not_checked_on_disk(board, git_repo, monkeypatch):
+    # arrange
+    from agent_board import config as config_module
+
+    cfg = board.store.load_config()
+    old = {"name": "old", "path": "/nonexistent/repo/path"}
+    cfg.repos = [old]
+    board.store.save_config(cfg)
+    checked = []
+    real_check = config_module._git_work_tree
+    monkeypatch.setattr(config_module, "_git_work_tree", lambda path: checked.append(path) or real_check(path))
+    # act
+    board.set_config("user", {"repos": [old, {"name": "app", "path": str(git_repo)}]})
+    # assert
+    assert checked == [str(git_repo)]
+    assert [r["name"] for r in board.store.load_config().repos] == ["old", "app"]
+
+
+def test_set_config__changed_repo_path__is_checked(board):
+    # arrange
+    cfg = board.store.load_config()
+    cfg.repos = [{"name": "app", "path": "/nonexistent/repo/path"}]
+    board.store.save_config(cfg)
+    # act / assert
+    with pytest.raises(ValueError, match="не найден"):
+        board.set_config("user", {"repos": [{"name": "app", "path": "/nonexistent/other/path"}]})
+
+
+def test_set_config__merged_result_breaks_structure__is_rejected(board):
+    # arrange: файл поправлен вручную — неизвестный харнесс
+    cfg = board.store.load_config()
+    cfg.harness = {"type": "gpt"}
+    board.store.save_config(cfg)
+    # act / assert
+    with pytest.raises(ValueError, match="харнесс"):
+        board.set_config("user", {"max_agents": 2})
+
+
+def test_set_config__field_changes_between_check_and_save__retries(board, monkeypatch):
+    # arrange: пока шла проверка, это же поле поменяли один раз
+    from agent_board import board as board_module
+
+    real = board_module.validate_fields
+    calls = []
+
+    def racing(config, names, previous):
+        calls.append(1)
+        if len(calls) == 1:
+            stored = board.store.load_config()
+            stored.agent_rules = "чужая правка"
+            board.store.save_config(stored)
+        real(config, names, previous)
+
+    monkeypatch.setattr(board_module, "validate_fields", racing)
+    # act
+    board.set_config("user", {"agent_rules": "моя правка"})
+    # assert
+    assert len(calls) == 2 and board.store.load_config().agent_rules == "моя правка"
+
+
+def test_set_config__field_keeps_changing__conflict(board, monkeypatch):
+    # arrange
+    from agent_board import board as board_module
+
+    real = board_module.validate_fields
+    counter = []
+
+    def racing(config, names, previous):
+        counter.append(1)
+        stored = board.store.load_config()
+        stored.agent_rules = "чужая правка %d" % len(counter)
+        board.store.save_config(stored)
+        real(config, names, previous)
+
+    monkeypatch.setattr(board_module, "validate_fields", racing)
+    # act / assert
+    with pytest.raises(board_module.ConfigConflict):
+        board.set_config("user", {"agent_rules": "моя правка"})
+    assert len(counter) == 3
+
+
+@pytest.mark.parametrize("name", ["to_dict", "from_dict", "__class__", "nope"])
+def test_set_config__unknown_field__is_rejected(board, name):
+    # act / assert
+    with pytest.raises(ValueError, match="Неизвестное поле"):
+        board.set_config("user", {name: 1})
+
+
+# --- задачи добавляет только пользователь ---
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "tracker", "system"])
+def test_add_task__not_user__is_forbidden(board, actor):
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.add_task(mk("A"), actor)
+    assert board.store.load_tasks() == {}
+
+
+# --- устаревшая команда отправки ---
+
+def test_legacy_ship_command__moved_to_ship_and_journaled_once(tmp_home):
+    # arrange
+    import json
+
+    store = ProjectStore("pay")
+    store.create(ProjectConfig(slug="pay", title="Платежи"))
+    raw = json.loads((store.root / "project.json").read_text(encoding="utf-8"))
+    raw["ship_command"] = "git push origin {branch}"
+    raw["ship"] = {"command": None, "timeout": 120}
+    (store.root / "project.json").write_text(json.dumps(raw), encoding="utf-8")
+    # act
+    Board(store, clock=lambda: NOW)
+    Board(store, clock=lambda: NOW)
+    # assert
+    stored = json.loads((store.root / "project.json").read_text(encoding="utf-8"))
+    assert stored["ship"] == {"command": "git push origin {branch}", "timeout": 120} and "ship_command" not in stored
+    migrated = [e.data for e in store.read_events() if e.type == "config_migrated"]
+    assert migrated == [{"field": "ship_command", "to": "ship.command", "moved": True}]
+
+
+def test_legacy_ship_command__ship_already_set__legacy_dropped():
+    # act
+    cfg = ProjectConfig.from_dict({"slug": "pay", "title": "x", "ship_command": "old {key}",
+                                   "ship": {"command": "new {key}", "timeout": 60}})
+    # assert
+    assert cfg.ship == {"command": "new {key}", "timeout": 60}
+
+
+def test_set_config__outdated_value_resent_unchanged__is_accepted(board):
+    # arrange: клиент присылает настройки целиком, вместе со старой командой отправки
+    cfg = board.store.load_config()
+    cfg.ship = {"command": 'git push "{branch}"', "timeout": 600}
+    board.store.save_config(cfg)
+    # act
+    result = board.set_config("user", {"ship": {"command": 'git push "{branch}"', "timeout": 600}, "max_agents": 2})
+    # assert
+    assert result["saved"] is True and board.store.load_config().max_agents == 2

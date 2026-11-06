@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import copy
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from .config import NOT_SETTABLE, ProjectConfig, clean_links, validate_config as validate_project_config
+from .config import (
+    LEGACY_SHIP_COMMAND, ProjectConfig, check_field_names, clean_links, validate_config as validate_project_config,
+    validate_fields, validate_structure,
+)
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
@@ -68,6 +72,7 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_released": "key, resource",
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
     "config_changed": "fields [имена изменённых настроек] — пользователь изменил настройки проекта",
+    "config_migrated": "field, to, moved — устаревшее поле настроек перенесено на новое место при чтении",
     "project_agent_changed": "state, parked — раннер изменил состояние агента проекта",
     "review_requested": "key — пользователь попросил открыть раунд ревью",
     "ship_requested": "keys — пользователь попросил отправить задачи в ревью (в порядке отправки)",
@@ -138,6 +143,14 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# сколько раз set_config пробует сохранить настройки, если их одновременно меняют
+CONFIG_ATTEMPTS = 3
+
+
+class ConfigConflict(Exception):
+    """Настройки меняются из другого места быстрее, чем проходит проверка."""
+
+
 class Board:
     """Единственный писатель состояния проекта: каждое изменение превращается в события журнала."""
 
@@ -154,6 +167,7 @@ class Board:
         self.terminal_command_for: Optional[Callable[[Task], Optional[str]]] = None
         # ресурсы, которые задача держит (position 0) или ждёт; ставит сервер, у которого очередь ресурсов
         self.locks_for: Optional[Callable[[str], List[dict]]] = None
+        self._migrate_config()
 
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
@@ -169,44 +183,80 @@ class Board:
             meta.update(fields)
             self.store.save_meta(meta)
 
-    def update_config(self, fields: dict, full_check: bool = False, dry_run: bool = False) -> ProjectConfig:
-        """Меняет поля настроек под блокировкой доски. full_check — все проверки сохранения (настройки от
-        пользователя); иначе проверяются только переданные команда отправки и трекер. dry_run — без сохранения."""
+    def update_config(self, fields: dict) -> ProjectConfig:
+        """Служебная правка настроек (раннер, тесты) под блокировкой доски; проверяются только переданные команда
+        отправки и трекер."""
+        check_field_names([name for name in fields if name != "project_session_id"])
         with self._lock:
             config = self.store.load_config()
             for name, value in fields.items():
-                if not hasattr(config, name):
-                    raise ValueError("Неизвестное поле конфига: %s" % name)
                 setattr(config, name, value)
-            if full_check:
-                validate_project_config(config)
-                config.links = clean_links(config.links)
-            else:
-                ship = config.ship if isinstance(config.ship, dict) else {}
-                if "ship" in fields and ship.get("command"):
-                    ship_settings(config)
-                if "tracker" in fields:
-                    validate_tracker(config.tracker)
-            if not dry_run:
-                self.store.save_config(config)
+            ship = config.ship if isinstance(config.ship, dict) else {}
+            if "ship" in fields and ship.get("command"):
+                ship_settings(config)
+            if "tracker" in fields:
+                validate_tracker(config.tracker)
+            self.store.save_config(config)
             return config
 
     def set_config(self, actor: str, fields: Any, dry_run: bool = False) -> dict:
-        """Настройки от пользователя: все проверки сохранения; dry_run только проверяет.
-        Возвращает {config, saved, events}."""
+        """Настройки от пользователя; dry_run только проверяет. Возвращает {config, saved, events}.
+
+        Медленные проверки (диск, git, трекер) идут до блокировки доски и только для изменившихся полей; под блокировкой
+        настройки перечитываются, и итог проверяется по форме. Если заданное поле успели изменить, пока шли проверки,
+        попытка повторяется. Пустой fields — полная проверка сохранённых настроек."""
+        self._require_user(actor, "Настройки проекта меняет только пользователь")
+        if not isinstance(fields, dict):
+            raise ValueError("fields должен быть объектом")
+        check_field_names(fields)
+        for _ in range(CONFIG_ATTEMPTS):
+            base = self.store.load_config()
+            draft = self._merged_config(base, fields)
+            if fields:
+                changed = [name for name in fields if getattr(draft, name) != getattr(base, name)]
+                validate_fields(draft, changed, base.repos)
+            else:
+                validate_project_config(draft)
+            with self._lock:
+                current = self.store.load_config()
+                if any(getattr(current, name) != getattr(base, name) for name in fields):
+                    continue
+                config = self._merged_config(current, fields)
+                validate_structure(config)
+                config.links = clean_links(config.links)
+                if not dry_run:
+                    self.store.save_config(config)
+                result = config.to_dict()
+                before = current.to_dict()
+                changed = sorted(k for k in fields if result.get(k) != before.get(k))
+                events = [] if dry_run or not changed else [self._emit("config_changed", {"fields": changed})]
+                return {"config": result, "saved": not dry_run, "events": [e.to_dict() for e in events]}
+        raise ConfigConflict("Настройки (%s) одновременно меняются из другого места — повторите позже"
+                             % ", ".join(sorted(fields)))
+
+    @staticmethod
+    def _merged_config(config: ProjectConfig, fields: dict) -> ProjectConfig:
+        merged = copy.deepcopy(config)
+        for name, value in fields.items():
+            setattr(merged, name, copy.deepcopy(value))
+        return merged
+
+    def _migrate_config(self) -> None:
+        """Переносит устаревшие поля сохранённых настроек на новое место; перенос записывается в журнал один раз."""
+        path = self.store.root / "project.json"
+        if not path.exists():
+            return
         with self._lock:
-            self._require_user(actor, "Настройки проекта меняет только пользователь")
-            if not isinstance(fields, dict):
-                raise ValueError("fields должен быть объектом")
-            for name in fields:
-                if name in NOT_SETTABLE:
-                    raise ValueError("Поле %s нельзя менять в настройках: %s" % (name, NOT_SETTABLE[name]))
-            before = self.store.load_config().to_dict()
-            config = self.update_config(fields, full_check=True, dry_run=dry_run)
-            result = config.to_dict()
-            changed = sorted(k for k in fields if result.get(k) != before.get(k))
-            events = [] if dry_run or not changed else [self._emit("config_changed", {"fields": changed})]
-            return {"config": result, "saved": not dry_run, "events": [e.to_dict() for e in events]}
+            raw = self.store._read_json("project.json")
+            if not isinstance(raw, dict) or LEGACY_SHIP_COMMAND not in raw:
+                return
+            config = ProjectConfig.from_dict(raw)
+            moved = isinstance(config.ship, dict) and config.ship.get("command") == raw[LEGACY_SHIP_COMMAND] \
+                and not (isinstance(raw.get("ship"), dict) and raw["ship"].get("command"))
+            self.store.save_config(config)
+            # без on_event: доску создают под блокировкой хаба, подписчикам это событие не нужно
+            self.store.append_event("config_migrated", {"field": LEGACY_SHIP_COMMAND, "to": "ship.command",
+                                                        "moved": bool(moved)}, self._clock())
 
     def set_stage(self, stage: str, actor: str) -> List[Event]:
         """Переводит проект на следующую стадию; стадии меняет только пользователь."""
@@ -270,8 +320,11 @@ class Board:
             return []
 
     def add_task(self, task: Task, actor: str) -> List[Event]:
+        """Новую задачу добавляет только пользователь; агенты предлагают её через агента проекта (propose)."""
         with self._lock:
             self._reject_project_agent(actor)
+            self._require_user(actor, "Задачи добавляет только пользователь: нужна новая задача — напишите агенту "
+                                      "проекта (say _project)")
             tasks = self.store.load_tasks()
             self._check_new_key(task.key, tasks)
             validate_deps(task.key, task.deps, tasks)

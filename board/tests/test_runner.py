@@ -1904,3 +1904,58 @@ def test_ship_output_is_scrubbed_of_tracker_secrets(make_project, start_server, 
     if exit_code:
         assert "token=***" in texts
     assert SHIP_SECRET not in "\n".join(p.read_text(errors="replace") for p in store.root.rglob("*") if p.is_file())
+
+
+# --- уборка: логи ревью и данные crit закрытых задач ---
+
+def test_review_round__large_log__trimmed_to_limit(make_project, start_server, calls, crit_bin, monkeypatch):
+    # arrange
+    from agent_board import review as review_mod
+
+    monkeypatch.setattr(review_mod, "LOG_LIMIT_BYTES", 4096)
+    store = review_project(make_project, crit_bin)
+    srv = start_server()
+    to_review(srv, store)
+    log = store.root / "logs" / "A.review.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("старый раунд\n" * 2000, encoding="utf-8")
+    # act
+    srv.board_for("pay").request_review("A", "user")
+    wait_round(store, 1)
+    # assert
+    assert log.stat().st_size < 4096 + 2048
+
+
+def _closed_long_ago(store, key, session):
+    from agent_board.board import Board
+
+    old = Board(store, clock=lambda: "2020-01-01T00:00:00+00:00")
+    old.add_task(new_task_from_dict({"key": key, "title": key}), "user")
+    old.update_task(key, "system", {"review": {"state": "approved", "session": session, "round": 1}})
+    old.transition(key, Status.CANCELLED, "user")
+    data = store.root / "crit" / "reviews" / session
+    data.mkdir(parents=True)
+    return data
+
+
+def test_server_start__review_data_of_long_closed_task__removed(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    data = _closed_long_ago(store, "A", "aaaaaaaaaaaa")
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    wait_for(lambda: not data.exists(), what="данные ревью удалены")
+
+
+def test_runner__daily_housekeeping__removes_review_data(make_project, start_server, calls, monkeypatch):
+    # arrange
+    monkeypatch.setattr(runner_mod, "HOUSEKEEPING_SECONDS", 0.2)
+    store = make_project()
+    srv = start_server()
+    runner_sync(srv)
+    # act
+    data = _closed_long_ago(srv.board_for("pay").store, "B", "bbbbbbbbbbbb")
+    # assert
+    wait_for(lambda: not data.exists(), what="данные ревью удалены ежедневной уборкой")

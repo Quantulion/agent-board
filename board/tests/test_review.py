@@ -223,3 +223,79 @@ def test_stop_daemon_terminates_review_page_and_ignores_foreign_pid(crit, data_d
     # act / assert
     assert review.stop_daemon(git_repo, data_dir, session) is True
     wait_for(lambda: fake_crit.daemon(data_dir, session) is None, "демон остановлен")
+
+
+# --- уборка данных ревью и логов ---
+
+def test_trim_log__large_log__keeps_last_limit_from_line_start(tmp_path):
+    # arrange
+    log = tmp_path / "A.review.log"
+    lines = ["строка %05d\n" % i for i in range(4000)]
+    log.write_text("".join(lines), encoding="utf-8")
+    # act
+    review_mod.trim_log(log, limit=10000)
+    # assert
+    text = log.read_text(encoding="utf-8")
+    assert len(text.encode("utf-8")) <= 10000 and text.endswith(lines[-1]) and text.startswith("строка")
+
+
+def test_trim_log__small_or_missing_log__unchanged(tmp_path):
+    # arrange
+    log = tmp_path / "A.review.log"
+    log.write_text("коротко\n", encoding="utf-8")
+    # act
+    review_mod.trim_log(log, limit=10000)
+    review_mod.trim_log(tmp_path / "missing.log", limit=10000)
+    # assert
+    assert log.read_text(encoding="utf-8") == "коротко\n" and not (tmp_path / "missing.log").exists()
+
+
+def _review_task(board, key, session, status):
+    from conftest import make_task
+
+    from agent_board.model import Status
+
+    board.add_task(make_task(key), "user")
+    board.update_task(key, "system", {"review": {"state": "approved", "session": session, "round": 1}})
+    if status is not None:
+        board.transition(key, Status(status), "user")
+    data = board.store.root / "crit" / "reviews" / session
+    data.mkdir(parents=True)
+    (data / "review.json").write_text("{}", encoding="utf-8")
+    return data
+
+
+@pytest.mark.parametrize("status, days, removed", [
+    ("done", 8, True), ("cancelled", 8, True), ("done", 6, False), ("in_review", 30, False), (None, 30, False),
+])
+def test_prune_review_data__closed_week_ago__removed(board, status, days, removed):
+    # arrange
+    from datetime import datetime, timedelta
+
+    from conftest import NOW
+
+    data = _review_task(board, "A", "abc123def456", status)
+    now = datetime.fromisoformat(NOW) + timedelta(days=days)
+    # act
+    result = review_mod.prune_review_data(board.store, now)
+    # assert
+    assert (not data.exists()) is removed and result == (["A"] if removed else [])
+
+
+def test_prune_review_data__unsafe_session__ignored(board):
+    # arrange
+    from datetime import datetime, timedelta
+
+    from conftest import NOW, make_task
+
+    from agent_board.model import Status
+
+    board.add_task(make_task("A"), "user")
+    board.update_task("A", "system", {"review": {"state": "approved", "session": "..", "round": 1}})
+    board.transition("A", Status.DONE, "user")
+    reviews = board.store.root / "crit" / "reviews"
+    reviews.mkdir(parents=True)
+    # act
+    result = review_mod.prune_review_data(board.store, datetime.fromisoformat(NOW) + timedelta(days=30))
+    # assert
+    assert result == [] and reviews.exists()

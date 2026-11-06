@@ -2307,6 +2307,7 @@ JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "MNZ", 
     ({"resources": [{"name": "db"}, {"name": "db"}]}, "db"),
     ({"title": ""}, "title"),
     ({"unknown": 1}, "unknown"),
+    ({"to_dict": 1}, "to_dict"),
     ({"stage": "work"}, "stage"),
     ({"slug": "other"}, "slug"),
     ({"project_session_id": "x"}, "project_session_id"),
@@ -2358,3 +2359,176 @@ def test_config_validate__stored_config_with_missing_repo__is_400(server):
     r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {}, "dry_run": True})
     # assert
     assert r.status == 400 and "/nonexistent/repo/path" in r.json()["error"]
+
+
+def test_config_set__keeps_conflicting__is_409(server, monkeypatch):
+    # arrange
+    from agent_board import board as board_module
+
+    store = server.board_for("pay").store
+    real = board_module.validate_fields
+
+    def racing(config, names, previous):
+        stored = store.load_config()
+        stored.agent_rules = stored.agent_rules + "!"
+        store.save_config(stored)
+        real(config, names, previous)
+
+    monkeypatch.setattr(board_module, "validate_fields", racing)
+    # act
+    r = post(server, "/api/p/pay/config", {"actor": "user", "fields": {"agent_rules": "моя"}})
+    # assert
+    assert r.status == 409 and "agent_rules" in r.json()["error"]
+
+
+# --- синхронизация: завершённые проекты и пул ---
+
+class FakeWallClock:
+    def __init__(self, now):
+        self.now = now
+
+    def __call__(self):
+        return self.now
+
+
+def done_at(server):
+    from datetime import datetime
+
+    event = [e for e in events_of(server, "stage_changed") if e["data"]["to"] == "done"][-1]
+    return datetime.fromisoformat(event["at"])
+
+
+@pytest.mark.parametrize("hours, polled", [(23, True), (25, False)])
+def test_sync__done_project__polled_for_24_hours_after_done(server, jira, clock, hours, polled):
+    # arrange
+    from datetime import timedelta
+
+    sync = sync_project(server, jira, clock, stage="done")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock,
+                                             wall_clock=FakeWallClock(done_at(server) + timedelta(hours=hours)))
+    before = len(jira.requests)
+    # act
+    sync.tick()
+    # assert
+    assert (len(jira.requests) > before) is polled
+
+
+def test_sync__done_time__remembered_in_meta(server, jira, clock):
+    # arrange
+    from datetime import timedelta
+
+    sync_project(server, jira, clock, stage="done")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock,
+                                             wall_clock=FakeWallClock(done_at(server) + timedelta(hours=1)))
+    # act
+    sync.tick()
+    # assert
+    meta = server.board_for("pay").store.load_meta()
+    assert meta["stage_done_at"] == events_of(server, "stage_changed")[-1]["at"]
+
+
+def _projects(*slugs):
+    for slug in slugs:
+        ProjectStore(slug).create(ProjectConfig(slug=slug, title=slug))
+
+
+def test_sync__hung_project__does_not_delay_others(server, clock, monkeypatch):
+    # arrange
+    _projects("a", "b", "c")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock)
+    sync.tick_wait = 0.3
+    started, release = threading.Event(), threading.Event()
+    ran = []
+
+    def fake_tick_project(slug):
+        if slug == "a":
+            started.set()
+            release.wait(10)
+        ran.append(slug)
+
+    monkeypatch.setattr(sync, "_tick_project", fake_tick_project)
+    try:
+        # act
+        t0 = time.monotonic()
+        sync.tick()
+        first = time.monotonic() - t0
+        sync.tick()
+        # assert
+        assert started.is_set() and first < 5
+        assert sorted(ran) == ["b", "b", "c", "c", "pay", "pay"]
+    finally:
+        release.set()
+        sync.stop()
+    assert ran.count("a") == 1
+
+
+def test_sync__projects_run_in_pool_of_at_most_4(server, clock, monkeypatch):
+    # arrange
+    _projects("a", "b", "c", "d", "e")
+    sync = server.tracker_sync = TrackerSync(server, clock=clock)
+    sync.tick_wait = 0.3
+    guard, release = threading.Lock(), threading.Event()
+    state = {"active": 0, "peak": 0}
+    ran = []
+
+    def fake_tick_project(slug):
+        with guard:
+            state["active"] += 1
+            state["peak"] = max(state["peak"], state["active"])
+        release.wait(10)
+        with guard:
+            state["active"] -= 1
+            ran.append(slug)
+
+    monkeypatch.setattr(sync, "_tick_project", fake_tick_project)
+    try:
+        # act
+        sync.tick()
+        peak_while_hung = state["peak"]
+        release.set()
+        deadline = time.monotonic() + 10
+        while len(ran) < 4 and time.monotonic() < deadline:
+            time.sleep(0.02)
+        sync.tick()
+    finally:
+        release.set()
+        sync.stop()
+    # assert: проекты, которым не хватило места, проходят следующим тиком
+    assert peak_while_hung == 4 and state["peak"] == 4
+    assert sorted(ran[:4]) == ["a", "b", "c", "d"] and set(ran) == {"a", "b", "c", "d", "e", "pay"}
+
+
+def test_sync__stop__returns_promptly_with_hung_project(server, clock, monkeypatch):
+    # arrange
+    sync = server.tracker_sync = TrackerSync(server, clock=clock, sleep=lambda s: time.sleep(0.01))
+    sync.tick_wait = 0.2
+    release = threading.Event()
+    monkeypatch.setattr(sync, "_tick_project", lambda slug: release.wait(30))
+    sync.start()
+    time.sleep(0.1)
+    # act
+    t0 = time.monotonic()
+    sync.stop()
+    elapsed = time.monotonic() - t0
+    release.set()
+    # assert
+    assert elapsed < 5
+
+
+def test_legacy_ship_command__project_opened_by_server__migrated(server):
+    # arrange
+    path = ProjectStore("old").root
+    ProjectStore("old").create(ProjectConfig(slug="old", title="Старый"))
+    raw = json.loads((path / "project.json").read_text(encoding="utf-8"))
+    raw["ship_command"] = "git push origin {branch}"
+    (path / "project.json").write_text(json.dumps(raw), encoding="utf-8")
+    result = {}
+    opener = threading.Thread(target=lambda: result.update(r=get(server, "/api/p/old/config?actor=user")), daemon=True)
+    # act
+    opener.start()
+    opener.join(10)
+    # assert
+    assert not opener.is_alive()
+    assert result["r"].status == 200 and result["r"].json()["config"]["ship"]["command"] == "git push origin {branch}"
+    events = [e for e in get(server, "/api/p/old/events").json()["events"] if e["type"] == "config_migrated"]
+    assert len(events) == 1

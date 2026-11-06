@@ -51,6 +51,15 @@ def test_task_prompt_forbids_commit_and_push_and_describes_cli():
     assert "$board_cli" not in text and "$language" not in text
 
 
+def test_task_prompt__new_task_needed__goes_to_project_agent_not_add_task():
+    # arrange / act
+    text = _prompts()
+
+    # assert
+    assert "add-task" not in text
+    assert "new task" in text and "say _project" in text.split("new task", 1)[1][:200]
+
+
 def test_board_cli_is_embedded_not_hardcoded():
     # arrange
     task = _task()

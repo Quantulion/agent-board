@@ -17,7 +17,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from . import tracker
-from .board import Board, new_task_from_dict
+from .board import Board, ConfigConflict, new_task_from_dict
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
@@ -264,6 +264,8 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(400, {"error": str(e)})
         except PermissionError as e:
             self._send_json(403, {"error": str(e)})
+        except ConfigConflict as e:
+            self._send_json(409, {"error": str(e)})
         except KeyError as e:
             self._send_json(404, {"error": str(e.args[0]) if e.args else "not found"})
         except Exception:

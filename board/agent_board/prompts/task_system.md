@@ -36,6 +36,7 @@ Ask only when the answer changes the result and you cannot decide safely yoursel
 
 ## Escalation
 If a question concerns the whole system rather than your task (architecture, other tasks, scope, conflicts between tasks), write it to the project agent: `$board_cli say _project --text "..."` with the situation, options and your recommendation. Keep working on what does not depend on it. Do not use `ask` for this.
+If the work needs a new task (a split, a missing prerequisite, follow-up work), never create it yourself: write to the project agent with `$board_cli say _project --text "..."` describing the task and why; it proposes the task to the user.
 
 $resources_section
 ## Review

@@ -28,7 +28,7 @@ from .harness import (
     turn_process_record,
 )
 from .model import Event, Status, Task
-from .review import RoundResult, kill_group, kill_round, make_review, port_of
+from .review import RoundResult, kill_group, kill_round, make_review, port_of, prune_review_data, trim_log
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
 from .worktree import (
@@ -78,6 +78,8 @@ REVIEW_NOT_IN_REVIEW_TEXT = ("Раунд ревью %d завершён без �
 REVIEW_TOOL_OFF_TEXT = "Инструмент ревью в проекте отключён: открытый раунд %d закрыт"
 
 SHIP_KILL_GRACE = 3.0
+# как часто раннер убирает устаревшие данные ревью (кроме уборки при старте)
+HOUSEKEEPING_SECONDS = 24 * 3600
 SHIP_TEXT_CHARS = 500
 SHIP_INTERRUPTED_TEXT = "Отправка в ревью прервана перезапуском сервера. Команда могла выполниться не до конца: проверьте результат и при необходимости отправьте задачу снова."
 SHIP_FAILED_TEXT = "Отправка в ревью не удалась (код выхода %s)."
@@ -188,10 +190,13 @@ class Runner:
         self._parked: set = set()
         self._reviews: Dict[Key, _Review] = {}
         self._ships: Dict[Key, _Ship] = {}
+        self._housekeeping_timer: Optional[threading.Timer] = None
+        self._stopping = threading.Event()
 
     # --- жизненный цикл ---
 
     def start(self) -> None:
+        self._stopping.clear()
         self._server.hub.subscribe(self.on_event)
         self._inbox.put(("recover",))
         self._thread = threading.Thread(target=self._loop, name="board-runner", daemon=True)
@@ -201,6 +206,10 @@ class Runner:
         """Штатная остановка: процессы идущих ходов завершаются, а на доске ходы остаются идущими,
         чтобы следующий старт продолжил их как прерванные."""
         self._server.hub.unsubscribe(self.on_event)
+        self._stopping.set()
+        timer = self._housekeeping_timer
+        if timer is not None:
+            timer.cancel()
         self._inbox.put(None)
         if self._thread is not None:
             self._thread.join(timeout=30)
@@ -283,6 +292,9 @@ class Runner:
             self._on_ship_done(item[1], item[2], item[3], item[4])
         elif kind == "recover":
             self._recover()
+            self._housekeeping()
+        elif kind == "housekeeping":
+            self._housekeeping()
         elif kind == "sync":
             item[1].set()
 
@@ -418,6 +430,28 @@ class Runner:
                     self._schedule(k)
 
     # --- реакции на события ---
+
+    def _housekeeping(self) -> None:
+        """Удаляет данные ревью давно закрытых задач и назначает следующую уборку."""
+        try:
+            now = datetime.fromisoformat(self._clock())
+        except (TypeError, ValueError):
+            now = datetime.now(timezone.utc)
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        for slug in list_projects():
+            try:
+                board = self._board(slug)
+                busy = {key for (s, key) in self._reviews if s == slug}
+                prune_review_data(board.store, now, skip=busy)
+            except Exception:
+                traceback.print_exc(file=sys.stderr)
+        if self._stopping.is_set():
+            return
+        timer = threading.Timer(HOUSEKEEPING_SECONDS, lambda: self._inbox.put(("housekeeping",)))
+        timer.daemon = True
+        timer.start()
+        self._housekeeping_timer = timer
 
     def _reset_failures(self, k: Key) -> None:
         self._failures.pop(k, None)
@@ -992,6 +1026,7 @@ class Runner:
             return
         rv = _Review(proc, rnd, bool(session))
         log = board.store.root / "logs" / (key + ".review.log")
+        trim_log(log)
 
         def watch() -> None:
             try:

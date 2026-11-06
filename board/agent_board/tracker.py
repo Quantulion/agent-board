@@ -745,6 +745,13 @@ IDLE_SECONDS = 1.0
 SYNC_STAGES = ("work", "done")
 # после этих ошибок повторять бессмысленно до исправления настроек или доступа
 PAUSE_KINDS = ("auth", "config")
+# завершённый проект ещё столько опрашивается: задачи в трекере закрывают с опозданием
+DONE_POLL_SECONDS = 24 * 3600
+# столько проектов синхронизируются одновременно
+SYNC_WORKERS = 4
+# столько проход ждёт запущенные проекты; зависший проект досинхронизируется в фоне, остальные не ждут его
+TICK_WAIT_SECONDS = 10.0
+STOP_JOIN_SECONDS = 2.0
 
 
 def _now_text() -> str:
@@ -770,9 +777,15 @@ class TrackerSync:
     """
 
     def __init__(self, server, clock: Optional[Callable[[], float]] = None,
-                 sleep: Optional[Callable[[float], Any]] = None):
+                 sleep: Optional[Callable[[float], Any]] = None,
+                 wall_clock: Optional[Callable[[], datetime]] = None):
         self._server = server
         self._clock = clock or time.monotonic
+        self._wall_clock = wall_clock or (lambda: datetime.now(timezone.utc))
+        self._slots = threading.BoundedSemaphore(SYNC_WORKERS)
+        self._workers: Dict[str, threading.Thread] = {}
+        self.tick_wait = TICK_WAIT_SECONDS
+        self._last_started = ""
         self._stop = threading.Event()
         self._sleep = sleep or self._stop.wait
         self._thread: Optional[threading.Thread] = None
@@ -793,6 +806,12 @@ class TrackerSync:
         if self._thread is not None:
             self._thread.join(timeout=15)
             self._thread = None
+        # проект, зависший на запросе к трекеру, не держит остановку: потоки фоновые
+        deadline = time.monotonic() + STOP_JOIN_SECONDS
+        with self._guard:
+            workers = list(self._workers.values())
+        for worker in workers:
+            worker.join(max(0.0, deadline - time.monotonic()))
 
     def _loop(self) -> None:
         while not self._stop.is_set():
@@ -813,19 +832,57 @@ class TrackerSync:
             return self._locks.setdefault(slug, threading.Lock())
 
     def tick(self) -> float:
-        """Синхронизирует проекты, которым пора; возвращает, сколько ждать до следующей проверки."""
-        for slug in list_projects():
+        """Запускает синхронизацию проектов в пуле потоков и ждёт их не дольше tick_wait; возвращает, сколько ждать
+        до следующей проверки."""
+        started = []
+        slugs = list_projects()
+        # по кругу: при занятом пуле проекты в конце списка не должны ждать вечно
+        cut = next((i for i, slug in enumerate(slugs) if slug > self._last_started), 0)
+        for slug in slugs[cut:] + slugs[:cut]:
             if self._stop.is_set():
                 break
             lock = self._project_lock(slug)
-            # проект, который сейчас синхронизируется (например, вручную), пропускается до следующей проверки
+            # проект, который ещё синхронизируется (вручную или прошлым проходом), пропускается до следующей проверки
             if not lock.acquire(blocking=False):
                 continue
-            try:
-                self._tick_project(slug)
-            finally:
+            if not self._slots.acquire(blocking=False):
                 lock.release()
+                continue
+            worker = threading.Thread(target=self._worker, args=(slug, lock), name="board-tracker-sync-%s" % slug,
+                                      daemon=True)
+            with self._guard:
+                self._workers[slug] = worker
+            try:
+                worker.start()
+            except BaseException:
+                with self._guard:
+                    self._workers.pop(slug, None)
+                self._slots.release()
+                lock.release()
+                raise
+            started.append(worker)
+            self._last_started = slug
+        deadline = time.monotonic() + self.tick_wait
+        for worker in started:
+            while worker.is_alive() and not self._stop.is_set():
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    break
+                worker.join(min(left, 0.1))
         return IDLE_SECONDS
+
+    def _worker(self, slug: str, lock: threading.Lock) -> None:
+        try:
+            if not self._stop.is_set():
+                self._tick_project(slug)
+        except Exception as exc:
+            print("tracker sync %s failed: %s" % (slug, type(exc).__name__), file=sys.stderr)
+        finally:
+            with self._guard:
+                if self._workers.get(slug) is threading.current_thread():
+                    del self._workers[slug]
+            self._slots.release()
+            lock.release()
 
     def _tick_project(self, slug: str) -> None:
         now = self._clock()
@@ -837,6 +894,8 @@ class TrackerSync:
         if not sync_enabled(config):
             return
         meta = board.store.load_meta()
+        if config.stage == "done" and self._long_done(board, meta):
+            return
         state = meta.get("tracker_sync") or {}
         if meta.get("tracker_sync_fp") not in (None, _fingerprint(config.tracker)):
             self._due.pop(slug, None)
@@ -845,6 +904,23 @@ class TrackerSync:
             return
         if now >= self._due.get(slug, now):
             self._run(slug, board, config, now)
+
+    def _long_done(self, board, meta: dict) -> bool:
+        """Проект завершён больше суток назад. Время завершения берётся из журнала и запоминается в meta."""
+        done_at = meta.get("stage_done_at")
+        if not isinstance(done_at, str):
+            done_at = next((e.at for e in reversed(board.store.read_events())
+                            if e.type == "stage_changed" and e.data.get("to") == "done"), None)
+            if done_at is None:
+                return True
+            board.update_meta({"stage_done_at": done_at})
+        try:
+            moment = datetime.fromisoformat(done_at)
+        except ValueError:
+            return True
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        return (self._wall_clock() - moment).total_seconds() > DONE_POLL_SECONDS
 
     def sync_now(self, board, actor: str) -> dict:
         """Ручной запуск («Повторить сейчас»): один проход проекта сейчас, при успехе пауза снимается."""

@@ -17,6 +17,7 @@ import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -34,6 +35,12 @@ _PORT = re.compile(r"^https?://[^/:]+:(\d+)")
 _UNRESOLVED_COUNT = re.compile(r"finished with (\d+) unresolved comments")
 NO_SESSION_MARK = "no review found for session"
 DAEMON_GONE_MARK = "shut down before review was finished"
+# лог ревью дописывается раундами: при открытии раунда от него остаётся столько последних байт
+LOG_LIMIT_BYTES = 1024 * 1024
+# данные ревью crit закрытой задачи хранятся столько дней после закрытия
+REVIEW_DATA_KEEP_DAYS = 7
+_SESSION = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9_.-]*$")
+CLOSED_STATUSES = ("done", "cancelled")
 # переменные, которые отключают у crit сетевую проверку обновлений и подсказки об интеграциях
 QUIET_ENV = {"CRIT_NO_UPDATE_CHECK": "1", "CRIT_NO_INTEGRATION_CHECK": "1"}
 
@@ -284,3 +291,71 @@ def kill_group(pgid: Optional[int]) -> None:
         os.killpg(pgid, signal.SIGKILL)
     except OSError:
         pass
+
+
+def trim_log(path: Path, limit: Optional[int] = None) -> None:
+    """Оставляет в логе последние limit байт (по умолчанию LOG_LIMIT_BYTES), начиная с целой строки."""
+    limit = LOG_LIMIT_BYTES if limit is None else limit
+    path = Path(path)
+    try:
+        size = path.stat().st_size
+        if size <= limit:
+            return
+        with path.open("rb") as f:
+            f.seek(size - limit)
+            data = f.read()
+    except OSError:
+        return
+    cut = data.find(b"\n") + 1
+    tmp = path.with_name(path.name + ".trim")
+    try:
+        tmp.write_bytes(data[cut:] if cut else data)
+        os.replace(str(tmp), str(path))
+    except OSError:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+
+def _parse_time(value) -> Optional[datetime]:
+    if not isinstance(value, str):
+        return None
+    try:
+        moment = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def prune_review_data(store, now: datetime, keep_days: int = REVIEW_DATA_KEEP_DAYS, skip=()) -> List[str]:
+    """Удаляет данные ревью crit у задач, закрытых (done/cancelled) больше keep_days дней назад; skip — ключи задач,
+    которые не трогать. Возвращает ключи задач, чьи данные удалены."""
+    reviews = Path(store.root) / "crit" / "reviews"
+    if not reviews.is_dir():
+        return []
+    candidates = {}
+    for key, task in store.load_tasks().items():
+        session = task.review.get("session") if isinstance(task.review, dict) else None
+        if key in skip or task.status.value not in CLOSED_STATUSES or not isinstance(session, str) \
+                or not _SESSION.match(session) or ".." in session:
+            continue
+        data = reviews / session
+        if data.is_dir():
+            candidates[key] = (data, task)
+    if not candidates:
+        return []
+    closed_at = {}
+    for event in store.read_events():
+        if event.type == "status_changed" and event.data.get("key") in candidates \
+                and event.data.get("to") in CLOSED_STATUSES:
+            closed_at[event.data["key"]] = event.at
+    removed = []
+    for key, (data, task) in sorted(candidates.items()):
+        moment = _parse_time(closed_at.get(key) or task.updated_at)
+        if moment is None or now - moment < timedelta(days=keep_days):
+            continue
+        shutil.rmtree(str(data), ignore_errors=True)
+        if not data.exists():
+            removed.append(key)
+    return removed
