@@ -1,172 +1,176 @@
 # agent-board
 
-Локальная доска задач для AI-агентов: демон на чистом Python 3.9+ (только стандартная библиотека) хранит проекты, задачи, зависимости, вопросы и переписку в файлах, отдаёт HTTP API с потоком событий (SSE) и консольную утилиту для агентов.
+**English** · [Русский](README.ru.md)
 
-Данные лежат в `$AGENT_BOARD_HOME` (по умолчанию `~/.agent-board`).
+A local task board for AI coding agents: a pure Python 3.9+ daemon (standard library only) keeps projects, tasks, dependencies, questions and conversations in files, serves an HTTP API with an event stream (SSE), and ships a command-line tool for agents.
 
-## Запуск
+Data lives in `$AGENT_BOARD_HOME` (default `~/.agent-board`).
 
-Из корня репозитория без установки:
+## Running
+
+From the repository root, without installing:
 
 ```bash
-PYTHONPATH=board python3 -m agent_board init pay --title "Платежи"   # создать проект
-PYTHONPATH=board python3 -m agent_board serve                        # запустить доску
+PYTHONPATH=board python3 -m agent_board init pay --title "Payments"   # create a project
+PYTHONPATH=board python3 -m agent_board serve                        # start the board
 ```
 
-Или установить пакет (`pip install -e .`) и пользоваться командой `agent-board`.
+Or install the package (`pip install -e .`) and use the `agent-board` command.
 
-`serve` печатает ссылку вида `http://127.0.0.1:8737/?token=...`. Токен хранится в `<home>/token` и не меняется между перезапусками, порт по умолчанию — первый свободный из 8737–8746 (`--port N` задаёт его явно). На один каталог данных запускается только одна доска: повторный `serve` завершается с кодом 3.
+`serve` prints a link like `http://127.0.0.1:8737/?token=...`. The token is stored in `<home>/token` and stays the same across restarts; the default port is the first free one in 8737–8746 (`--port N` sets it explicitly). Only one board runs per data directory: a second `serve` exits with code 3.
 
-## Установка скилла
+## Installing the skill
 
-Скилл `skills/agent-board` раскладывает план на доску и поднимает её. Нужны python3 ≥ 3.9 и git; для ревью — опционально [crit](https://github.com/tomasz-tomczyk/crit).
+The `skills/agent-board` skill lays a plan out on the board and starts the board. It needs python3 ≥ 3.9 and git; [crit](https://github.com/tomasz-tomczyk/crit) is optional, for reviews.
 
-**Claude Code** (плагин из локального маркетплейса):
+**Claude Code** (plugin from a local marketplace):
 
 ```
-/plugin marketplace add ~/путь/к/agent-board   # абсолютный путь или ~
+/plugin marketplace add ~/path/to/agent-board   # absolute path or ~
 /plugin install agent-board@agent-board-local
 ```
 
-**Codex** (символическая ссылка в `${CODEX_HOME:-~/.codex}/skills`, без копий):
+**Codex** (a symlink in `${CODEX_HOME:-~/.codex}/skills`, no copies):
 
 ```bash
-cd /путь/к/agent-board                   # скрипты запускаются из корня репозитория
-sh scripts/install-codex.sh              # установить; --force заменяет чужую ссылку, а каталог откладывает в .bak.<время>
-sh scripts/install-codex.sh --uninstall  # удалить ссылку
+cd /path/to/agent-board                  # run the scripts from the repository root
+sh scripts/install-codex.sh              # install; --force replaces a foreign symlink and moves a directory aside to .bak.<timestamp>
+sh scripts/install-codex.sh --uninstall  # remove the symlink
 ```
 
-Особенности харнессов: `skills/agent-board/references/harness-claude.md` и `harness-codex.md`.
+Harness specifics: `skills/agent-board/references/harness-claude.md` and `harness-codex.md`.
 
-## Как пользоваться
+## Usage
 
-- После скилла планирования (например, writing-plans) скажите агенту «разложи план на доску»: скилл поднимет доску, заведёт проект, настроит его, превратит план в задачи с зависимостями, проверит правила декомпозиции и выдаст ссылку на страницу разбивки.
-- «Подними доску проекта X» — скилл запустит доску и даст ссылку на проект.
-- Дальше всё делается на доске: комментарии к задачам читает агент проекта, «Утвердить разбивку» запускает агентов задач, заведение задач в трекере и отправка в ревью — кнопки пользователя. Терминал больше не нужен.
+- After a planning skill (for example, writing-plans), tell the agent "lay the plan out on the board": the skill starts the board, creates and configures a project, turns the plan into tasks with dependencies, checks the decomposition rules and gives you a link to the decomposition page.
+- "Start the board for project X" — the skill starts the board and gives you a link to the project.
+- From then on everything happens on the board: the project agent reads comments on tasks, "Approve decomposition" starts the task agents, and creating tasks in the tracker and sending work to review are user buttons. You no longer need the terminal.
 
-## Возможности и ограничения
+## Features and limitations
 
-| Возможность | Состояние |
+| Feature | Status |
 |---|---|
-| Проекты, задачи, зависимости, вопросы агентов, переписка, события по SSE | есть |
-| Раскладка плана на доску скиллом, проверка правил декомпозиции, утверждение разбивки | есть (Claude Code проверен вживую) |
-| Агенты задач в отдельных worktree, ограничение параллельности, зависимые задачи стартуют от слияния зависимостей | есть |
-| Агент проекта (комментарии к задачам и разбивке, предложения) | есть |
-| Ревью через crit, коммит при одобрении | есть, crit опционален |
-| Отправка в ревью командой проекта, синхронизация с трекером (Jira, GitHub Issues) | есть |
-| Веб-интерфейс: доска, граф, карточка, разбивка | есть |
-| Харнессы | Claude Code; Codex (см. ограничения); `fake` для тестов |
+| Projects, tasks, dependencies, agent questions, conversations, SSE events | available |
+| Laying a plan out with the skill, decomposition rule checks, decomposition approval | available (verified live with Claude Code) |
+| Task agents in separate worktrees, concurrency limits, dependent tasks start from merged dependencies | available |
+| Project agent (comments on tasks and on the decomposition, proposals) | available |
+| Review via crit, commit on approval | available, crit is optional |
+| Sending to review with the project's command, tracker sync (Jira, GitHub Issues) | available |
+| Web UI: board, graph, task card, decomposition | available |
+| Harnesses | Claude Code; Codex (see limitations); `fake` for tests |
 
-Ограничения:
+Limitations:
 
-- Поддержка Codex не проверена на живом `codex`: на машине разработки он не установлен, покрытие только тестами с подменой процесса.
-- Под `permission_mode: acceptEdits` агенты не запускают тесты и сборку, пока команды не разрешены в `harness.allowed_tools` (например, `["Bash(python3 -m pytest:*)"]`); без этого агент остановится и задаст вопрос. Режим `auto` таких настроек не требует.
-- Доска слушает только локальный адрес и рассчитана на одного пользователя; токен доступа лежит в `<home>/token`.
-- Коммит при одобрении делает доска, пуш — отправка в ревью по кнопке пользователя; агентам это не поручается, а от имени агента доска не принимает одобрение и отправку.
-- Граница доверия: разделение пользователя и агентов защищает от ошибок, а не от агента, который намеренно действует от имени пользователя. Актор определяется переменной `AGENT_BOARD_ACTOR` и полем `actor` в запросе, а агенты работают под тем же пользователем ОС и могут прочитать `<home>/token`. Агент с доступом к shell без ограничений (`permission_mode: auto` или `bypassPermissions`) может запустить команду без `AGENT_BOARD_ACTOR` или вызвать API напрямую и выполнить действие пользователя: одобрение, отправку, смену стадии, настройки, коммит и пуш через git. Если это важно, используйте `acceptEdits` с узким `harness.allowed_tools` или песочницу Codex.
-- Ссылка с токеном (`?token=…`), которую печатают `serve` и скилл, попадает в историю чата; токен не меняется между перезапусками. Риск невелик (доска слушает только локальный адрес, а файл токена и так доступен тому же пользователю), но не публикуйте эти логи. Сменить токен: остановить доску, удалить `<home>/token`, запустить снова.
-- Трекеры: Jira и GitHub Issues, по умолчанию трекер отключён.
+- Codex support has not been tested against a live `codex`: it is covered only by tests with a faked process.
+- The web UI is in Russian only. Agents talk to you in the language set by the project's `language` setting (default `ru`).
+- Under `permission_mode: acceptEdits` agents cannot run tests or builds until those commands are allowed in `harness.allowed_tools` (for example, `["Bash(python3 -m pytest:*)"]`); without it the agent stops and asks a question. The `auto` mode needs no such settings.
+- The board listens only on the local address and is meant for a single user; the access token lives in `<home>/token`.
+- The board makes the commit on approval, and the push happens only when the user sends work to review; agents are never asked to do either, and the board does not accept approval or sending on behalf of an agent.
+- Trust boundary: separating the user from the agents protects against mistakes, not against an agent deliberately acting as the user. The actor is determined by the `AGENT_BOARD_ACTOR` variable and the `actor` field of a request, while agents run as the same OS user and can read `<home>/token`. An agent with unrestricted shell access (`permission_mode: auto` or `bypassPermissions`) can run a command without `AGENT_BOARD_ACTOR` or call the API directly and perform user actions: approving, sending to review, changing the stage, changing settings, committing and pushing with git. If this matters to you, use `acceptEdits` with a narrow `harness.allowed_tools`, or the Codex sandbox.
+- The link with the token (`?token=…`) printed by `serve` and by the skill ends up in the chat history; the token does not change across restarts. The risk is small (the board listens only locally, and the token file is readable by the same user anyway), but do not publish those logs. To rotate the token: stop the board, delete `<home>/token`, start it again.
+- Trackers: Jira and GitHub Issues; the tracker is disabled by default.
 
-## Команды
+## Commands
 
-| Команда | Что делает |
+| Command | What it does |
 |---|---|
-| `serve [--detach] [--port N] [--no-runner] [--no-tracker-sync]` | запустить доску вместе с раннером агентов (`--no-runner` — только доска, `--no-tracker-sync` — без фоновой синхронизации трекера; для отладки; `--detach` — запуск в фоне с логом в `<home>/server.log`: печатает ссылку, при уже запущенной доске той же версии просто печатает её, при другой версии — код 3) |
-| `stop` | остановить запущенную доску (SIGTERM по pid из `server.json` после проверки, что это процесс доски; нет доски — код 0) |
-| `version` | версия agent-board |
-| `status [--json]` | без аргументов: запущена ли доска (ссылка, версия, pid) и проекты со стадиями; сервер не нужен. Форма `status <KEY> <STATUS>` переводит задачу |
-| `init <slug> --title T` | создать проект |
-| `state` | снимок проекта целиком |
-| `show <key>` | одна задача |
-| `status <key> <status>` | сменить статус задачи |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | обновить поля задачи; без `AGENT_BOARD_ACTOR` команда идёт от пользователя; формулировку (`title`, `description`, `done_when`, `estimate`) и привязку к уже существующей задаче трекера (`tracker_key`, `tracker_url` — ссылка http(s)) меняет только пользователь, нарушения правил — пользователь или агент проекта |
-| `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | задать вопрос пользователю |
-| `say <thread> --text T` | написать в тред задачи или в `_project` |
-| `thread <thread>` | прочитать тред |
-| `ship <KEY>...` | отправить одобренные задачи в ревью командой проекта (только пользователь*) |
-| `tracker create\|check\|sync` | завести задачи в трекере (стадия `tracker`), проверить доступ к трекеру или синхронизировать статусы сейчас (только пользователь*; при ошибках — код 1) |
-| `add-task --json '{...}'` | добавить задачу (поля: key, title, description, done_when, repo, kind, estimate, deps; `repo` — имя из `repos`, если они заданы); только пользователь*; агенты задач пишут агенту проекта (`say _project`), а он предлагает задачу через `propose` |
-| `deps <KEY> --json '[...]'` | заменить зависимости задачи списком ключей (цикл или неизвестная задача — код 1; только пользователь*) |
-| `propose <add_task\|set_deps\|cancel_task> --json '{...}' [--reason R]` | предложение агента проекта |
-| `stage <stage>` | перевести проект на стадию (только пользователь*) |
-| `config get [--json]` · `config set --json '{...}' [--dry-run]` · `config validate` | показать настройки проекта, изменить поля (все проверки сохранения; `--dry-run` — только проверить) или проверить сохранённый файл (только пользователь*) |
-| `config schema [--json]` | допустимые поля настроек: тип, значение по умолчанию, описание (англ.), перечисления и форма вложенных объектов (трекер, ревью, отправка, харнесс); строится из класса настроек и проверок, доска и проект не нужны |
-| `events [--since N]` | журнал событий |
-| `lock-run <ресурс> -- <команда...>` | выполнить команду под эксклюзивным ресурсом проекта (очередь на ресурс) |
+| `serve [--detach] [--port N] [--no-runner] [--no-tracker-sync]` | start the board together with the agent runner (`--no-runner` — board only, `--no-tracker-sync` — no background tracker sync; both for debugging; `--detach` — run in the background with a log in `<home>/server.log`: prints the link; if a board of the same version is already running, just prints its link; a different version — code 3) |
+| `stop` | stop the running board (SIGTERM to the pid from `server.json` after checking it is the board's process; no board — code 0) |
+| `version` | agent-board version |
+| `status [--json]` | without arguments: whether the board is running (link, version, pid) and the projects with their stages; no server needed. The `status <KEY> <STATUS>` form changes a task's status |
+| `init <slug> --title T` | create a project |
+| `state` | full project snapshot |
+| `show <key>` | a single task |
+| `status <key> <status>` | change a task's status |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--tracker-key K] [--tracker-url U]` | update task fields; without `AGENT_BOARD_ACTOR` the command acts as the user; the wording (`title`, `description`, `done_when`, `estimate`) and the link to an already existing tracker issue (`tracker_key`, `tracker_url` — an http(s) link) can be changed only by the user, rule violations — by the user or the project agent |
+| `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | ask the user a question |
+| `say <thread> --text T` | post to a task thread or to `_project` |
+| `thread <thread>` | read a thread |
+| `ship <KEY>...` | send approved tasks to review with the project's command (user only*) |
+| `tracker create\|check\|sync` | create tasks in the tracker (`tracker` stage), check tracker access, or sync statuses now (user only*; on errors — code 1) |
+| `add-task --json '{...}'` | add a task (fields: key, title, description, done_when, repo, kind, estimate, deps; `repo` is a name from `repos` if they are set); user only*; task agents write to the project agent (`say _project`), and it proposes the task with `propose` |
+| `deps <KEY> --json '[...]'` | replace a task's dependencies with a list of keys (a cycle or an unknown task — code 1; user only*) |
+| `propose <add_task\|set_deps\|cancel_task> --json '{...}' [--reason R]` | a project agent proposal |
+| `stage <stage>` | move the project to a stage (user only*) |
+| `config get [--json]` · `config set --json '{...}' [--dry-run]` · `config validate` | show project settings, change fields (with all save-time checks; `--dry-run` only checks), or validate the saved file (user only*) |
+| `config schema [--json]` | allowed settings fields: type, default value, description, enums and the shape of nested objects (tracker, review, ship, harness); built from the settings class and its checks, needs neither a board nor a project |
+| `events [--since N]` | event log |
+| `lock-run <resource> -- <command...>` | run a command holding an exclusive project resource (queued per resource) |
 
-\* Команды пользователя (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`, `update`) идут от пользователя только без переменной `AGENT_BOARD_ACTOR`; агенты запускаются с ней (пустое значение тоже считается агентом), поэтому получают отказ на действиях только для пользователя. Это защита от ошибок, а не граница доверия (см. «Ограничения»).
+\* User commands (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`, `update`) act as the user only when `AGENT_BOARD_ACTOR` is not set; agents are started with it (an empty value also counts as an agent), so they are refused on user-only actions. This protects against mistakes and is not a trust boundary (see "Limitations").
 
-Все команды, кроме `serve`, `init`, `stop`, `version`, `status` без аргументов и `config schema`, обращаются к запущенной доске; если её нет — код выхода 2. Ошибки запроса — код 1.
+All commands except `serve`, `init`, `stop`, `version`, `status` without arguments and `config schema` talk to the running board; if there is none — exit code 2. Request errors — code 1.
 
-## Исполнение
+## Execution
 
-`serve` запускает раннер: он слушает события доски и превращает их в ходы агентов (`claude`, `codex`; для тестов есть `fake`).
+`serve` starts the runner: it listens to board events and turns them into agent turns (`claude`, `codex`; `fake` for tests).
 
-- Стадии проекта: `decomposition` (разбивка) → `tracker` (заведение задач в трекере, можно пропустить) → `work` → `done`. Стадию меняет только пользователь (`agent-board stage <stage>`, `POST /api/p/<slug>/stage {"stage", "actor": "user"}`), назад стадии не переходят. Агенты задач работают только на стадии `work`: до неё пробуждения копятся и сохраняются, а при переходе в `work` стартуют задачи с накопленными пробуждениями и готовые (в пределах лимитов). Агент проекта работает на любой стадии; при переходе в `work` агент проекта без сессии запускается, как при старте раннера. На стадии `decomposition` сообщение пользователя в тред задачи будит не агента задачи, а агента проекта (`agent_wake {key: "_project", reason: "message", task: <KEY>}`): так комментарии к задачам разбивки читает агент проекта.
-- Задача стартует, когда готова (нет незакрытых зависимостей). Для неё создаётся worktree `<repo>/.agent-board-worktrees/<KEY>` (каталог добавляется в `.git/info/exclude`) и ветка по `branch_template`; база берётся из зависимостей по цепочке.
-- Одна сессия — один ход за раз, пробуждения во время хода объединяются в следующее сообщение. Параллельность ограничена `max_agents` на проект и `global_max_agents` на сервер, остальные ждут в очереди. Агент проекта в `max_agents` не считается, в глобальный лимит входит.
-- Агентам Claude всегда разрешены подкоманды доски `status`, `update`, `ask`, `say`, `show`, `thread`, `state`, `events`, `propose`; `lock-run` и остальные команды подчиняются `permission_mode`. Системный промпт передаётся на каждом ходе, в том числе при продолжении сессии.
-- Codex запускается с `-c sandbox_workspace_write.network_access=true`: без сети агент в песочнице не достучится до локальной доски.
-- Сырой поток каждого хода пишется в `<project>/logs/<KEY>.jsonl`.
-- **Коммит и пуш — не работа агентов.** Промпт и команды доски этого им не поручают (граница доверия — в «Ограничениях»). Агент ставит только `in_progress` и `in_review`; `approved` ставит только пользователь. Коммит в локальную ветку задачи (`<KEY> <title>`) делает доска, когда пользователь одобряет задачу; от этого коммита стартуют зависимые. Если в этот момент идёт ход агента, доска сначала останавливает его, потом коммитит. Одобренная задача новых ходов не получает: сообщения и ответы пользователя записываются в тред, а накопленные причины агент получает при любом выходе из `approved`: когда задачу вернули в работу, а также когда доска сама откатила её на ревью из-за сбоя коммита. Пушит только отправка в ревью. Коммит не делается, если в файлах остались маркеры конфликта: задача возвращается в `in_review`.
-- Поля, которые ведёт раннер (`worktree`, `branch`, `base_branch`, `session_id`, `agent_state`, `turn_error`, `last_turn_at`, `harness`, `turn_process`, `agent_parked`, `review`, `ship`), через API меняет только актор `system`. `tracker_key` и `tracker_url` ставит доска при заведении задач в трекере или пользователь, когда задача уже есть в трекере. Git-операции доска выполняет только в worktree `<repo>/.agent-board-worktrees/<KEY>`; если в карточке другой путь, операция пропускается с ошибкой на карточке.
-- При одобрении зависимости доска ребейзит зависимые задачи с сессией, унося их незакоммиченные изменения; конфликты агент разрешает правкой файлов. На время ребейза работа сохраняется в `refs/agent-board/<KEY>/carry` (общий `git stash` не используется); если вернуть её в файлы не удалось, файлы worktree остаются как в ребейзнутой ветке, вся работа — в ссылке, на карточке появляется сообщение, как её вернуть (`git stash apply <ref>`, затем `git update-ref -d <ref>`). Пока ссылка есть, следующий ребейз этой задачи не выполняется. Уже идущий в worktree ребейз доска не трогает.
-- Сбой хода повторяется с паузой 5 с, затем 30 с; после 3 подряд задача уходит в `error` и ждёт сообщения или смены статуса от пользователя. Если харнесс не нашёл сессию («No conversation found»), задача начинается заново в новой сессии, это не считается сбоем.
-- Агенты могут будить друг друга (агент задачи пишет в `_project`, агент проекта — в задачу), но не больше 5 пробуждений одного агента подряд без участия пользователя. Шестое не выполняется: в тред агента приходит системное сообщение, у задачи поднимается флаг `agent_parked` (у агента проекта — `project_agent.parked` в снимке), и агент ждёт сообщения, ответа или смены статуса от пользователя. Счётчик живёт в памяти сервера и сбрасывается перезапуском вместе с флагами.
-- Ревью, отправка в ревью и синхронизация с трекером — в разделах «Ревью», «Отправка в ревью», «Трекер» ниже.
-- `lock-run`: агент запускает долгие ресурсоёмкие команды (стенд, база, эмулятор) через `agent-board lock-run <ресурс> -- <команда>`; ресурсы описываются в `resources`, очередь переживает перезапуск доски.
+- Project stages: `decomposition` → `tracker` (creating tasks in the tracker, can be skipped) → `work` → `done`. Only the user changes the stage (`agent-board stage <stage>`, `POST /api/p/<slug>/stage {"stage", "actor": "user"}`), and stages never go backwards. Task agents work only at the `work` stage: before it, wake-ups accumulate and are kept, and on the move to `work` the tasks with pending wake-ups and the ready tasks start (within limits). The project agent works at any stage; on the move to `work` a project agent without a session starts, as on runner startup. At the `decomposition` stage a user message in a task thread wakes the project agent instead of the task agent (`agent_wake {key: "_project", reason: "message", task: <KEY>}`), so the project agent reads comments on decomposition tasks.
+- A task starts when it is ready (no unfinished dependencies). It gets a worktree `<repo>/.agent-board-worktrees/<KEY>` (the directory is added to `.git/info/exclude`) and a branch from `branch_template`; the base comes from the dependencies, along the chain.
+- One session runs one turn at a time; wake-ups during a turn are merged into the next message. Concurrency is limited by `max_agents` per project and `global_max_agents` per server; the rest wait in a queue. The project agent does not count towards `max_agents` but counts towards the global limit.
+- Claude agents are always allowed the board subcommands `status`, `update`, `ask`, `say`, `show`, `thread`, `state`, `events`, `propose`; `lock-run` and other commands follow `permission_mode`. The system prompt is passed on every turn, including resumed sessions.
+- Codex runs with `-c sandbox_workspace_write.network_access=true`: without network access a sandboxed agent cannot reach the local board.
+- The raw stream of each turn is written to `<project>/logs/<KEY>.jsonl`.
+- **Committing and pushing are not the agents' job.** Neither the prompt nor the board commands ask them to (the trust boundary is described in "Limitations"). An agent sets only `in_progress` and `in_review`; only the user sets `approved`. The board commits to the task's local branch (`<KEY> <title>`) when the user approves the task; dependent tasks start from that commit. If an agent turn is running at that moment, the board stops it first and then commits. An approved task gets no new turns: user messages and answers are recorded in the thread, and the agent receives the accumulated reasons whenever the task leaves `approved` — when it is returned to work, and also when the board itself moves it back to review after a failed commit. Only sending to review pushes. No commit is made if files still contain conflict markers: the task goes back to `in_review`.
+- Fields maintained by the runner (`worktree`, `branch`, `base_branch`, `session_id`, `agent_state`, `turn_error`, `last_turn_at`, `harness`, `turn_process`, `agent_parked`, `review`, `ship`) can be changed through the API only by the `system` actor. `tracker_key` and `tracker_url` are set by the board when it creates tasks in the tracker, or by the user when the task already exists in the tracker. The board runs git operations only in the worktree `<repo>/.agent-board-worktrees/<KEY>`; if the card has a different path, the operation is skipped with an error on the card.
+- When a dependency is approved, the board rebases dependent tasks that have a session, carrying their uncommitted changes along; the agent resolves conflicts by editing files. During the rebase the work is kept in `refs/agent-board/<KEY>/carry` (the shared `git stash` is not used); if it cannot be restored into the files, the worktree files stay as in the rebased branch, all the work is in the ref, and the card shows how to restore it (`git stash apply <ref>`, then `git update-ref -d <ref>`). While the ref exists, the next rebase of this task is not performed. The board does not touch a rebase already in progress in the worktree.
+- A failed turn is retried after 5 s, then after 30 s; after 3 failures in a row the task goes to `error` and waits for a message or a status change from the user. If the harness cannot find the session ("No conversation found"), the task starts over in a new session; this does not count as a failure.
+- Agents can wake each other (a task agent writes to `_project`, the project agent writes to a task), but no more than 5 wake-ups of the same agent in a row without the user. The sixth is not delivered: a system message goes to the agent's thread, the task gets the `agent_parked` flag (for the project agent — `project_agent.parked` in the snapshot), and the agent waits for a message, an answer or a status change from the user. The counter lives in server memory and is reset by a restart together with the flags.
+- Review, sending to review and tracker sync are described in the "Review", "Sending to review" and "Tracker" sections below.
+- `lock-run`: an agent runs long resource-heavy commands (a test stand, a database, an emulator) via `agent-board lock-run <resource> -- <command>`; resources are described in `resources`, and the queue survives a board restart.
 
-**Перезапуск.** Штатная остановка `serve` (Ctrl-C, SIGTERM) завершает процессы идущих ходов (SIGTERM, через 10 с SIGKILL), а на доске оставляет их идущими. Если сервер упал, агенты продолжают работать. В обоих случаях при следующем старте доска находит прерванные ходы, останавливает оставшийся процесс (только если он опознан как тот же), будит агента причиной `interrupted` на той же сессии и доставляет накопленные сообщения. Задачи, чей ход ждал очереди, продолжаются причиной `queued_restart`.
+**Restart.** A normal `serve` shutdown (Ctrl-C, SIGTERM) terminates the processes of running turns (SIGTERM, SIGKILL after 10 s) but leaves them marked as running on the board. If the server crashed, the agents keep working. In both cases, on the next start the board finds the interrupted turns, stops any remaining process (only if it is recognised as the same one), wakes the agent with reason `interrupted` in the same session and delivers the accumulated messages. Tasks whose turn was waiting in the queue continue with reason `queued_restart`.
 
-### Настройки проекта (`<home>/projects/<slug>/project.json`)
+### Project settings (`<home>/projects/<slug>/project.json`)
 
-Настройки меняют `agent-board config set` или `POST /api/p/<slug>/config` (только пользователь): при сохранении полностью проверяются изменившиеся поля — шаблон отправки (плейсхолдеры вне кавычек, без `$'…'` и `<<`), ключи трекера и вид `auth`, цели статусов, ссылки, репозитории (абсолютный путь к существующему git-репозиторию, имена без повторов), харнесс, инструмент ревью, лимиты (целые ≥ 1), ресурсы, `branch_template` (только `{key}`, обязательно). Каталог и `git` проверяются только у новых и изменившихся (по имени и пути) репозиториев; медленные проверки идут до блокировки доски, а под блокировкой настройки перечитываются и итог проверяется по форме (типы, перечисления), поэтому устаревшее значение в другом поле правке не мешает. Если заданное поле одновременно поменяли из другого места — до трёх попыток, затем 409. `config validate` (пустой `fields`) проверяет сохранённый файл целиком. Неизвестное поле, `slug`, `stage` (команда `stage`) и `project_session_id` (ведёт раннер) — 400. Изменение пишет событие `config_changed {fields}`. Устаревшее поле `ship_command` при первом чтении доской переносится в `ship.command` (если оно пусто) и удаляется из файла, событие `config_migrated {field, to, moved}`. Если файл не удалось записать, ошибка уходит в лог, а проект работает на перенесённых в памяти настройках (запись повторится при следующем чтении).
+Settings are changed with `agent-board config set` or `POST /api/p/<slug>/config` (user only): on save, the changed fields are fully checked — the ship template (placeholders outside quotes, no `$'…'` and `<<`), tracker keys and the kind of `auth`, status targets, links, repositories (an absolute path to an existing git repository, unique names), harness, review tool, limits (integers ≥ 1), resources, `branch_template` (only `{key}`, required). The directory and `git` are checked only for new and changed (by name and path) repositories; slow checks run before the board lock is taken, and under the lock the settings are re-read and the result is checked for shape (types, enums), so a stale value in another field does not block the change. If the same field was changed elsewhere at the same time — up to three attempts, then 409. `config validate` (empty `fields`) checks the whole saved file. An unknown field, `slug`, `stage` (use the `stage` command) and `project_session_id` (maintained by the runner) — 400. A change writes a `config_changed {fields}` event. The deprecated `ship_command` field is moved into `ship.command` (if that is empty) the first time the board reads the file and is removed from the file, with a `config_migrated {field, to, moved}` event. If the file cannot be written, the error goes to the log and the project runs on the migrated settings in memory (the write is retried on the next read).
 
-| Ключ | Назначение |
+| Key | Purpose |
 |---|---|
-| `harness` | `{"type": "claude"\|"codex"\|"fake", "permission_mode": ..., "model": ..., "allowed_tools": [...]}`, по умолчанию `claude` с `auto`. `allowed_tools` (только Claude) — дополнительные разрешённые инструменты, например `"Bash(python3 -m pytest:*)"`: при `acceptEdits` без них агент не запустит тесты и сборку |
-| `review` | `{"tool": "crit"\|"none", "binary": "crit"}` — инструмент ревью, по умолчанию crit |
-| `ship` | `{"command": str, "timeout": 600}` — команда отправки в ревью (шаблон), без команды отправка недоступна |
-| `tracker` | `{"type": "none"}` (по умолчанию); Jira: `{"type": "jira", "url", "project", "issue_type", "epic": "PROJ-1"\|null, "epic_field": "customfield_10007"\|null, "components": [], "labels": [], "extra_fields": {}, "link_type": "Blocks", "title_template": "{title}", "auth": {"type": "token_env", "env": "JIRA_TOKEN", "user_env": "JIRA_USER"} \| {"type": "cookie_file", "path": "~/.config/agent-board/jira-cookie.txt"}, "statuses": {"<статус Jira>": "<статус доски>"}, "jira_search_path": "/rest/api/2/search"}` (эпик без `epic_field` задаётся через `parent`; путь поиска статусов по умолчанию — для Jira Server/DC, Jira Cloud может потребовать `/rest/api/2/search/jql`); GitHub: `{"type": "github", "repo": "owner/name", "labels": [], "auth": {"type": "token_env", "env": "GITHUB_TOKEN"}, "statuses": {"open": null, "closed": "done"}, "api_url": "https://api.github.com"}`. Статусы по умолчанию не сопоставляются |
-| `repos` | `[{"name", "path", "base"}]` — репозитории проекта |
-| `branch_template` | шаблон ветки задачи, по умолчанию `{key}` |
-| `max_agents` | одновременных ходов на проект (3) |
-| `global_max_agents` | одновременных ходов на сервер (6) |
-| `resources` | `[{"name", "description"}]` — ресурсы для `lock-run` |
-| `links` | ссылки проекта для интерфейса: `[{"title", "href"}]`, `href` — http(s) или путь к локальному файлу: абсолютный или относительный (от первого репозитория из `repos`, а без репозиториев — от каталога проекта `<home>/projects/<slug>`). Файл открывается через `GET /api/p/<slug>/file?path=` только внутри каталога проекта, его репозиториев и worktree задач; html отдаётся с `Content-Security-Policy: sandbox`, файлы до 2 МБ) |
-| `agent_rules` | дополнительные правила проекта: попадают в стартовый промпт задачи и агента проекта, не в системный промпт |
-| `project_brief` | описание проекта для агента проекта |
-| `decomposition_rules` | правила декомпозиции (текст до 4000 символов): попадают в промпт агента проекта, он сверяет с ними граф задач |
+| `harness` | `{"type": "claude"\|"codex"\|"fake", "permission_mode": ..., "model": ..., "allowed_tools": [...]}`, default `claude` with `auto`. `allowed_tools` (Claude only) — extra allowed tools, for example `"Bash(python3 -m pytest:*)"`: under `acceptEdits` the agent cannot run tests or builds without them |
+| `review` | `{"tool": "crit"\|"none", "binary": "crit"}` — review tool, crit by default |
+| `ship` | `{"command": str, "timeout": 600}` — the command that sends work to review (a template); without a command sending is unavailable |
+| `tracker` | `{"type": "none"}` (default); Jira: `{"type": "jira", "url", "project", "issue_type", "epic": "PROJ-1"\|null, "epic_field": "customfield_10007"\|null, "components": [], "labels": [], "extra_fields": {}, "link_type": "Blocks", "title_template": "{title}", "auth": {"type": "token_env", "env": "JIRA_TOKEN", "user_env": "JIRA_USER"} \| {"type": "cookie_file", "path": "~/.config/agent-board/jira-cookie.txt"}, "statuses": {"<Jira status>": "<board status>"}, "jira_search_path": "/rest/api/2/search"}` (an epic without `epic_field` is set via `parent`; the default status search path is for Jira Server/DC, Jira Cloud may need `/rest/api/2/search/jql`); GitHub: `{"type": "github", "repo": "owner/name", "labels": [], "auth": {"type": "token_env", "env": "GITHUB_TOKEN"}, "statuses": {"open": null, "closed": "done"}, "api_url": "https://api.github.com"}`. By default statuses are not mapped |
+| `repos` | `[{"name", "path", "base"}]` — project repositories |
+| `branch_template` | task branch template, default `{key}` |
+| `max_agents` | concurrent turns per project (3) |
+| `global_max_agents` | concurrent turns per server (6) |
+| `resources` | `[{"name", "description"}]` — resources for `lock-run` |
+| `links` | project links for the UI: `[{"title", "href"}]`, `href` is http(s) or a path to a local file: absolute or relative (to the first repository in `repos`, or, without repositories, to the project directory `<home>/projects/<slug>`). A file is served via `GET /api/p/<slug>/file?path=` only from inside the project directory, its repositories and the task worktrees; html is served with `Content-Security-Policy: sandbox`, files up to 2 MB |
+| `language` | language agents use with the user: summaries, questions, thread messages, reports (default `ru`) |
+| `agent_rules` | extra project rules: they go into the starting prompt of tasks and of the project agent, not into the system prompt |
+| `project_brief` | project description for the project agent |
+| `decomposition_rules` | decomposition rules (text up to 4000 characters): they go into the project agent's prompt, and it checks the task graph against them |
 
-Поддержка Codex не проверялась на живом `codex`.
+Codex support has not been tested against a live `codex`.
 
-Снимок проекта (`state`) кроме задач содержит `project_agent: {state, turn_error, session_id, parked}` (каждое изменение состояния или остановки агента проекта раннер отмечает событием `project_agent_changed {state, parked}`), `project_unread` и `project_thread_size` (непрочитанное и число сообщений треда `_project`), а у каждой задачи — `locks: [{resource, position}]` (0 — задача держит ресурс, больше 0 — место в очереди).
+Besides the tasks, the project snapshot (`state`) contains `project_agent: {state, turn_error, session_id, parked}` (the runner marks every change of the project agent's state or parking with a `project_agent_changed {state, parked}` event), `project_unread` and `project_thread_size` (unread items and the number of messages in the `_project` thread), and every task has `locks: [{resource, position}]` (0 — the task holds the resource, above 0 — its place in the queue).
 
-## Ревью
+## Review
 
-`review: {"tool": "crit"|"none", "binary": "crit"}`. Пользователь открывает раунд кнопкой «Начать ревью» (`POST /api/p/<slug>/tasks/<KEY>/review {"actor": "user"}`, только для задачи `in_review`); раннер запускает `crit --no-open --base-branch <base> -o <project>/crit` в worktree задачи и кладёт ссылку в `task.review.url`.
+`review: {"tool": "crit"|"none", "binary": "crit"}`. The user opens a round with the "Start review" button (`POST /api/p/<slug>/tasks/<KEY>/review {"actor": "user"}`, only for an `in_review` task); the runner runs `crit --no-open --base-branch <base> -o <project>/crit` in the task worktree and puts the link into `task.review.url`.
 
-- Раунд без нерешённых комментариев одобряет задачу от имени пользователя (сообщение «Одобрено в ревью (раунд N)», коммит как при одобрении кнопкой). С комментариями — агент просыпается по причине `review` с их текстами, отвечает через `crit comment --reply-to`, а когда его ход закончился и задача снова на ревью, раннер открывает следующий раунд. Завершение раунда без новых комментариев одобряет задачу только если нерешённых комментариев нет совсем: пока комментарии прошлых раундов не решены, одобрения нет, и доска снова будит агента с теми же комментариями. Ревьюер решает комментарии в интерфейсе crit, после чего пустой «Finish Review» одобряет задачу (или нажмите «Одобрить» на доске).
-- Раунд закрывается, если задачу одобрили, отменили или пользователь вернул её в работу. При перезапуске доски открытый раунд переподключается к той же сессии crit (`--session`, тот же порт, та же ссылка); страница ревью при остановке доски не закрывается.
-- `"tool": "none"` — раунды не запускаются, изменения смотрят во вкладке «Изменения». Одобрить без crit — `POST .../tasks/<KEY>/approve {"actor": "user"}`, вернуть с комментарием — `POST .../tasks/<KEY>/return {"actor": "user", "text"}`.
+- A round with no unresolved comments approves the task on behalf of the user (message "Approved in review (round N)", commit as with the approve button). With comments, the agent is woken with reason `review` and their texts, replies via `crit comment --reply-to`, and once its turn is over and the task is back in review, the runner opens the next round. Finishing a round without new comments approves the task only if there are no unresolved comments at all: while comments from earlier rounds are unresolved, there is no approval, and the board wakes the agent again with the same comments. The reviewer resolves comments in the crit UI, after which an empty "Finish Review" approves the task (or press "Approve" on the board).
+- A round is closed when the task is approved, cancelled, or returned to work by the user. On a board restart an open round reconnects to the same crit session (`--session`, same port, same link); the review page is not closed when the board stops.
+- `"tool": "none"` — no rounds are started, changes are viewed in the "Changes" tab. Approve without crit — `POST .../tasks/<KEY>/approve {"actor": "user"}`, return with a comment — `POST .../tasks/<KEY>/return {"actor": "user", "text"}`.
 - `task.review`: `{round, state: idle|open|changes|fixing|approved, url, session, process, error, history: [{round, state, comments, at}]}`.
-- Вывод crit пишется в `<project>/logs/<KEY>.review.log`; при открытии раунда от лога остаётся последний 1 МБ. Данные ревью задачи (`<project>/crit/reviews/<session>` и `<project>/crit/sessions/<session>.json|.log`) раннер удаляет через 7 дней после перевода задачи в `done`/`cancelled` (проверка при старте сервера и раз в сутки).
+- crit output goes to `<project>/logs/<KEY>.review.log`; when a round opens, only the last 1 MB of the log is kept. The task's review data (`<project>/crit/reviews/<session>` and `<project>/crit/sessions/<session>.json|.log`) is deleted by the runner 7 days after the task moves to `done`/`cancelled` (checked at server start and once a day).
 
-## Отправка в ревью
+## Sending to review
 
-`ship: {"command": "...", "timeout": 600}` — команда проекта, которая отправляет ветку задачи (push, merge request). Доска ничего не пушит сама: только по кнопке или `agent-board ship <KEY>...` (`POST /api/p/<slug>/ship {"keys": [...], "actor": "user"}`), только для `approved` задач, без `ship.command` — 400.
+`ship: {"command": "...", "timeout": 600}` — the project's command that sends the task branch (push, merge request). The board never pushes on its own: only on the button or `agent-board ship <KEY>...` (`POST /api/p/<slug>/ship {"keys": [...], "actor": "user"}`), only for `approved` tasks, without `ship.command` — 400.
 
-- Очередь запроса идёт по одной задаче в порядке зависимостей: остатки коммитятся в worktree (`<KEY> <title>`), затем `bash -lc <command>` в worktree задачи (своя группа процессов, окружение сервера + `AGENT_BOARD_TASK`; по `timeout` группа убивается, оставшиеся фоновые процессы после завершения тоже).
-- Плейсхолдеры `{key} {title} {branch} {base} {worktree} {repo}` подставляются через `shlex.quote`; неизвестные — 400. Не берите их в кавычки (`"{title}"` отвергается: значения уже экранированы), `$'…'` и встроенный текст `<<` (heredoc) не поддерживаются. `{base}` — ветка единственной незавершённой зависимости, иначе базовая ветка репозитория; несколько незавершённых зависимостей — ошибка «отправьте их сначала».
-- Код 0 переводит задачу в `sent` (от `system`); ошибка или таймаут оставляют статус и пишут сообщение в тред, зависимые задачи запроса пропускаются (`ship.state = skipped`), независимые идут дальше. Команда, шедшая при остановке сервера, после старта помечается `interrupted` и не перезапускается: отправьте задачу снова. Отмена задачи останавливает отправку; задача в `sent` не будит агента, пока её не вернут в работу.
-- Полный вывод — `<project>/logs/<KEY>.ship.log` (каждая отправка начинает лог заново), в карточке — последние 4 КБ. Секреты трекера проекта (токен, cookie) маскируются `***` в логе ещё до записи на диск, в хвосте на карточке и в сообщении треда; другие секреты не печатайте и в команду не кладите: она хранится в `project.json`.
-- `task.ship`: `{state: queued|running|done|error|skipped|interrupted|cancelled, at, output_tail, exit_code, error, reason}`; события `ship_requested`, `ship_started`, `ship_finished {ok, exit_code}`.
+- The request queue goes one task at a time in dependency order: leftovers are committed in the worktree (`<KEY> <title>`), then `bash -lc <command>` runs in the task worktree (its own process group, the server environment plus `AGENT_BOARD_TASK`; on `timeout` the group is killed, and so are background processes left behind after it finishes).
+- Placeholders `{key} {title} {branch} {base} {worktree} {repo}` are substituted with `shlex.quote`; unknown ones — 400. Do not quote them (`"{title}"` is rejected: the values are already escaped); `$'…'` and inline `<<` (heredoc) are not supported. `{base}` is the branch of the single unfinished dependency, otherwise the repository's base branch; several unfinished dependencies are an error ("send them first").
+- Exit code 0 moves the task to `sent` (as `system`); an error or timeout keeps the status and posts a message to the thread, dependent tasks of the request are skipped (`ship.state = skipped`), independent ones go on. A command that was running when the server stopped is marked `interrupted` after the start and is not restarted: send the task again. Cancelling a task stops its sending; a task in `sent` does not wake the agent until it is returned to work.
+- Full output — `<project>/logs/<KEY>.ship.log` (each send starts the log over), the card shows the last 4 KB. The project's tracker secrets (token, cookie) are masked as `***` in the log before it is written to disk, in the tail on the card and in the thread message; do not print other secrets and do not put them into the command: it is stored in `project.json`.
+- `task.ship`: `{state: queued|running|done|error|skipped|interrupted|cancelled, at, output_tail, exit_code, error, reason}`; events `ship_requested`, `ship_started`, `ship_finished {ok, exit_code}`.
 
-## Трекер
+## Tracker
 
-Поддерживаются Jira (Server/DC и Cloud, REST v2) и GitHub Issues. Настройки — ключ `tracker` в `project.json` (полный список ключей в таблице выше), по умолчанию `{"type": "none"}`.
+Jira (Server/DC and Cloud, REST v2) and GitHub Issues are supported. Settings are the `tracker` key in `project.json` (the full list of keys is in the table above), default `{"type": "none"}`.
 
-Jira Server с токеном из переменной окружения (`user_env` включает Basic вместо Bearer):
+Jira Server with a token from an environment variable (`user_env` switches to Basic instead of Bearer):
 
 ```json
 "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
@@ -175,7 +179,7 @@ Jira Server с токеном из переменной окружения (`use
             "statuses": {"Open": "not_started", "In Progress": "in_progress", "In Review": "sent", "Done": "done"}}
 ```
 
-Jira с cookie-сессией из файла (только Jira):
+Jira with a cookie session from a file (Jira only):
 
 ```json
 "tracker": {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
@@ -189,89 +193,91 @@ GitHub:
             "statuses": {"open": null, "closed": "done"}}
 ```
 
-**Секреты** — только из переменной окружения сервера (`auth: {"type": "token_env", "env": "…"}`) или файла (`auth: {"type": "cookie_file", "path": "…"}`); в `project.json` их хранить нельзя (лишние ключи `auth` отвергаются). В ответы, снимок, события, логи и тексты ошибок секреты не попадают (значения и их JSON/URL-формы маскируются `***`), заголовки и тела запросов не пишутся, перенаправления трекера не выполняются.
+**Secrets** come only from a server environment variable (`auth: {"type": "token_env", "env": "…"}`) or a file (`auth: {"type": "cookie_file", "path": "…"}`); they cannot be stored in `project.json` (extra `auth` keys are rejected). Secrets never appear in responses, the snapshot, events, logs or error texts (values and their JSON/URL forms are masked as `***`), request headers and bodies are not logged, and tracker redirects are not followed.
 
-**Заведение задач** — на стадии `tracker`, только по кнопке (после подтверждения с числом задач и адресом трекера): `POST /api/p/<slug>/tracker/create {"actor": "user"}` или `agent-board tracker create`. Задачи без `tracker_key` (кроме отменённых) заводятся по порядку зависимостей; задачи, которые пользователь уже привязал к трекеру (`update <KEY> --tracker-key …`), пропускаются, а связи с ними создаются как обычно. Заведение: название — `title_template` (`{key}`, `{title}`), описание — описание задачи, «Критерий готовности: …» и «Зависит от: …». Ключ и ссылка сразу пишутся в `tracker_key`/`tracker_url`. Затем создаются связи: в Jira — `issueLink` типа `link_type` («блокер blocks зависимую»; направление проверено только по документации — один раз сверьте на своей Jira, что у зависимой задачи написано «is blocked by»), в GitHub связей нет — зависимость записана в тексте задачи. Частичный сбой не откатывает созданное, повтор продолжает с недостающего; при ошибке авторизации, настроек или сети заведение останавливается сразу. Повторов запросов внутри нет: если трекер завёл задачу, но ответ не дошёл, повтор создаст дубль. Ответ: `{created, linked, errors, warnings, events}`, событие `tracker_created`.
+**Creating tasks** happens at the `tracker` stage, only on the button (after a confirmation showing the number of tasks and the tracker address): `POST /api/p/<slug>/tracker/create {"actor": "user"}` or `agent-board tracker create`. Tasks without `tracker_key` (except cancelled ones) are created in dependency order; tasks the user has already linked to the tracker (`update <KEY> --tracker-key …`) are skipped, and links to them are created as usual. Creation: the title is `title_template` (`{key}`, `{title}`), the description is the task description plus "Done when: …" and "Depends on: …". The key and the link are written to `tracker_key`/`tracker_url` right away. Then links are created: in Jira — an `issueLink` of type `link_type` ("blocker blocks dependent"; the direction was checked only against the documentation — verify once on your Jira that the dependent issue says "is blocked by"); GitHub has no links — the dependency is written in the issue text. A partial failure does not roll back what was created, a retry continues from what is missing; on an auth, configuration or network error creation stops immediately. There are no internal request retries: if the tracker created an issue but the response was lost, a retry creates a duplicate. Response: `{created, linked, errors, warnings, events}`, event `tracker_created`.
 
-**Проверка доступа** — `POST .../tracker/check {"actor": "user"}` → `{ok: true}` или `{ok: false, error, kind}` (`kind`: `config`, `auth`, `not_found`, `validation`, `retryable`, `network`, `error`). Если адрес трекера (`url` Jira, `api_url` GitHub) — `http://` на чужом хосте (не localhost), в ответе есть `warning`: секреты уходят без шифрования; то же предупреждение — в `tracker_sync.warning` и в индикаторе синхронизации.
+**Access check** — `POST .../tracker/check {"actor": "user"}` → `{ok: true}` or `{ok: false, error, kind}` (`kind`: `config`, `auth`, `not_found`, `validation`, `retryable`, `network`, `error`). If the tracker address (Jira `url`, GitHub `api_url`) is `http://` on a non-local host, the response has a `warning`: secrets are sent unencrypted; the same warning appears in `tracker_sync.warning` and in the sync indicator.
 
-**Синхронизация статусов.** На стадии `work` и ещё сутки после перехода в `done` фоновый поток сервера (рабочий поток заводится только проектам с включённой синхронизацией, которым подошёл срок) раз в `tracker.poll_seconds` (по умолчанию Jira 30 с, GitHub 120 с — там запрос на каждую задачу) читает статусы заведённых задач и переводит задачи доски от актора `tracker` по `tracker.statuses` (имя статуса без учёта регистра; `null` — известный статус без перевода).
+**Status sync.** At the `work` stage and for one more day after moving to `done`, a background server thread (a worker is started only for projects with sync enabled whose time has come) reads the statuses of created issues every `tracker.poll_seconds` (default Jira 30 s, GitHub 120 s — there it is one request per issue) and moves board tasks as the `tracker` actor according to `tracker.statuses` (status names are case-insensitive; `null` — a known status with no transition).
 
-- Допустимые цели — `not_started`, `in_progress`, `sent`, `done`; остальные отвергаются при сохранении настроек (одобряет только пользователь; «In Review» в Jira — это `sent`).
-- По умолчанию (`statuses` пустой) статусы не сопоставляются: синхронизация только читает и показывает «неизвестные статусы». В трекер доска статусы не пишет.
-- Правило первого чтения: переход выполняется, только когда статус в трекере изменился с прошлого чтения (запоминается пара «ключ, статус»), сопоставленный статус отличается от статуса на доске и задача за время чтения не менялась. Первое чтение только запоминается, кроме случая, когда сопоставленный статус — `done`. Так доска, ушедшая дальше трекера, не откатывается. Остальные правила обычные: `done` разблокирует зависимых, возврат в `in_progress` будит агента.
-- Итог прохода — `tracker_sync {at, ok, error, paused, unknown_statuses, changed, errors, warning}` в снимке; недоступная задача трекера попадает в `errors`, остальные синхронизируются. Событие `tracker_synced` пишется только при изменениях.
-- Пауза и повтор: сетевые ошибки и 5xx — повтор с удвоением паузы (от интервала до 5 минут). Ошибки авторизации и настроек ставят `paused: true` (Jira с просроченной cookie отвечает 200 как анонимному пользователю: если в проходе не нашлась ни одна задача или ответ помечен `X-AUSERNAME: anonymous`, доска спрашивает `/rest/api/2/myself`, и аноним или 401 — ошибка авторизации) — запросов нет, пока не изменятся настройки трекера или пользователь не нажмёт «Повторить» (`POST .../tracker/sync {"actor": "user"}` / `agent-board tracker sync`: один проход сейчас, при успехе пауза снимается).
-- Проекты синхронизируются параллельно, не больше 4 одновременно; проект, зависший на запросе к трекеру, не задерживает остальные и пропускается, пока его проход не закончится.
-- В `serve` поток включён; в коде `BoardServer(tracker_sync=True)` (по умолчанию выключен).
+- Allowed targets are `not_started`, `in_progress`, `sent`, `done`; others are rejected when settings are saved (only the user approves; "In Review" in Jira means `sent`).
+- By default (`statuses` empty) statuses are not mapped: sync only reads and shows "unknown statuses". The board never writes statuses to the tracker.
+- First-read rule: a transition happens only when the tracker status changed since the previous read (the "key, status" pair is remembered), the mapped status differs from the board status, and the task did not change during the read. The first read is only remembered, unless the mapped status is `done`. This way a board that is ahead of the tracker is not rolled back. Other rules are the usual ones: `done` unblocks dependents, a return to `in_progress` wakes the agent.
+- The result of a pass is `tracker_sync {at, ok, error, paused, unknown_statuses, changed, errors, warning}` in the snapshot; an unavailable tracker issue goes to `errors`, the rest are synced. The `tracker_synced` event is written only when something changed.
+- Pause and retry: network errors and 5xx are retried with a doubling delay (from the interval up to 5 minutes). Auth and configuration errors set `paused: true` (Jira with an expired cookie answers 200 as to an anonymous user: if no issue was found in a pass or the response is marked `X-AUSERNAME: anonymous`, the board asks `/rest/api/2/myself`, and anonymous or 401 is an auth error) — no requests are made until the tracker settings change or the user presses "Retry" (`POST .../tracker/sync {"actor": "user"}` / `agent-board tracker sync`: one pass now, the pause is cleared on success).
+- Projects are synced in parallel, at most 4 at a time; a project stuck on a tracker request does not hold up the others and is skipped until its pass finishes.
+- The thread is enabled in `serve`; in code it is `BoardServer(tracker_sync=True)` (disabled by default).
 
-| API | Что делает |
+| API | What it does |
 |---|---|
-| `POST /api/p/<slug>/tasks/<KEY>/review` | открыть раунд ревью |
-| `POST /api/p/<slug>/tasks/<KEY>/approve`, `.../return` | одобрить / вернуть с комментарием |
-| `POST /api/p/<slug>/ship {"keys"}` | отправить одобренные задачи командой проекта |
-| `POST /api/p/<slug>/tracker/create`, `/check`, `/sync` | завести задачи, проверить доступ, синхронизировать сейчас |
-| `GET /api/p/<slug>/config?actor=user` | настройки проекта `{config}` (секретов в них нет: только имена переменных окружения и пути) |
-| `POST /api/p/<slug>/config {"actor", "fields", "dry_run"}` | изменить поля настроек под блокировкой доски → `{config, saved, events}`; `dry_run: true` только проверяет и возвращает итог, `fields: {}` с `dry_run` проверяет сохранённый файл |
+| `POST /api/p/<slug>/tasks/<KEY>/review` | open a review round |
+| `POST /api/p/<slug>/tasks/<KEY>/approve`, `.../return` | approve / return with a comment |
+| `POST /api/p/<slug>/ship {"keys"}` | send approved tasks with the project's command |
+| `POST /api/p/<slug>/tracker/create`, `/check`, `/sync` | create tasks, check access, sync now |
+| `GET /api/p/<slug>/config?actor=user` | project settings `{config}` (no secrets in them: only environment variable names and paths) |
+| `POST /api/p/<slug>/config {"actor", "fields", "dry_run"}` | change settings fields under the board lock → `{config, saved, events}`; `dry_run: true` only checks and returns the result, `fields: {}` with `dry_run` checks the saved file |
 
-Во всех запросах — `{"actor": "user"}` и заголовок `X-Board-Token`.
+Every request carries `{"actor": "user"}` and the `X-Board-Token` header.
 
-## Переменные окружения
+## Environment variables
 
-| Переменная | Назначение |
+| Variable | Purpose |
 |---|---|
-| `AGENT_BOARD_HOME` | каталог данных (по умолчанию `~/.agent-board`) |
-| `AGENT_BOARD_PROJECT` | проект по умолчанию вместо `--project` |
-| `AGENT_BOARD_ACTOR` | кто действует: `agent`, `user`, `project_agent`; раннер задаёт его агентам сам. Не задан: для `say` и команд пользователя — `user`, для `status <KEY> <STATUS>` — `agent` (эту команду в основном вызывают агенты, а сообщение из терминала пишет человек) |
-| `AGENT_BOARD_TASK` | задача агента; с ней `say _project` будит агента проекта (эскалация) |
+| `AGENT_BOARD_HOME` | data directory (default `~/.agent-board`) |
+| `AGENT_BOARD_PROJECT` | default project instead of `--project` |
+| `AGENT_BOARD_ACTOR` | who acts: `agent`, `user`, `project_agent`; the runner sets it for agents itself. Not set: for `say` and user commands — `user`, for `status <KEY> <STATUS>` — `agent` (that command is mostly called by agents, while a message from the terminal is written by a human) |
+| `AGENT_BOARD_TASK` | the agent's task; with it, `say _project` wakes the project agent (escalation) |
 
-## Интерфейс
+## Interface
 
-Доска открывается по ссылке, которую печатает `serve` (`http://127.0.0.1:8737/?token=...`). Токен из ссылки сохраняется в cookie `board_token` на 30 дней (HttpOnly, SameSite=Strict): в это время достаточно адреса без токена, потом снова нужна ссылка из `serve`. Токен не меняется между перезапусками, поэтому старая ссылка остаётся рабочей. Сервер слушает только `127.0.0.1`.
+The board opens via the link printed by `serve` (`http://127.0.0.1:8737/?token=...`). The token from the link is saved in the `board_token` cookie for 30 days (HttpOnly, SameSite=Strict): during that time the address without the token is enough, after that you need the link from `serve` again. The token does not change across restarts, so an old link keeps working. The server listens only on `127.0.0.1`.
 
-Что где:
+The interface is in Russian; the labels below are given in translation.
 
-- **Доска** (`#/p/<slug>`) — колонки по статусам, фильтры (репозиторий, тип, поиск), шкала этапов проекта, прогресс, индикатор соединения. Рядом со шкалой — следующий шаг проекта (с подтверждением): на стадии `tracker` кнопка «Перейти к работе» (`work`), а на стадии `work`, когда все задачи готовы или отменены, — «Завершить проект» (`done`). Строка «Планирование» в шапке — ссылки проекта (`links`) и страница разбивки. Ресурсы видны на карточках задач (держит ресурс или стоит в очереди с местом) и в карточке задачи. Статус меняется перетаскиванием карточки или через меню статуса; «Заблокирована» не статус для переноса: вместо него пункт «Внешний блокер…» с причиной.
-- **Граф** — та же доска как граф зависимостей, переключатель «Доска / Граф» в шапке; критический путь выделен.
-- **Карточка задачи** (`#/p/<slug>?task=<KEY>`) — панель справа с вкладками «Обзор», «Тред», «Ревью», «Изменения» (в «Ревью» — раунды crit): вопросы агента и ответ на них, переписка, дифф. Вкладки меняют только содержимое панели.
-- **Проект** — кнопка в шапке (с числом открытых предложений): панель с состоянием агента проекта, тредом «Проект» (переписка с агентом проекта) и его предложениями (применить или отклонить).
-- **Разбивка** (`#/p/<slug>/decomposition`) — задачи разбивки с проверкой правил; на стадии `decomposition` комментарии к задачам читает агент проекта.
-- **«Ждут вас»** — полоса над доской: открытые вопросы, предложения агента проекта, задачи на ревью, ошибки агентов, остановка лимитом переписки, внешние блокеры, нарушения правил разбивки. Клик открывает нужную карточку или страницу.
+What is where:
 
-Клавиатура: `Esc` закрывает меню, диалог или карточку (по одному за нажатие; во время ввода через IME не срабатывает); `Cmd/Ctrl+Enter` отправляет сообщение или ответ; `Enter` или `Пробел` на карточке открывает её; меню статуса открывается клавишей «меню» или `Shift+F10` на карточке, либо кнопкой «⋯»; после закрытия меню фокус возвращается на карточку.
+- **Board** (`#/p/<slug>`) — columns by status, filters (repository, kind, search), the project stage bar, progress, connection indicator. Next to the stage bar is the project's next step (with a confirmation): at the `tracker` stage the "Start work" button (`work`), and at the `work` stage, when all tasks are done or cancelled, "Finish project" (`done`). The "Planning" row in the header holds the project links (`links`) and the decomposition page. Resources are shown on task cards (holds the resource, or waits in the queue with its position) and in the task card. The status is changed by dragging a card or through the status menu; "Blocked" is not a drag target: instead there is an "External blocker…" item with a reason.
+- **Graph** — the same board as a dependency graph, toggled with "Board / Graph" in the header; the critical path is highlighted.
+- **Task card** (`#/p/<slug>?task=<KEY>`) — a panel on the right with the tabs "Overview", "Thread", "Review", "Changes" ("Review" shows the crit rounds): agent questions and answers to them, conversation, diff. The tabs change only the panel content.
+- **Project** — a header button (with the number of open proposals): a panel with the project agent state, the "Project" thread (conversation with the project agent) and its proposals (apply or reject).
+- **Decomposition** (`#/p/<slug>/decomposition`) — decomposition tasks with rule checks; at the `decomposition` stage the project agent reads comments on tasks.
+- **"Waiting for you"** — a strip above the board: open questions, project agent proposals, tasks in review, agent errors, agents stopped by the conversation limit, external blockers, decomposition rule violations. A click opens the relevant card or page.
 
-Живые обновления идут по SSE. Если сервер перезапустили или связь пропала, индикатор показывает «Переподключение…», вкладка сама подключается заново (поток с `?since=<номер последнего события>`), перечитывает снимок и возвращается в «В сети» без перезагрузки страницы. Неудачное чтение снимка повторяется само (через 1, 2, 4, 8 с), зависший запрос снимка обрывается через 15 с. Если поток не открывается, а сервер отвечает «нет доступа» (cookie истекла), индикатор показывает «Нет доступа» и переподключения прекращаются: откройте ссылку из `serve` заново. Перерисовка не сбрасывает открытую карточку и вкладку, ширину панели, прокрутку, черновик и фокус.
+Keyboard: `Esc` closes a menu, dialog or card (one per press; does not fire during IME input); `Cmd/Ctrl+Enter` sends a message or an answer; `Enter` or `Space` on a card opens it; the status menu opens with the context-menu key or `Shift+F10` on a card, or with the "⋯" button; after the menu closes, focus returns to the card.
 
-Безопасность: текст агентов и пользователя (резюме, тред, вопросы, описания) никогда не исполняется. Он выводится как текст, из разметки поддержаны абзацы, `код`, блоки кода и ссылки `http(s)` с `rel="noopener noreferrer"`; HTML, `javascript:` и `data:` остаются текстом. Внешних запросов нет (шрифты системные), доска работает офлайн.
+Live updates come over SSE. If the server was restarted or the connection dropped, the indicator shows "Reconnecting…", the tab reconnects by itself (stream with `?since=<last event number>`), re-reads the snapshot and returns to "Online" without reloading the page. A failed snapshot read is retried automatically (after 1, 2, 4, 8 s), a hung snapshot request is aborted after 15 s. If the stream does not open and the server answers "no access" (the cookie expired), the indicator shows "No access" and reconnecting stops: open the link from `serve` again. Re-rendering does not reset the open card and tab, the panel width, scrolling, the draft or focus.
 
-## Тесты
+Security: text from agents and the user (summaries, threads, questions, descriptions) is never executed. It is rendered as text; supported markup is paragraphs, `code`, code blocks and `http(s)` links with `rel="noopener noreferrer"`; HTML, `javascript:` and `data:` stay text. There are no external requests (system fonts), and the board works offline.
 
-Каждый релиз поднимает версию в `pyproject.toml`, `board/agent_board/__init__.py`, `.claude-plugin/plugin.json` и `.claude-plugin/marketplace.json` (тесты проверяют, что они совпадают): по версии доска понимает, что после обновления плагина запущен старый сервер, и просит его перезапустить.
+## Tests
+
+Every release bumps the version in `pyproject.toml`, `board/agent_board/__init__.py`, `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json` (tests check that they match): by the version the board notices that an old server is still running after a plugin update and asks to restart it.
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
 ```
 
-Интерфейс — ES-модули в `board/agent_board/static/` без сборки и зависимостей, сервер отдаёт их по `/static/...`. Логика интерфейса проверяется встроенным раннером Node:
+The interface is ES modules in `board/agent_board/static/`, with no build step and no dependencies; the server serves them at `/static/...`. The UI logic is tested with Node's built-in test runner:
 
 ```bash
 node --test 'board/tests/js/*.test.mjs'
 ```
 
-Проверки в headless Chrome (puppeteer ставится только в `ui-tests/`; Node нужен только для разработки, на работу доски не влияет) поднимают настоящий сервер на временном каталоге с fake-агентом и кладут скриншоты в `ui-tests/out/`. Все скрипты подряд (на первой ошибке остановка с ненулевым кодом):
+Headless Chrome checks (puppeteer is installed only in `ui-tests/`; Node is needed only for development and does not affect running the board) start a real server on a temporary directory with a fake agent and save screenshots to `ui-tests/out/`. All scripts in a row (stops with a non-zero code on the first failure):
 
 ```bash
 cd ui-tests && npm install && npm test
 ```
 
-Скрипты по отдельности (`node ui-tests/<имя>.mjs` из корня или `npm run <имя>` в `ui-tests/`):
+Scripts one by one (`node ui-tests/<name>.mjs` from the root or `npm run <name>` in `ui-tests/`):
 
-- `smoke` — сквозной сценарий перед релизом: колонки и «Ждут вас», ответ агенту и сообщение, вкладки без пересоздания панели, текст агента не исполняется (резюме и тред), черновик/фокус/прокрутка под потоком событий, перезапуск сервера с переподключением без перезагрузки, 60 задач и 200 событий за 5 с без долгих задач > 200 мс, запрещённый переход с тостом ошибки (пороги нагрузочной проверки можно поменять: `SMOKE_LONGTASK_MS`, по умолчанию 200, и `SMOKE_SEND_LIMIT_MS`, по умолчанию 7000 — предел времени отправки 200 событий);
-- `skeleton` — каркас, живое обновление, безопасный markdown;
-- `board` — 14 задач во всех статусах, меню статуса, тосты; рядом снимки макета для сравнения;
-- `card` — карточка с раннером и fake-агентом: ответ на вопрос, тред, дифф, ресайз; снимки вкладок и макета;
-- `graph` — граф, панель «Проект», новая задача;
-- `decomposition` — страница разбивки.
+- `smoke` — end-to-end pre-release scenario: columns and "Waiting for you", answering an agent and sending a message, tabs without recreating the panel, agent text is not executed (summary and thread), draft/focus/scroll under the event stream, server restart with reconnection without reloading, 60 tasks and 200 events in 5 s with no long tasks > 200 ms, a forbidden transition with an error toast (the load thresholds can be changed: `SMOKE_LONGTASK_MS`, default 200, and `SMOKE_SEND_LIMIT_MS`, default 7000 — the time limit for sending 200 events);
+- `skeleton` — skeleton, live updates, safe markdown;
+- `board` — 14 tasks in all statuses, status menu, toasts; mockup snapshots alongside for comparison;
+- `card` — task card with the runner and the fake agent: answering a question, thread, diff, resizing; tab and mockup snapshots;
+- `graph` — graph, the "Project" panel, a new task;
+- `decomposition` — the decomposition page.
 
-Карточка задачи открывается по адресу `#/p/<slug>?task=<KEY>`; ширина панели хранится в `localStorage`, черновики сообщений и ответов на вопросы — в `sessionStorage`. Вид доски (колонки или граф) и свёрнутость панели «Проект» тоже хранятся в `localStorage`.
+The task card opens at `#/p/<slug>?task=<KEY>`; the panel width is stored in `localStorage`, message and answer drafts in `sessionStorage`. The board view (columns or graph) and whether the "Project" panel is collapsed are also stored in `localStorage`.
