@@ -561,6 +561,10 @@ class Board:
             return events
 
     def answer(self, key: str, qid: str, choice: Optional[str], comment: str) -> List[Event]:
+        if choice is not None and not isinstance(choice, str):
+            raise ValueError("choice должен быть строкой или null")
+        if not isinstance(comment, str):
+            raise ValueError("comment должен быть строкой")
         with self._lock:
             task = self._get(self.store.load_tasks(), key)
             question = next((q for q in task.questions if q.id == qid), None)

@@ -495,7 +495,12 @@ class _Handler(BaseHTTPRequestHandler):
             events = board.ask(rest[1], self._question(_need(body, "question")))
             extra["question_id"] = _event_ids(events, "question_asked", "question_id")
         elif len(rest) == 5 and rest[0] == "tasks" and rest[2] == "questions" and rest[4] == "answer":
-            events = board.answer(rest[1], rest[3], body.get("choice"), str(body.get("comment") or ""))
+            choice, comment = body.get("choice"), body.get("comment")
+            if choice is not None and not isinstance(choice, str):
+                raise ValueError("choice должен быть строкой или null")
+            if comment is not None and not isinstance(comment, str):
+                raise ValueError("comment должен быть строкой")
+            events = board.answer(rest[1], rest[3], choice, comment or "")
         elif rest == ["proposals"]:
             payload = _need(body, "payload")
             if not isinstance(payload, dict):

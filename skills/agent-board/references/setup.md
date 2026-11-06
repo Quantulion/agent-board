@@ -53,6 +53,8 @@ Default `type`: the CLI you are running in (`claude` or `codex`). Explain plainl
 nobody is there to approve a command, so the mode decides what they may do unattended.
 - Claude: recommend `permission_mode` `auto`. `acceptEdits` is stricter but agents stop on commands it does not allow;
   `bypassPermissions` allows everything, only on a disposable machine.
+- Claude, `acceptEdits` only: ask which test and build commands agents may run and put them in `allowed_tools`
+  (e.g. `"allowed_tools": ["Bash(python3 -m pytest:*)"]` inside `harness`); without them agents cannot run tests.
 - Codex: recommend `sandbox` `workspace-write` (no `permission_mode`); the board always enables network for agents.
 ```
 agent-board --project <slug> config set --json '{"harness": {"type": "claude", "permission_mode": "auto"}}' --dry-run

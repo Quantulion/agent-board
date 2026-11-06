@@ -187,7 +187,7 @@ def cmd_ask(args):
 
 
 def cmd_say(args):
-    body = {"author": _actor(), "text": args.text}
+    body = {"author": _user_actor(), "text": args.text}
     task = os.environ.get("AGENT_BOARD_TASK")
     if task:
         body["from_task"] = task

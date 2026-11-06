@@ -128,6 +128,7 @@ def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
     # arrange
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
 
     # act
     out = run_json(capsys, "say", "_project", "--text", "нужна помощь")
@@ -140,12 +141,26 @@ def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
 def test_say_without_task_env_does_not_escalate(srv, capsys, monkeypatch):
     # arrange
     monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
 
     # act
     out = run_json(capsys, "say", "_project", "--text", "просто так")
 
     # assert
     assert [e["type"] for e in out["events"]] == ["message_posted"]
+
+
+def test_say_without_actor_env_posts_as_user(srv, capsys, monkeypatch):
+    # arrange: человек в терминале
+    monkeypatch.delenv("AGENT_BOARD_ACTOR", raising=False)
+    monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)
+
+    # act
+    run_json(capsys, "say", "_project", "--text", "от пользователя")
+
+    # assert
+    msgs = run_json(capsys, "thread", "_project")["messages"]
+    assert msgs[-1]["author"] == "user" and msgs[-1]["text"] == "от пользователя"
 
 
 

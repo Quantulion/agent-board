@@ -217,6 +217,20 @@ def test_messages_authors(server):
     assert post(server, "/api/p/pay/threads/T-1/read").status == 200
 
 
+@pytest.mark.parametrize("body", [{"choice": 2, "comment": "ок"}, {"choice": "a", "comment": 5}, {"choice": ["a"]}])
+def test_answer__invalid_types__returns_400_and_keeps_question_open(server, body):
+    # arrange
+    add_task(server)
+    post(server, "/api/p/pay/tasks/T-1/questions", {"question": {"text": "Как?", "options": ["a", "b"]}})
+
+    # act
+    bad = post(server, "/api/p/pay/tasks/T-1/questions/q1/answer", body)
+
+    # assert
+    assert bad.status == 400
+    assert post(server, "/api/p/pay/tasks/T-1/questions/q1/answer", {"choice": "a", "comment": ""}).status == 200
+
+
 def test_questions_update_deps_and_answer(server):
     add_task(server)
     add_task(server, "T-2")

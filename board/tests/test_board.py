@@ -248,6 +248,22 @@ def test_answer_unknown_question_rejected(board):
         board.answer("A", "q9", None, "x")
 
 
+def test_answer_non_string_choice_rejected_without_changes(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_PROGRESS, "agent")
+    board.ask("A", Question(id="", text="1?"))
+
+    # act
+    with pytest.raises(ValueError):
+        board.answer("A", "q1", 2, "ок")
+
+    # assert: вопрос остался без ответа, повторный ответ возможен
+    assert board.snapshot()["tasks"][0]["questions"][0]["answer"] is None
+    assert board.store.read_thread("A") == []
+    board.answer("A", "q1", "x", "ок")
+
+
 def test_user_message_wakes_task_agent_and_project_message_wakes_project_agent(board):
     board.add_task(mk("A"), "user")
     board.set_stage("work", "user")
