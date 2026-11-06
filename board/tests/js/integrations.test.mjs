@@ -187,6 +187,11 @@ test('syncModel: ок, ошибка, пауза и ещё не было прох
   assert.equal(m({ at, ok: false, error: '401', paused: true }).text, 'Jira: на паузе');
   assert.equal(m(null).state, 'never');
   assert.equal(m({ at, ok: true, errors: [{ key: 'A', error: 'x' }] }).state, 'warn', 'ошибки отдельных задач видны');
+  const insecure = m({ at, ok: true, errors: [], warning: 'Трекер jira доступен по http без шифрования' });
+  assert.equal(insecure.state, 'warn', 'http без шифрования виден в индикаторе');
+  assert.equal(insecure.text, 'Jira · 30 с назад · без https');
+  assert.equal(insecure.warning, 'Трекер jira доступен по http без шифрования');
+  assert.equal(m({ at, ok: false, error: 'сеть', warning: 'http' }).state, 'err', 'ошибка важнее предупреждения');
   assert.equal(syncModel({ config: { ...cfg, stage: 'tracker' }, tracker_sync: null }, now), null, 'до стадии работы синхронизации нет');
   assert.equal(syncModel({ config: { stage: 'work', tracker: { type: 'none' } }, tracker_sync: null }, now), null);
 });

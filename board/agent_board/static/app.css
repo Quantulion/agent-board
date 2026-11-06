@@ -244,6 +244,7 @@ html, body { height: 100%; }
 .pop li .t { color: var(--faint); margin-left: auto; font-size: 11.5px; flex: none; }
 .pop .errbox { background: var(--err-bg); color: var(--err-fg); border: 1px solid var(--err-line); border-radius: 8px; padding: 9px 10px; font-size: 12.5px; }
 .pop .errbox code { font-family: var(--mono); font-size: 11.5px; }
+.pop .warnbox { background: var(--warn-bg); color: var(--warn-fg); border: 1px solid var(--warn-line); border-radius: 8px; padding: 9px 10px; font-size: 12.5px; }
 .pop label.demo { display: flex; gap: 8px; align-items: center; font-size: 12px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 9px; }
 
 .row2 { display: grid; grid-template-columns: minmax(320px, 1fr) auto; gap: 10px 28px; align-items: center; }

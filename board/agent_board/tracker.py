@@ -191,6 +191,21 @@ def validate_config(cfg: Any) -> None:
         raise ValueError("tracker.poll_seconds должен быть положительным числом секунд")
 
 
+LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")
+
+
+def insecure_warning(cfg: Any) -> Optional[str]:
+    """Предупреждение, если трекер на чужом хосте доступен по http без шифрования; иначе None."""
+    if not isinstance(cfg, dict):
+        return None
+    url = cfg.get("url") if cfg.get("type") == "jira" else cfg.get("api_url") if cfg.get("type") == "github" else None
+    parts = urllib.parse.urlsplit(url) if isinstance(url, str) else None
+    if parts is None or parts.scheme.lower() != "http" or (parts.hostname or "").lower() in LOCAL_HOSTS:
+        return None
+    return ("Трекер %s доступен по http без шифрования: токен или cookie уходят открытым текстом — "
+            "используйте https" % parts.hostname)
+
+
 # --- авторизация ---
 
 class _Auth:
@@ -594,13 +609,19 @@ def check(config) -> None:
 
 
 def check_access(board, actor: str) -> dict:
-    """Проверка доступа по запросу пользователя: {ok, error, kind}."""
+    """Проверка доступа по запросу пользователя: {ok, error, kind, warning}."""
     _require_user(actor, "Проверяет доступ к трекеру только пользователь")
+    config = board.store.load_config()
+    warning = insecure_warning(config.tracker)
     try:
-        check(board.store.load_config())
+        check(config)
     except TrackerError as e:
-        return {"ok": False, "error": str(e), "kind": e.kind}
-    return {"ok": True}
+        result = {"ok": False, "error": str(e), "kind": e.kind}
+    else:
+        result = {"ok": True}
+    if warning:
+        result["warning"] = warning
+    return result
 
 
 def create_issues(board, actor: str) -> dict:
@@ -830,7 +851,7 @@ class TrackerSync:
         interval = config.tracker.get("poll_seconds") or DEFAULT_POLL_SECONDS.get(config.tracker.get("type"), 30)
         previous = board.store.load_meta().get("tracker_sync") or {}
         state = {"at": _now_text(), "ok": True, "error": None, "paused": False, "unknown_statuses": [],
-                 "changed": [], "errors": []}
+                 "changed": [], "errors": [], "warning": insecure_warning(config.tracker)}
         try:
             self._sync_project(board, config, state)
             self._failures.pop(slug, None)

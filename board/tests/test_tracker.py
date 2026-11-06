@@ -634,3 +634,23 @@ def test_scrub__masks_json_escaped_and_url_encoded_forms():
     scrubbed = tracker.scrub(text, [tracker.Secret(secret)])
     # assert
     assert scrubbed == '{"t": "***"} | *** | ***'
+
+
+@pytest.mark.parametrize("cfg, warned", [
+    ({"type": "jira", "url": "https://jira.example.com"}, False),
+    ({"type": "jira", "url": "http://jira.example.com"}, True),
+    ({"type": "jira", "url": "HTTP://Jira.Example.com:8080/"}, True),
+    ({"type": "jira", "url": "http://localhost:8080"}, False),
+    ({"type": "jira", "url": "http://127.0.0.1:8080"}, False),
+    ({"type": "jira", "url": "http://[::1]:8080"}, False),
+    ({"type": "github", "repo": "o/n"}, False),
+    ({"type": "github", "repo": "o/n", "api_url": "http://ghe.example.com/api/v3"}, True),
+    ({"type": "none"}, False),
+])
+def test_insecure_warning__plain_http_to_remote_host(cfg, warned):
+    # act
+    warning = tracker.insecure_warning(cfg)
+    # assert
+    assert bool(warning) is warned
+    if warned:
+        assert "http" in warning and "https" in warning

@@ -47,6 +47,7 @@ export function syncModel(snapshot, now = Date.now()) {
   if (s.paused) return { state: 'paused', text: T.tracker.paused(info.name), ...base };
   if (!s.ok) return { state: 'err', text: T.tracker.err(info.name, rel), ...base };
   if (Array.isArray(s.errors) && s.errors.length) return { state: 'warn', text: T.tracker.warn(info.name, rel), ...base };
+  if (s.warning) return { state: 'warn', text: T.tracker.insecure(info.name, rel), warning: String(s.warning), ...base };
   return { state: 'ok', text: T.tracker.ok(info.name, rel), ...base };
 }
 
@@ -111,6 +112,7 @@ export function mountTrackerSync(ctx, store) {
     pop.replaceChildren(...[
       h('h4', null, T.tracker.syncTitle(m.name) + (m.host ? ' · ' + m.host : '')),
       s && s.error ? h('div', { class: 'errbox' }, String(s.error)) : null,
+      s && s.warning ? h('div', { class: 'warnbox', 'data-warning': '1' }, String(s.warning)) : null,
       rows.length ? h('dl', null, rows.map(([k, v]) => [h('dt', null, k), h('dd', null, v)])) : null,
       errors.length ? [h('h4', null, T.tracker.taskErrors),
         h('ul', null, errors.map(e => h('li', null, h('span', { class: 'mono' }, String(e.key || '')), h('span', null, String(e.error || '')))))] : null,
@@ -267,6 +269,7 @@ export function mountTrackerStage(ctx, store) {
       const info = trackerInfo(store.get().snapshot.config);
       if (res && res.ok) toast(T.tracker.checkOk(info && info.host));
       else toast(T.tracker.checkFailed + ((res && res.error) || ''), { error: true });
+      if (res && res.warning) toast(String(res.warning), { error: true });
     } catch (err) {
       toast(T.tracker.checkFailed + ((err && err.message) || String(err)), { error: true });
     } finally {

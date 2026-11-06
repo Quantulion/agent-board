@@ -1972,6 +1972,31 @@ def test_check__jira_anonymous_header__is_auth_error(server, jira):
     assert r["ok"] is False and r["kind"] == "auth"
 
 
+def test_check_and_sync__plain_http_remote_tracker__warn(server, jira, clock, monkeypatch):
+    # arrange: адрес поддельной Jira считается удалённым
+    from agent_board import tracker as tracker_module
+
+    monkeypatch.setattr(tracker_module, "LOCAL_HOSTS", ())
+    sync = sync_project(server, jira, clock)
+    # act
+    checked = post(server, "/api/p/pay/tracker/check", {"actor": "user"}).json()
+    sync.tick()
+    # assert
+    assert checked["ok"] is True and "https" in checked["warning"]
+    state = sync_state(server)
+    assert state["ok"] is True and "https" in state["warning"]
+
+
+def test_check_and_sync__localhost_tracker__no_warning(server, jira, clock):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    # act
+    checked = post(server, "/api/p/pay/tracker/check", {"actor": "user"}).json()
+    sync.tick()
+    # assert
+    assert checked == {"ok": True} and sync_state(server)["warning"] is None
+
+
 def test_sync__jira_rejects_batch__retries_per_key(server, jira, clock):
     # arrange
     sync = sync_project(server, jira, clock)

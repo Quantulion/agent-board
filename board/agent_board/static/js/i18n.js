@@ -198,6 +198,7 @@ export const T = {
     err: (name, rel) => name + ': ошибка' + (rel ? ' · ' + rel : ''),
     paused: name => name + ': на паузе',
     warn: (name, rel) => name + ' · ' + (rel || 'синхронизировано') + ' · есть ошибки',
+    insecure: (name, rel) => name + ' · ' + (rel || 'синхронизировано') + ' · без https',
     last: 'Последняя',
     result: 'Итог',
     resultOk: 'успешно',
