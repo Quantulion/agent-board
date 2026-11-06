@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentStateLine, describeFor, describeProposal, partsText, proposalSignature, proposalsTouching } from '../../agent_board/static/js/project.js';
+import { agentStateLine, describeFor, describeProposal, partsText, proposalOutcome, proposalSignature, proposalsTouching } from '../../agent_board/static/js/project.js';
 
 const tasks = new Map([
   ['PAY-104', { key: 'PAY-104', title: 'Переливка истории', status: 'in_progress' }],
@@ -129,4 +129,25 @@ test('describeFor: обработанное предложение сохран�
   assert.deepEqual(applied, before);
   assert.deepEqual(text(applied).slice(1), ['+ связь будет ждать PAY-109', '− связь больше не ждёт PAY-104']);
   assert.deepEqual(unseen.changes, [], 'без открытого состояния описание считается по текущему графу');
+});
+
+test('proposalOutcome: устаревшее предложение показывает итог с причиной, открытое — без итога', () => {
+  // arrange
+  const p = { id: 'p3', kind: 'add_task', payload: { task: { key: 'PAY-109' } } };
+  // act
+  const obsolete = proposalOutcome({ ...p, status: 'obsolete', obsolete_reason: 'exists' });
+  const unknownWhy = proposalOutcome({ ...p, status: 'obsolete', obsolete_reason: 'zzz' });
+  const open = proposalOutcome({ ...p, status: 'open' });
+  // assert
+  assert.deepEqual(obsolete, { status: 'obsolete', cls: 'muted', icon: 'x', text: 'Устарело: задача с этим ключом уже есть' });
+  assert.equal(unknownWhy.text, 'Устарело');
+  assert.equal(proposalOutcome({ ...p, status: 'applied' }).status, 'applied');
+  assert.equal(open, null);
+});
+
+test('proposalsTouching: устаревшее предложение задачу не затрагивает', () => {
+  // arrange
+  const proposals = [{ id: 'p1', kind: 'cancel_task', status: 'obsolete', obsolete_reason: 'cancelled', payload: { key: 'PAY-104' } }];
+  // act / assert
+  assert.deepEqual(proposalsTouching(proposals, 'PAY-104'), []);
 });

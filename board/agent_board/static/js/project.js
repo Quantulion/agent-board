@@ -164,20 +164,31 @@ function actions(ctx, p, d) {
   return [h('div', { class: 'pa-act' }, buttons), error];
 }
 
+// Итог обработанного предложения для истории; у открытого итога нет.
+export function proposalOutcome(p) {
+  const P = T.proposal;
+  if (p.status === 'applied') return { status: 'applied', cls: 'ok', icon: 'check', text: P.applied };
+  if (p.status === 'rejected') return { status: 'rejected', cls: 'muted', icon: 'x', text: P.rejected };
+  if (p.status === 'obsolete') {
+    const why = P.obsoleteWhy[p.obsolete_reason];
+    return { status: 'obsolete', cls: 'muted', icon: 'x', text: why ? P.obsolete + ': ' + why : P.obsolete };
+  }
+  return null;
+}
+
 // Предложение в панели «Проект»: открытое — с кнопками, обработанное — с итогом.
 export function proposalCard(ctx, p, byKey) {
   const d = describeFor(cacheFor(ctx.slug), p, byKey);
   const reason = str(p.reason).trim();
-  const status = p.status === 'applied' || p.status === 'rejected' ? p.status : 'open';
+  const outcome = proposalOutcome(p);
+  const status = outcome ? outcome.status : 'open';
   return h('div', { class: 'proposal ' + status, 'data-id': p.id },
     h('div', { class: 'ph' }, icon('spark'), T.proposal.header),
     h('div', { class: 'pb' },
       h('div', { class: 'pt' }, renderParts(ctx, d.title)),
       changeRows(ctx, d),
       reason ? h('div', { class: 'why' }, T.proposal.why + reason) : null,
-      status === 'open' ? actions(ctx, p, d)
-        : status === 'applied' ? h('div', { class: 'res ok' }, icon('check'), T.proposal.applied)
-          : h('div', { class: 'res muted' }, icon('x'), T.proposal.rejected)));
+      outcome ? h('div', { class: 'res ' + outcome.cls }, icon(outcome.icon), outcome.text) : actions(ctx, p, d)));
 }
 
 // Предложение в карточке задачи, которую оно затрагивает.

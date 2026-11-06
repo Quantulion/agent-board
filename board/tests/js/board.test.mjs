@@ -80,6 +80,7 @@ test('waitingForYou собирает все виды пунктов', () => {
       { id: 'p1', kind: 'add_task', payload: { task: { key: 'P-9' } }, reason: '', status: 'open' },
       { id: 'p2', kind: 'set_deps', payload: { key: 'P-2', deps: [] }, reason: '', status: 'rejected' },
       { id: 'p3', kind: 'cancel_task', payload: { key: 'P-1' }, reason: '', status: 'open' },
+      { id: 'p4', kind: 'add_task', payload: { task: { key: 'P-2' } }, reason: '', status: 'obsolete', obsolete_reason: 'exists' },
     ],
     project_agent: { state: 'error', turn_error: 'нет харнесса', parked: true },
   });
@@ -94,7 +95,7 @@ test('waitingForYou собирает все виды пунктов', () => {
     ['loop', 'P-4'],
     ['loop', null],
     ['blocker', 'P-8'],
-  ], 'нарушения правил — только на стадии разбивки; отменённые не ждут; остановку видно по флагу, а не по тексту');
+  ], 'нарушения правил — только на стадии разбивки; отменённые и устаревшее предложение не ждут; остановку видно по флагу, а не по тексту');
   assert.deepEqual(items[7].open, { type: 'project' });
   assert.equal(items[8].text, 'ждём доступ от DBA');
   assert.deepEqual(items[8].open, { type: 'card', key: 'P-8' });

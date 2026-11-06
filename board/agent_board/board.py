@@ -69,6 +69,8 @@ EVENT_TYPES: Dict[str, str] = {
     "proposal_created": "id",
     "proposal_applied": "id",
     "proposal_rejected": "id",
+    "proposal_obsolete": "id, reason (exists — задача с этим ключом уже есть, cancelled — задача отменена, "
+                         "missing — задачи нет) — предложение устарело",
     "turn_started": "key — раннер начал ход агента",
     "turn_finished": "key — ход агента завершён",
     "turn_failed": "key, error — ход агента завершился ошибкой",
@@ -364,6 +366,7 @@ class Board:
             events: List[Event] = [self._emit("task_added", {"key": task.key})]
             if task.key in ready_tasks(self.store.load_tasks(), self._chains()):
                 events.append(self._emit("agent_wake", {"key": task.key, "reason": "ready"}))
+            events.extend(self._retire_proposals())
             return events
 
     def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None) -> List[Event]:
@@ -388,6 +391,7 @@ class Board:
                     t.updated_at = self._clock()
                     self.store.save_task(t)
                     events.append(self._emit("deps_changed", {"key": dep_key, "deps": list(t.deps)}))
+                events.extend(self._retire_proposals())
 
             events.extend(self._unblocked(before, affected))
             if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
@@ -721,14 +725,19 @@ class Board:
             proposal = self._open_proposal(proposals, pid)
             # граф мог измениться с момента создания предложения
             affected = self._check_proposal(proposal.kind, proposal.payload)
-            if proposal.kind == "add_task":
-                events = self.add_task(new_task_from_dict(proposal.payload["task"]), "user")
-            elif proposal.kind == "set_deps":
-                events = self.set_deps(proposal.payload["key"], list(proposal.payload["deps"]), "user")
-            else:
-                events = self.transition(proposal.payload["key"], Status.CANCELLED, "user")
+            # помечаем применённым заранее, чтобы само действие не сочло предложение устаревшим
             proposal.status = "applied"
             self.store.save_proposals(proposals)
+            try:
+                if proposal.kind == "add_task":
+                    events = self.add_task(new_task_from_dict(proposal.payload["task"]), "user")
+                elif proposal.kind == "set_deps":
+                    events = self.set_deps(proposal.payload["key"], list(proposal.payload["deps"]), "user")
+                else:
+                    events = self.transition(proposal.payload["key"], Status.CANCELLED, "user")
+            except Exception:
+                self._reopen_proposal(pid)
+                raise
             events.append(self._emit("proposal_applied", {"id": pid}))
             text = "Применено предложение %s: %s" % (pid, self._describe_proposal(proposal))
             for thread in (PROJECT_THREAD, affected):
@@ -745,6 +754,51 @@ class Board:
                 self._emit("proposal_rejected", {"id": pid}),
                 self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "proposal_rejected"}),
             ]
+
+    def _reopen_proposal(self, pid: str) -> None:
+        proposals = self.store.load_proposals()
+        for p in proposals:
+            if p.id == pid:
+                p.status = "open"
+        self.store.save_proposals(proposals)
+
+    def _retire_proposals(self) -> List[Event]:
+        """Помечает устаревшими открытые предложения, которые на текущем графе уже не применить."""
+        proposals = self.store.load_proposals()
+        tasks = self.store.load_tasks()
+        keys = {k.lower(): t for k, t in tasks.items()}
+        events = []
+        for p in proposals:
+            if p.status != "open":
+                continue
+            reason = self._obsolete_reason(p, keys)
+            if reason:
+                p.status = "obsolete"
+                p.obsolete_reason = reason
+                events.append(self._emit("proposal_obsolete", {"id": p.id, "reason": reason}))
+        if events:
+            self.store.save_proposals(proposals)
+        return events
+
+    @staticmethod
+    def _obsolete_reason(proposal: Proposal, tasks_by_lower_key: Dict[str, Task]) -> str:
+        """Почему предложение уже не применить; пустая строка — ещё применимо."""
+        payload = proposal.payload if isinstance(proposal.payload, dict) else {}
+        if proposal.kind == "add_task":
+            task = payload.get("task")
+            key = task.get("key") if isinstance(task, dict) else None
+            if isinstance(key, str) and key.lower() in tasks_by_lower_key:
+                return "exists"
+            return ""
+        key = payload.get("key")
+        if not isinstance(key, str):
+            return ""
+        task = tasks_by_lower_key.get(key.lower())
+        if task is None or task.key != key:
+            return "missing"
+        if task.status == Status.CANCELLED:
+            return "cancelled"
+        return ""
 
     def _check_proposal(self, kind: str, payload: dict) -> str:
         """Проверяет предложение на текущем состоянии графа, возвращает ключ затронутой задачи."""
