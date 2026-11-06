@@ -321,3 +321,110 @@ def test_stop__then_detach__starts_again(home):
     r = run(["serve", "--detach", "--no-runner", "--no-tracker-sync"], home)
     # assert
     assert r.returncode == 0 and alive(discovery(home)["pid"])
+
+
+# --- fix round 1 ---
+
+class _FakeChild:
+    pid = 2 ** 22 + 777
+
+    def __init__(self, code):
+        self.code = code
+
+    def poll(self):
+        return self.code
+
+
+def _fake_popen(monkeypatch, lifecycle, popen):
+    import types
+
+    # подменяется только модуль в lifecycle: глобальный subprocess нужен фикстурам
+    monkeypatch.setattr(lifecycle, "subprocess", types.SimpleNamespace(
+        Popen=popen, DEVNULL=subprocess.DEVNULL, TimeoutExpired=subprocess.TimeoutExpired))
+
+
+def test_start_detached__child_lost_lock_race__waits_for_winner_discovery(home, monkeypatch):
+    # arrange
+    from agent_board import __version__, lifecycle
+
+    started = time.monotonic()
+    info = {"port": 1, "token": "t", "pid": 1, "version": __version__}
+    _fake_popen(monkeypatch, lifecycle, lambda *a, **k: _FakeChild(3))
+    monkeypatch.setattr(lifecycle, "live_server", lambda: info if time.monotonic() - started > 0.3 else None)
+    # act
+    result = lifecycle.start_detached(None, True, True)
+    # assert
+    assert result == {"url": "http://127.0.0.1:1/?token=t"}
+
+
+def test_start_detached__child_lost_race_winner_never_appears__fails(home, monkeypatch):
+    # arrange
+    from agent_board import lifecycle
+
+    _fake_popen(monkeypatch, lifecycle, lambda *a, **k: _FakeChild(3))
+    monkeypatch.setattr(lifecycle, "live_server", lambda: None)
+    monkeypatch.setattr(lifecycle, "START_WAIT_SECONDS", 0.3)
+    # act
+    result = lifecycle.start_detached(None, True, True)
+    # assert
+    assert result["code"] == 1
+
+
+def test_start_detached__agent_env__not_passed_to_server(home, monkeypatch):
+    # arrange
+    from agent_board import lifecycle
+
+    seen = {}
+
+    def fake_popen(cmd, **kwargs):
+        seen.update(kwargs["env"])
+        return _FakeChild(1)
+
+    for name in lifecycle.AGENT_ENV:
+        monkeypatch.setenv(name, "x")
+    monkeypatch.setenv("KEEP_ME", "1")
+    _fake_popen(monkeypatch, lifecycle, fake_popen)
+    monkeypatch.setattr(lifecycle, "START_WAIT_SECONDS", 0.3)
+    # act
+    lifecycle.start_detached(None, True, True)
+    # assert
+    assert seen["KEEP_ME"] == "1" and not set(lifecycle.AGENT_ENV) & set(seen)
+
+
+@pytest.mark.parametrize("command, expected", [
+    ("/usr/bin/python3 -m agent_board serve --port 1", True),
+    ("python3 -m agent_board --project x serve", False),
+    ("/usr/bin/python3 /opt/bin/agent-board serve", True),
+    ("/x/agent-board/node_modules/.bin/node /x/agent-board/node_modules/.bin/vite serve", False),
+    ("node /home/u/agent-board/ui-tests/node_modules/vite/bin/vite.js serve", False),
+    ("python3 -m agent_board status", False),
+])
+def test_is_board_server__command_line__strict_match(monkeypatch, command, expected):
+    # arrange
+    from agent_board import lifecycle
+
+    monkeypatch.setattr(lifecycle, "process_identity", lambda pid: {"started": "x", "command": command})
+    # act / assert
+    assert lifecycle._is_board_server(1) is expected
+
+
+def test_trim_log__start_lock_held__skipped(home):
+    # arrange
+    import fcntl
+
+    from agent_board import lifecycle
+
+    log = home / "server.log"
+    log.write_bytes((b"x" * 99 + b"\n") * (6 * 1024 * 1024 // 100))
+    size = log.stat().st_size
+    fd = os.open(str(home / "server.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        # act
+        lifecycle._trim_log_unlocked(log, home)
+        held = log.stat().st_size
+    finally:
+        os.close(fd)
+    lifecycle._trim_log_unlocked(log, home)
+    # assert
+    assert held == size and log.stat().st_size < size
