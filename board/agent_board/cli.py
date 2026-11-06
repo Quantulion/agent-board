@@ -37,6 +37,12 @@ def _actor() -> str:
     return os.environ.get("AGENT_BOARD_ACTOR") or "agent"
 
 
+def _user_actor() -> str:
+    """Актор команд пользователя: человек в терминале — пользователь, агенты запускаются с AGENT_BOARD_ACTOR
+    (в том числе пустым) и получают отказ доски."""
+    return os.environ.get("AGENT_BOARD_ACTOR", "user") or "agent"
+
+
 def _project(args) -> str:
     slug = args.project or os.environ.get("AGENT_BOARD_PROJECT")
     if not slug:
@@ -161,17 +167,15 @@ def cmd_thread(args):
 
 def cmd_add_task(args):
     task = _json_arg(args.json, "--json")
-    return _request("POST", _p(args, "tasks"), {"task": task, "actor": "user"})
+    return _request("POST", _p(args, "tasks"), {"task": task, "actor": _user_actor()})
 
 
 def cmd_stage(args):
-    # человек в терминале — пользователь; агенты запускаются с AGENT_BOARD_ACTOR (в том числе пустой) и получат отказ
-    actor = os.environ.get("AGENT_BOARD_ACTOR", "user") or "agent"
-    return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": actor})
+    return _request("POST", _p(args, "stage"), {"stage": args.stage, "actor": _user_actor()})
 
 
 def cmd_ship(args):
-    return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": "user"})
+    return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": _user_actor()})
 
 
 # заведение задач идёт синхронно: по запросу к трекеру на задачу и связь
@@ -179,7 +183,8 @@ TRACKER_TIMEOUT = 600
 
 
 def cmd_tracker(args):
-    result = _request("POST", _p(args, "tracker/" + args.action), {"actor": "user"}, timeout=TRACKER_TIMEOUT)
+    result = _request("POST", _p(args, "tracker/" + args.action), {"actor": _user_actor()},
+                      timeout=TRACKER_TIMEOUT)
     problems = [e["error"] for e in result.get("errors") or []]
     if args.action in ("check", "sync") and not result.get("ok"):
         problems.append(result.get("error") or "нет доступа к трекеру")

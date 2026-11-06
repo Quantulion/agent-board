@@ -380,17 +380,41 @@ def test_update_has_no_review_option():
         build_parser().parse_args(["update", "T-1", "--review-json", "{}"])
 
 
-def test_ship_sends_request_as_user_even_with_agent_actor_env(srv, capsys, monkeypatch):
+@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
+def test_ship_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, actor_env):
     # arrange
     srv.board_for("pay").update_config({"ship": {"command": "true"}})
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
     srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
     srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
+    # act
+    code, _, err = run(capsys, "ship", "T-1")
+    # assert
+    assert code == 1 and "пользователь" in err
+    assert srv.board_for("pay").store.load_tasks()["T-1"].ship is None
+
+
+def test_ship_sends_request_as_user_without_actor_env(srv, capsys):
+    # arrange
+    srv.board_for("pay").update_config({"ship": {"command": "true"}})
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
+    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
     # act
     result = run_json(capsys, "ship", "T-1")
     # assert
     assert [e["type"] for e in result["events"]] == ["ship_requested"]
+
+
+def test_add_task_by_project_agent_is_rejected(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    # act
+    code, _, err = run(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    # assert
+    assert code == 1 and "предложения" in err
+    assert srv.board_for("pay").store.load_tasks() == {}
 
 
 def test_ship_without_command_exits_1_with_reason(srv, capsys):
@@ -496,3 +520,20 @@ def test_tracker_sync_failure_exits_1(srv, capsys, fake_jira):
     code, _, err = run(capsys, "tracker", "sync")
     # assert
     assert code == 1 and "JIRA_TOKEN" in err
+
+
+@pytest.mark.parametrize("action", ["create", "check", "sync"])
+@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
+def test_tracker_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, fake_jira, action, actor_env):
+    # arrange
+    with_tracker(srv, fake_jira)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").set_stage("tracker", "user")
+    if action == "sync":
+        srv.board_for("pay").set_stage("work", "user")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
+    # act
+    code, _, err = run(capsys, "tracker", action)
+    # assert
+    assert code == 1 and "пользователь" in err
+    assert fake_jira.requests == []
