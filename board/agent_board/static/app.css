@@ -361,7 +361,7 @@ html, body { height: 100%; }
 .proposal .res { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .proposal .res svg { width: 14px; height: 14px; }
 .proposal.applied { border-color: color-mix(in srgb, var(--s-done) 45%, var(--line)); }
-.proposal.rejected { opacity: .7; }
+.proposal.rejected, .proposal.obsolete { opacity: .7; }
 
 /* Карточка задачи (выезжающая панель) */
 .dscrim { position: fixed; inset: 0; background: var(--overlay); z-index: 20; animation: fade .15s; }

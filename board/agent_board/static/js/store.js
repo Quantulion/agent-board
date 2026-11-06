@@ -6,7 +6,7 @@ import { T } from './i18n.js';
 export const EVENT_TYPES = [
   'task_added', 'status_changed', 'task_updated', 'deps_changed', 'task_unblocked', 'agent_stop',
   'agent_wake', 'question_asked', 'question_answered', 'message_posted', 'thread_read',
-  'proposal_created', 'proposal_applied', 'proposal_rejected', 'turn_started', 'turn_finished',
+  'proposal_created', 'proposal_applied', 'proposal_rejected', 'proposal_obsolete', 'turn_started', 'turn_finished',
   'turn_failed', 'task_committed', 'lock_waiting', 'lock_acquired', 'lock_released', 'stage_changed',
   'project_agent_changed', 'review_requested', 'ship_requested', 'ship_started', 'ship_finished',
   'tracker_created', 'tracker_synced', 'config_changed', 'config_migrated',

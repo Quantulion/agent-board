@@ -248,6 +248,8 @@ def _event_line(e: Event) -> Optional[str]:
         return "proposal %s applied" % d.get("id", "?")
     if t == "proposal_rejected":
         return "proposal %s rejected" % d.get("id", "?")
+    if t == "proposal_obsolete":
+        return "proposal %s obsolete: %s" % (d.get("id", "?"), d.get("reason", ""))
     if t == "turn_failed":
         return "%s: agent turn FAILED: %s" % (k, str(d.get("error", "")).strip()[:200])
     if t == "task_added":

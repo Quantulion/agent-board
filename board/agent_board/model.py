@@ -135,6 +135,8 @@ class Proposal(_Serializable):
     reason: str
     status: str = "open"
     at: str = ""
+    # почему предложение устарело: exists, cancelled или missing
+    obsolete_reason: str = ""
 
 
 @dataclass

@@ -216,10 +216,18 @@ try {
   results.historySummary = await page.$eval('.dock .phistory summary', el => el.textContent);
   results.rejectedStillOnGraph = await page.$eval('g.node[data-key="PAY-112"]', el => !el.classList.contains('dim'));
 
-  // ошибка сервера при применении — внутри блока, кнопки снова активны
+  // задачу с тем же ключом завели вручную — предложение само уходит в историю как устаревшее
   await post('proposals', { kind: 'add_task', reason: 'Профиль нагрузки после переключения.', payload: { task: { key: 'PAY-116', title: 'Профиль нагрузки', kind: 'research' } } });
   await page.waitForFunction(() => document.querySelectorAll('.dock .popen .proposal').length === 1, { timeout: 10000 });
   cli('add-task', '--json', JSON.stringify({ key: 'PAY-116', title: 'Уже заведена вручную' }));
+  await page.waitForFunction(() => document.querySelectorAll('.dock .popen .proposal').length === 0
+    && document.querySelectorAll('.dock .phist .proposal.obsolete').length === 1, { timeout: 10000 });
+  results.obsoleteResult = await page.$eval('.dock .phist .proposal.obsolete .res', el => el.textContent);
+
+  // ошибка сервера при применении — внутри блока, кнопки снова активны
+  await post('proposals', { kind: 'set_deps', reason: 'Профиль нагрузки после отключения записи.', payload: { key: 'PAY-116', deps: ['PAY-112'] } });
+  await page.waitForFunction(() => document.querySelectorAll('.dock .popen .proposal').length === 1, { timeout: 10000 });
+  cli('deps', 'PAY-112', '--json', JSON.stringify(['PAY-111', 'PAY-116']));
   await applyIn('PAY-116');
   await page.waitForSelector('.dock .popen .proposal .ferr:not([hidden])', { timeout: 10000 });
   results.applyError = await page.$eval('.dock .popen .proposal .ferr', el => el.textContent);
@@ -420,7 +428,7 @@ const ok = results.proposalTitles.length === 3 && results.projectBtnPressed === 
   && results.hoverEdges.join() === 'PAY-103>PAY-106,PAY-104>PAY-106,PAY-106>PAY-107,PAY-106>PAY-111'
   && results.hashAfterNode === '#/p/pay?task=PAY-107' && results.cardNote.includes('PAY-107: зависимости → PAY-106, PAY-105')
   && results.edgeFromCard && results.newNodeEdge && !results.historyOpen && results.historySummary.endsWith('· 3') && results.rejectedStillOnGraph
-  && results.applyError.includes('уже существует') && results.applyEnabledAfterError && results.projectMessage
+  && results.obsoleteResult.includes('Устарело: задача с этим ключом уже есть') && results.applyError.includes('цикл') && results.applyEnabledAfterError && results.projectMessage
   && results.suggestedKey === 'PAY-117' && results.titleError === 'Укажите заголовок' && results.pickerVisible.join() === 'PAY-109'
   && results.preview.includes('ждёт PAY-109') && results.depsServerError.includes('PAY-999')
   && results.newTaskHash === '#/p/pay?task=PAY-117' && results.modalClosed && results.newTaskOnGraph

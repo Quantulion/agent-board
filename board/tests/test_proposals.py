@@ -183,3 +183,97 @@ def test_propose_add_task_accepts_all_creatable_fields(board):
     # assert
     b = board.store.load_tasks()["B"]
     assert (b.kind, b.estimate, b.deps, b.status) == ("research", 2, ["A"], Status.NOT_STARTED)
+
+
+def _proposal(board, pid):
+    return next(p for p in board.snapshot()["proposals"] if p["id"] == pid)
+
+
+def test_apply_add_task_marks_duplicate_key_proposal_obsolete(board):
+    # arrange
+    board.propose("add_task", _task_payload("B"), "первая версия")
+    board.propose("add_task", _task_payload("B"), "исправленная версия")
+
+    # act
+    ev = board.apply_proposal("p2")
+
+    # assert
+    assert dict(type="proposal_obsolete", id="p1", reason="exists") in flat(ev)
+    assert (_proposal(board, "p1")["status"], _proposal(board, "p1")["obsolete_reason"]) == ("obsolete", "exists")
+    assert _proposal(board, "p2")["status"] == "applied"
+    with pytest.raises(ValueError):
+        board.apply_proposal("p1")
+
+
+def test_add_task_by_user_marks_proposal_with_same_key_obsolete_case_insensitive(board):
+    # arrange
+    board.propose("add_task", _task_payload("b"), "")
+
+    # act
+    board.add_task(mk("B"), "user")
+
+    # assert
+    assert _proposal(board, "p1")["status"] == "obsolete"
+
+
+def test_cancel_marks_set_deps_and_cancel_proposals_for_task_obsolete(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B"), "user")
+    board.propose("set_deps", {"key": "A", "deps": ["B"]}, "")
+    board.propose("cancel_task", {"key": "A"}, "")
+    board.propose("cancel_task", {"key": "B"}, "")
+
+    # act
+    ev = board.transition("A", Status.CANCELLED, "user")
+
+    # assert
+    assert [e for e in flat(ev) if e["type"] == "proposal_obsolete"] == [
+        dict(type="proposal_obsolete", id="p1", reason="cancelled"),
+        dict(type="proposal_obsolete", id="p2", reason="cancelled"),
+    ]
+    assert _proposal(board, "p3")["status"] == "open"
+
+
+def test_apply_cancel_task_marks_other_proposals_for_task_obsolete(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.propose("cancel_task", {"key": "A"}, "")
+    board.propose("set_deps", {"key": "A", "deps": []}, "")
+
+    # act
+    board.apply_proposal("p1")
+
+    # assert
+    assert _proposal(board, "p1")["status"] == "applied"
+    assert (_proposal(board, "p2")["status"], _proposal(board, "p2")["obsolete_reason"]) == ("obsolete", "cancelled")
+
+
+def test_proposal_for_deleted_task_becomes_obsolete_on_next_graph_change(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.propose("set_deps", {"key": "A", "deps": []}, "")
+    (board.store.root / "tasks" / "A.json").unlink()
+
+    # act
+    board.add_task(mk("C"), "user")
+
+    # assert
+    assert (_proposal(board, "p1")["status"], _proposal(board, "p1")["obsolete_reason"]) == ("obsolete", "missing")
+
+
+def test_failed_apply_reopens_proposal(board, monkeypatch):
+    # arrange
+    board.propose("add_task", _task_payload("B"), "")
+
+    def boom(*args, **kwargs):
+        raise RuntimeError("сбой записи")
+
+    monkeypatch.setattr(board, "add_task", boom)
+
+    # act
+    with pytest.raises(RuntimeError):
+        board.apply_proposal("p1")
+
+    # assert
+    assert _proposal(board, "p1")["status"] == "open"
