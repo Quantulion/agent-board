@@ -792,3 +792,25 @@ def test_config_schema__project_brief__does_not_claim_decomposition_rules(tmp_ho
     schema = _schema(capsys, monkeypatch)
     # assert
     assert "decomposition" not in schema["project_brief"]["description"].lower()
+
+
+def test_deps__existing_task__replaces_dependencies(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-3", "title": "c", "deps": ["T-1"]}')
+    # act
+    run_json(capsys, "deps", "T-3", "--json", '["T-2"]')
+    # assert
+    assert run_json(capsys, "show", "T-3")["deps"] == ["T-2"]
+
+
+def test_deps__cycle__rejected_with_exit_code_1(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b", "deps": ["T-1"]}')
+    # act
+    code, _, err = run(capsys, "deps", "T-1", "--json", '["T-2"]')
+    # assert
+    assert code == 1 and "цикл" in err
+    assert run_json(capsys, "show", "T-1")["deps"] == []
