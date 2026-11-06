@@ -15,6 +15,7 @@ class ProjectConfig(_Serializable):
     slug: str
     title: str
     chains: bool = True
+    auto_approve: bool = False
     max_agents: int = 3
     language: str = "ru"
     repos: List[dict] = field(default_factory=list)
@@ -228,10 +229,16 @@ def _check_chains(config: ProjectConfig) -> None:
         raise ValueError(msg("config.chains"))
 
 
+def _check_auto_approve(config: ProjectConfig) -> None:
+    if not isinstance(config.auto_approve, bool):
+        raise ValueError(msg("config.auto_approve"))
+
+
 # полные проверки каждого поля, которое задаёт пользователь (repos проверяются отдельно — с учётом прежних)
 FIELD_CHECKS = {
     "title": lambda c: _text(c.title, "title", required=True),
     "chains": _check_chains,
+    "auto_approve": _check_auto_approve,
     "max_agents": lambda c: _positive_int(c.max_agents, "max_agents"),
     "global_max_agents": lambda c: _positive_int(c.global_max_agents, "global_max_agents"),
     "language": lambda c: _text(c.language, "language", required=True),
@@ -275,6 +282,7 @@ def validate_structure(config: ProjectConfig) -> None:
     if not isinstance(config.title, str):
         raise ValueError(msg("config.string", name="title"))
     _check_chains(config)
+    _check_auto_approve(config)
     _positive_int(config.max_agents, "max_agents")
     _positive_int(config.global_max_agents, "global_max_agents")
     for name in ("language", "agent_rules", "project_brief", "decomposition_rules", "branch_template"):

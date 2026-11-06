@@ -212,6 +212,9 @@ export function mountBoard(root, store, ctx) {
 
   const title = h('h1', null, h('span', { class: 'skel title' }));
   const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
+  // ревью отключено настройкой auto_approve: пометка видна всё время, пока режим включён
+  const autoApprove = h('span', { class: 'chip q auto-approve', role: 'note', hidden: true, title: T.autoApproveHint },
+    icon('warn'), T.autoApprove);
   const stepper = h('div', { class: 'stepper', 'aria-label': T.stageAria });
   const stageGo = h('span', { class: 'stage-go', hidden: true });
   const syncText = h('span');
@@ -280,7 +283,7 @@ export function mountBoard(root, store, ctx) {
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, h('div', { class: 'ptl' }, title, settingsButton(ctx)), sub),
+        h('div', { class: 'proj' }, h('div', { class: 'ptl' }, title, settingsButton(ctx), autoApprove), sub),
         stepper, stageGo, h('span', { class: 'spacer' }), trackerSync.el, sync, projectBtn, ctx.themeButton()),
       h('div', { class: 'row2' },
         h('div', { class: 'progress' }, h('div', { class: 'ptxt' }, doneText, restText), bar, pills),
@@ -562,6 +565,7 @@ export function mountBoard(root, store, ctx) {
     document.title = cfg.title + ' — ' + T.appName;
     title.textContent = cfg.title;
     sub.textContent = T.projectSub((cfg.repos || []).length, cfg.max_agents, cfg.chains);
+    autoApprove.hidden = cfg.auto_approve !== true;
     paintStepper(stepper, cfg);
     paintStageAction(stageGo, ctx, snap);
 

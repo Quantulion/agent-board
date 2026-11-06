@@ -4,6 +4,7 @@
 const RU_HELP = {
   title: 'Название проекта на доске.',
   chains: 'Зависимая задача стартует, как только её зависимость одобрена, — от ветки зависимости; выключено — только после «Готово».',
+  auto_approve: 'Задача кода одобряется сразу, как агент переводит её на ревью: без раунда ревью — коммит, перенос зависимых и отправка по ship.on_approve, как при одобрении пользователем. Исследования не одобряются автоматически.',
   max_agents: 'Сколько ходов агентов одновременно идёт в этом проекте.',
   global_max_agents: 'Сколько ходов агентов одновременно идёт на всём сервере.',
   language: 'Язык интерфейса и сообщений агентов (например, ru, en).',
@@ -255,6 +256,8 @@ const RU = {
   doneOf: (done, total) => done + ' из ' + total + ' готово',
   progressRest: (shipped, working) => '· ещё ' + shipped + ' ' + plural(shipped, ['одобрена или отправлена', 'одобрены или отправлены', 'одобрены или отправлены'])
     + ' · ' + working + ' в работе у агентов',
+  autoApprove: 'Ревью выключено',
+  autoApproveHint: 'Включено auto_approve: задачи кода одобряются и коммитятся сразу, как агент переводит их на ревью, без раунда ревью.',
   projectSub: (repos, limit, chains) => repos + ' ' + plural(repos, ['репозиторий', 'репозитория', 'репозиториев'])
     + ' · лимит ' + limit + ' ' + plural(limit, ['агент', 'агента', 'агентов'])
     + ' · цепочки веток ' + (chains ? 'включены' : 'выключены'),
@@ -403,7 +406,7 @@ const RU = {
     jsonHint: 'Значения в формате JSON; перед сохранением их проверяет сервер.',
     labels: {
       title: 'Название', language: 'Язык', max_agents: 'Агентов в проекте', global_max_agents: 'Агентов на сервере',
-      chains: 'Цепочки задач', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
+      chains: 'Цепочки задач', auto_approve: 'Автоодобрение', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
       agent_rules: 'Правила для агентов', decomposition_rules: 'Правила разбивки', repos: 'Репозитории',
       tracker: 'Трекер', review: 'Ревью', ship: 'Отправка в ревью', harness: 'CLI агентов', resources: 'Общие ресурсы',
       links: 'Ссылки',
@@ -769,6 +772,8 @@ const EN = {
   estimate: n => String(n) + ' d',
   doneOf: (done, total) => done + ' of ' + total + ' done',
   progressRest: (shipped, working) => '· ' + shipped + ' more approved or shipped · ' + working + ' in progress with agents',
+  autoApprove: 'Review off',
+  autoApproveHint: 'auto_approve is on: code tasks are approved and committed as soon as the agent moves them to review, with no review round.',
   projectSub: (repos, limit, chains) => count(repos, 'repository', 'repositories')
     + ' · limit ' + count(limit, 'agent')
     + ' · branch chains ' + (chains ? 'on' : 'off'),
@@ -913,7 +918,7 @@ const EN = {
     jsonHint: 'Values in JSON; the server checks them before saving.',
     labels: {
       title: 'Title', language: 'Language', max_agents: 'Agents in project', global_max_agents: 'Agents on server',
-      chains: 'Task chains', branch_template: 'Branch template', project_brief: 'Project brief',
+      chains: 'Task chains', auto_approve: 'Auto-approve', branch_template: 'Branch template', project_brief: 'Project brief',
       agent_rules: 'Agent rules', decomposition_rules: 'Decomposition rules', repos: 'Repositories',
       tracker: 'Tracker', review: 'Review', ship: 'Ship to review', harness: 'Agent CLI', resources: 'Shared resources',
       links: 'Links',

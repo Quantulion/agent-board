@@ -1,5 +1,6 @@
 // Настройки проекта: окно открывается из шапки, простое и составное поля сохраняются и видны в `config get`,
 // ошибка проверки на сервере показывается у поля, а введённое остаётся в форме и ничего не записывается.
+// Включённое автоодобрение помечается в шапке проекта.
 // Запуск из корня репозитория: node ui-tests/settings.mjs
 import path from 'node:path';
 import puppeteer from 'puppeteer';
@@ -60,13 +61,21 @@ try {
     && form.fields.length === schemaNames.length && schemaNames.every(n => form.fields.includes(n)) ? 'ok' : form;
   await page.screenshot({ path: path.join(out, 'settings-form.png') });
 
-  // сохранение простого и составного поля
+  // сохранение простого, логического и составного поля
+  const markHidden = () => page.$eval('.row1 .ptl .auto-approve', el => el.hidden);
+  const markBefore = await markHidden();
   await typeInto(page, '#st-max_agents', '5');
+  await page.click('#st-auto_approve');
   await typeInto(page, '#st-links', JSON.stringify(LINKS, null, 2));
   await (await saveButton(page)).click();
   await page.waitForFunction(() => !document.querySelector('.modal.settingsmodal'), { timeout: 10000 });
   const saved = configGet();
-  results.saved = saved.max_agents === 5 && JSON.stringify(saved.links) === JSON.stringify(LINKS) ? 'ok' : saved;
+  results.saved = saved.max_agents === 5 && saved.auto_approve === true
+    && JSON.stringify(saved.links) === JSON.stringify(LINKS) ? 'ok' : saved;
+  await page.waitForFunction(() => !document.querySelector('.row1 .auto-approve').hidden, { timeout: 10000 })
+    .catch(() => {});
+  results.autoApproveMark = markBefore === true && !(await markHidden()) ? 'ok' : { markBefore };
+  await page.screenshot({ path: path.join(out, 'settings-auto-approve.png') });
 
   // ошибка JSON ловится до отправки
   await openSettings(page);
@@ -99,7 +108,7 @@ try {
   results.serverErrorText = await fieldError(page, 'repos');
 
   results.errors = errors;
-  ok = ['form', 'saved', 'reopened', 'jsonError', 'serverError'].every(k => results[k] === 'ok') && !errors.length;
+  ok = ['form', 'saved', 'autoApproveMark', 'reopened', 'jsonError', 'serverError'].every(k => results[k] === 'ok') && !errors.length;
 } catch (e) {
   results.exception = String(e && e.stack || e);
 } finally {

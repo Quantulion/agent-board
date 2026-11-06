@@ -1271,3 +1271,52 @@ def test_set_deps__task_agent__rejected(board):
     with pytest.raises(PermissionError):
         board.set_deps("B", ["A"], "agent")
     assert board.snapshot()["tasks"][1]["deps"] == []
+
+
+def test_auto_approve__agent_moves_code_task_to_review__approved_by_system_with_note(board):
+    # arrange
+    board.update_config({"auto_approve": True})
+    board.add_task(mk("A"), "user")
+    board.add_task(mk("B", deps=["A"]), "user")
+    board.update_task("B", "system", {"session_id": "s1"})
+    # act
+    ev = flat(board.transition("A", Status.IN_REVIEW, "agent"))
+    # assert
+    assert dict(type="status_changed", key="A", to="approved", actor="system", auto=True,
+                **{"from": "in_review"}) in ev
+    assert dict(type="agent_wake", key="B", reason="rebase", **{"from": "A"}) in ev
+    assert board.store.load_tasks()["A"].status == Status.APPROVED
+    texts = [m.text for m in board.store.read_thread("A") if m.author == "system"]
+    assert "Одобрено автоматически (auto_approve)" in texts
+
+
+def test_auto_approve__research_task__stays_in_review(board):
+    # arrange
+    board.update_config({"auto_approve": True})
+    board.add_task(mk("R", kind="research"), "user")
+    # act
+    ev = board.transition("R", Status.IN_REVIEW, "agent")
+    # assert
+    assert [e.type for e in ev] == ["status_changed"]
+    assert board.store.load_tasks()["R"].status == Status.IN_REVIEW
+
+
+def test_auto_approve__disabled__agent_review_stays_in_review(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    ev = board.transition("A", Status.IN_REVIEW, "agent")
+    # assert
+    assert [e.type for e in ev] == ["status_changed"]
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+
+
+@pytest.mark.parametrize("actor", ["user", "system", "tracker"])
+def test_auto_approve__review_set_not_by_agent__not_approved(board, actor):
+    # arrange: возврат на ревью после неудачного коммита делает system — повторного одобрения быть не должно
+    board.update_config({"auto_approve": True})
+    board.add_task(mk("A"), "user")
+    # act
+    board.transition("A", Status.IN_REVIEW, actor)
+    # assert
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW

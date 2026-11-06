@@ -456,10 +456,10 @@ class Runner:
                 self._unpark(k)
                 if d.get("to") == Status.CANCELLED.value:
                     self._cancel_ship(k)
-                if d.get("to") == Status.APPROVED.value:
-                    # коммитится только законченная работа: идущий ход останавливаем до коммита
-                    self._interrupt_turn(k)
-                    self._commit(slug, k[1])
+            if d.get("to") == Status.APPROVED.value and (d.get("actor") == "user" or d.get("auto") is True):
+                # коммитится только законченная работа: идущий ход останавливаем до коммита
+                self._interrupt_turn(k)
+                self._commit(slug, k[1])
             # одобренная задача копила причины без ходов: после возврата из одобрения они доставляются;
             # при возврате в работу следом придёт пробуждение returned, и всё уйдёт одним ходом
             returned = d.get("actor") in ("user", "tracker") and d.get("to") == Status.IN_PROGRESS.value \

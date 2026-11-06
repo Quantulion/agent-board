@@ -108,7 +108,7 @@ Examples to offer:
 - GitHub: `git push -u origin {branch} && gh pr create --base {base} --head {branch} --title {title} --body ''`
 - Own script: `/abs/path/ship.sh {key} {branch} {base}`
 
-No secrets in the command (it is stored in the settings). Default: none. Ask about `on_approve` (default false).
+No secrets in the command (it is stored in the settings). Default: none. Ask about `on_approve` (default false). Set `auto_approve` (default false, skips code review) only on the user's request.
 ```
 agent-board --project <slug> config set --json '{"ship": {"command": "/abs/path/ship.sh {key} {branch} {base}", "timeout": 600}}' --dry-run
 ```
