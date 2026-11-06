@@ -275,3 +275,23 @@ cd ui-tests && npm install && npm test
 - `decomposition` — страница разбивки.
 
 Карточка задачи открывается по адресу `#/p/<slug>?task=<KEY>`; ширина панели хранится в `localStorage`, черновики сообщений и ответов на вопросы — в `sessionStorage`. Вид доски (колонки или граф) и свёрнутость панели «Проект» тоже хранятся в `localStorage`.
+
+## Публикация
+
+Скрипт выгружает текущее дерево (отслеживаемые и новые неигнорируемые файлы, без `.superpowers/`) в новый репозиторий одним коммитом. Автор коммита задаётся только параметрами, настройки git машины не используются; на сервер скрипт ничего не отправляет:
+
+```bash
+.venv/bin/python -m pytest -q board/tests/test_publishability.py   # нет внутренних названий и личных путей
+python3 scripts/export-repo.py ../agent-board-public \
+    --author-name "Quantulion" --author-email "<id>+Quantulion@users.noreply.github.com"
+```
+
+Почту для коммита удобно брать служебную от GitHub (Settings → Emails → «Keep my email addresses private»): она не раскрывает настоящий адрес. Адрес репозитория в `.claude-plugin/plugin.json` и `marketplace.json` (`homepage`, `repository`) должен совпадать с тем, что создан на GitHub.
+
+Отправка — вручную: создать на GitHub пустой репозиторий `agent-board` (без README и лицензии) и выполнить
+
+```bash
+cd ../agent-board-public
+git remote add origin git@github.com:Quantulion/agent-board.git
+git push -u origin main
+```
