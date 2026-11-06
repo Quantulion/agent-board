@@ -331,8 +331,10 @@ def _parse_time(value) -> Optional[datetime]:
 def prune_review_data(store, now: datetime, keep_days: int = REVIEW_DATA_KEEP_DAYS, skip=()) -> List[str]:
     """Удаляет данные ревью crit у задач, закрытых (done/cancelled) больше keep_days дней назад; skip — ключи задач,
     которые не трогать. Возвращает ключи задач, чьи данные удалены."""
-    reviews = Path(store.root) / "crit" / "reviews"
-    if not reviews.is_dir():
+    crit = Path(store.root) / "crit"
+    reviews = crit / "reviews"
+    sessions = crit / "sessions"
+    if not reviews.is_dir() and not sessions.is_dir():
         return []
     candidates = {}
     for key, task in store.load_tasks().items():
@@ -341,7 +343,7 @@ def prune_review_data(store, now: datetime, keep_days: int = REVIEW_DATA_KEEP_DA
                 or not _SESSION.match(session) or ".." in session:
             continue
         data = reviews / session
-        if data.is_dir():
+        if data.is_dir() or _session_files(sessions, session):
             candidates[key] = (data, task)
     if not candidates:
         return []
@@ -356,6 +358,17 @@ def prune_review_data(store, now: datetime, keep_days: int = REVIEW_DATA_KEEP_DA
         if moment is None or now - moment < timedelta(days=keep_days):
             continue
         shutil.rmtree(str(data), ignore_errors=True)
-        if not data.exists():
+        files = _session_files(sessions, task.review["session"])
+        for path in files:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+        if not data.exists() and not any(p.exists() for p in files):
             removed.append(key)
     return removed
+
+
+def _session_files(sessions: Path, session: str) -> List[Path]:
+    """Существующие служебные файлы сессии crit (состояние и лог)."""
+    return [p for p in (sessions / (session + ".json"), sessions / (session + ".log")) if p.exists()]

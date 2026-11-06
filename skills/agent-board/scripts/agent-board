@@ -1,0 +1,27 @@
+#!/bin/sh
+# Wrapper around the agent-board CLI: finds the repository relative to itself, checks Python, runs the module.
+set -e
+
+script="$0"
+while [ -h "$script" ]; do
+    dir=$(cd -P "$(dirname "$script")" && pwd)
+    link=$(readlink "$script")
+    case "$link" in
+        /*) script="$link" ;;
+        *) script="$dir/$link" ;;
+    esac
+done
+here=$(cd -P "$(dirname "$script")" && pwd)
+repo=$(cd -P "$here/../../.." && pwd)
+
+python="${AGENT_BOARD_PYTHON:-python3}"
+if ! command -v "$python" >/dev/null 2>&1; then
+    echo "agent-board: $python not found; install Python 3.9+ or set AGENT_BOARD_PYTHON" >&2
+    exit 127
+fi
+if ! "$python" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)' >/dev/null 2>&1; then
+    echo "agent-board: Python 3.9+ is required ($python is older); set AGENT_BOARD_PYTHON to a newer interpreter" >&2
+    exit 127
+fi
+
+exec env PYTHONPATH="$repo/board${PYTHONPATH:+:$PYTHONPATH}" "$python" -m agent_board "$@"

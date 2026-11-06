@@ -1087,3 +1087,24 @@ def test_set_config__outdated_value_resent_unchanged__is_accepted(board):
     result = board.set_config("user", {"ship": {"command": 'git push "{branch}"', "timeout": 600}, "max_agents": 2})
     # assert
     assert result["saved"] is True and board.store.load_config().max_agents == 2
+
+
+def test_legacy_ship_command__save_fails__board_still_works(tmp_home, monkeypatch, capsys):
+    # arrange
+    import json
+
+    store = ProjectStore("pay")
+    store.create(ProjectConfig(slug="pay", title="Платежи"))
+    raw = json.loads((store.root / "project.json").read_text(encoding="utf-8"))
+    raw["ship_command"] = "git push origin {branch}"
+    (store.root / "project.json").write_text(json.dumps(raw), encoding="utf-8")
+
+    def broken(*_args, **_kwargs):
+        raise OSError("read-only")
+
+    monkeypatch.setattr(store, "save_config", broken)
+    # act
+    board = Board(store, clock=lambda: NOW)
+    # assert
+    assert store.load_config().ship["command"] == "git push origin {branch}"
+    assert board.snapshot()["tasks"] == [] and "read-only" in capsys.readouterr().err

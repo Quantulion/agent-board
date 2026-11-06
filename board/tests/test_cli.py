@@ -603,3 +603,31 @@ def test_config_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, argv,
     # assert
     assert code == 1 and "пользователь" in err
     assert srv.board_for("pay").store.load_config().max_agents == 3
+
+
+def test_version__prints_package_version(tmp_home, capsys):
+    # act
+    code, out, _ = run(capsys, "version")
+    # assert
+    from agent_board import __version__
+
+    assert code == 0 and out.strip() == __version__
+
+
+def test_status_without_arguments__running_server__reports_project(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    # act
+    report = run_json(capsys, "status", "--json")
+    # assert
+    assert report["server"]["running"] is True and report["server"]["pid"] == os.getpid()
+    assert report["projects"] == [{"slug": "pay", "title": "Платежи", "stage": "decomposition", "tasks": 1}]
+
+
+def test_server_discovery__contains_version(srv):
+    # arrange
+    from agent_board import __version__
+    from agent_board.server import read_discovery
+
+    # assert
+    assert read_discovery()["version"] == __version__

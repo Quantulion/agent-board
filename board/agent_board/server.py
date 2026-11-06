@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import tracker
+from . import __version__, tracker
 from .board import Board, ConfigConflict, new_task_from_dict
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
@@ -610,7 +610,8 @@ class BoardServer:
             thread.start()
             self._thread = thread
             path = discovery_path()
-            atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid()})
+            atomic_write_json(path, {"port": self.port, "token": self.token, "pid": os.getpid(),
+                                      "version": __version__})
             os.chmod(str(path), 0o600)
             if self._with_runner:
                 from .runner import Runner

@@ -14,6 +14,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_board import __version__
 from agent_board.board import Board
 from agent_board.config import ProjectConfig
 from agent_board import server as server_mod
@@ -348,7 +349,7 @@ def test_discovery_file_written_and_removed(tmp_home):
     srv.start()
     path = tmp_home / "server.json"
     data = json.loads(path.read_text())
-    assert data == {"port": srv.port, "token": srv.token, "pid": os.getpid()}
+    assert data == {"port": srv.port, "token": srv.token, "pid": os.getpid(), "version": __version__}
     assert (path.stat().st_mode & 0o777) == 0o600
     assert read_discovery() == data
     assert srv.url == "http://127.0.0.1:%d/?token=%s" % (srv.port, srv.token)
@@ -2447,6 +2448,8 @@ def test_sync__hung_project__does_not_delay_others(server, clock, monkeypatch):
         ran.append(slug)
 
     monkeypatch.setattr(sync, "_tick_project", fake_tick_project)
+
+    monkeypatch.setattr(sync, "_is_due", lambda slug: True)
     try:
         # act
         t0 = time.monotonic()
@@ -2481,6 +2484,8 @@ def test_sync__projects_run_in_pool_of_at_most_4(server, clock, monkeypatch):
             ran.append(slug)
 
     monkeypatch.setattr(sync, "_tick_project", fake_tick_project)
+
+    monkeypatch.setattr(sync, "_is_due", lambda slug: True)
     try:
         # act
         sync.tick()
@@ -2504,6 +2509,7 @@ def test_sync__stop__returns_promptly_with_hung_project(server, clock, monkeypat
     sync.tick_wait = 0.2
     release = threading.Event()
     monkeypatch.setattr(sync, "_tick_project", lambda slug: release.wait(30))
+    monkeypatch.setattr(sync, "_is_due", lambda slug: True)
     sync.start()
     time.sleep(0.1)
     # act
@@ -2532,3 +2538,39 @@ def test_legacy_ship_command__project_opened_by_server__migrated(server):
     assert result["r"].status == 200 and result["r"].json()["config"]["ship"]["command"] == "git push origin {branch}"
     events = [e for e in get(server, "/api/p/old/events").json()["events"] if e["type"] == "config_migrated"]
     assert len(events) == 1
+
+
+def test_sync_tick__no_project_is_due__starts_no_worker_threads(server, jira, clock, monkeypatch):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    started = []
+    monkeypatch.setattr(sync, "_worker", lambda slug, lock: started.append(slug))
+    # act
+    sync.tick()
+    # assert
+    assert started == []
+
+
+def test_sync_tick__sync_disabled_project__starts_no_worker_threads(server, jira, clock, monkeypatch):
+    # arrange
+    sync = sync_project(server, jira, clock, stage="tracker")
+    started = []
+    monkeypatch.setattr(sync, "_worker", lambda slug, lock: started.append(slug))
+    # act
+    sync.tick()
+    # assert
+    assert started == []
+
+
+def test_sync_tick__project_is_due__starts_worker(server, jira, clock, monkeypatch):
+    # arrange
+    sync = sync_project(server, jira, clock)
+    sync.tick()
+    clock.now += 31
+    started = []
+    monkeypatch.setattr(sync, "_worker", lambda slug, lock: (started.append(slug), lock.release(), sync._slots.release()))
+    # act
+    sync.tick()
+    # assert
+    assert started == ["pay"]

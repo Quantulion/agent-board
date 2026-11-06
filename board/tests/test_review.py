@@ -299,3 +299,41 @@ def test_prune_review_data__unsafe_session__ignored(board):
     result = review_mod.prune_review_data(board.store, datetime.fromisoformat(NOW) + timedelta(days=30))
     # assert
     assert result == [] and reviews.exists()
+
+
+def test_prune_review_data__closed_task__session_files_removed(board):
+    # arrange
+    from datetime import datetime, timedelta
+
+    from conftest import NOW
+
+    data = _review_task(board, "A", "abc123def456", "done")
+    sessions = board.store.root / "crit" / "sessions"
+    sessions.mkdir()
+    (sessions / "abc123def456.json").write_text("{}", encoding="utf-8")
+    (sessions / "abc123def456.log").write_text("log", encoding="utf-8")
+    (sessions / "other.json").write_text("{}", encoding="utf-8")
+    # act
+    result = review_mod.prune_review_data(board.store, datetime.fromisoformat(NOW) + timedelta(days=30))
+    # assert
+    assert result == ["A"] and not data.exists()
+    assert [p.name for p in sessions.iterdir()] == ["other.json"]
+
+
+def test_prune_review_data__only_session_files_left__removed(board):
+    # arrange
+    from datetime import datetime, timedelta
+
+    from conftest import NOW
+
+    data = _review_task(board, "A", "abc123def456", "done")
+    import shutil
+
+    shutil.rmtree(str(data))
+    sessions = board.store.root / "crit" / "sessions"
+    sessions.mkdir()
+    (sessions / "abc123def456.json").write_text("{}", encoding="utf-8")
+    # act
+    result = review_mod.prune_review_data(board.store, datetime.fromisoformat(NOW) + timedelta(days=30))
+    # assert
+    assert result == ["A"] and list(sessions.iterdir()) == []

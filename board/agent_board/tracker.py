@@ -841,6 +841,9 @@ class TrackerSync:
         for slug in slugs[cut:] + slugs[:cut]:
             if self._stop.is_set():
                 break
+            # поток заводится только проектам, которым пора синхронизироваться
+            if not self._is_due(slug):
+                continue
             lock = self._project_lock(slug)
             # проект, который ещё синхронизируется (вручную или прошлым проходом), пропускается до следующей проверки
             if not lock.acquire(blocking=False):
@@ -883,6 +886,28 @@ class TrackerSync:
                     del self._workers[slug]
             self._slots.release()
             lock.release()
+
+    def _is_due(self, slug: str) -> bool:
+        """Нужен ли проекту проход сейчас: включена синхронизация, проект не завершён давно, не на паузе и подошёл срок."""
+        try:
+            board = self._server.hub.board(slug)
+            config = board.store.load_config()
+        except (KeyError, ValueError, OSError):
+            return False
+        if not sync_enabled(config):
+            return False
+        try:
+            meta = board.store.load_meta()
+            if config.stage == "done" and self._long_done(board, meta):
+                return False
+        except (ValueError, OSError):
+            return False
+        if meta.get("tracker_sync_fp") not in (None, _fingerprint(config.tracker)):
+            return True
+        if (meta.get("tracker_sync") or {}).get("paused"):
+            return False
+        now = self._clock()
+        return now >= self._due.get(slug, now)
 
     def _tick_project(self, slug: str) -> None:
         now = self._clock()

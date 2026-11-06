@@ -14,6 +14,7 @@ import urllib.parse
 import urllib.request
 from typing import List, Optional
 
+from . import __version__, lifecycle
 from .config import ProjectConfig
 from .server import BoardServer, ServerAlreadyRunning, read_discovery
 from .store import ProjectStore
@@ -91,6 +92,12 @@ def _p(args, suffix: str) -> str:
 
 
 def cmd_serve(args):
+    if args.detach:
+        result = lifecycle.start_detached(args.port, args.no_runner, args.no_tracker_sync)
+        if "error" in result:
+            raise CliError(result["error"], result["code"])
+        print(result["url"], flush=True)
+        return None
     server = BoardServer(port=args.port, runner=not args.no_runner, tracker_sync=not args.no_tracker_sync)
     try:
         server.start()
@@ -124,7 +131,28 @@ def cmd_state(args):
     return _request("GET", _p(args, "state"))
 
 
+def cmd_version(args):
+    print(__version__)
+    return None
+
+
+def cmd_stop(args):
+    result = lifecycle.stop_server()
+    if result["code"]:
+        raise CliError(result["message"], result["code"])
+    print(result["message"])
+    return None
+
+
 def cmd_status(args):
+    if args.key is None and args.status is None:
+        report = lifecycle.status_report()
+        if args.json:
+            return report
+        print(lifecycle.format_status(report))
+        return None
+    if args.key is None or args.status is None:
+        raise CliError("Использование: agent-board status (состояние доски) или status <KEY> <STATUS>")
     return _request("POST", _p(args, "tasks/%s/transition" % args.key), {"to": args.status, "actor": _actor()})
 
 
@@ -325,14 +353,19 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--port", type=int, default=None, help="по умолчанию постоянный 8737–8746")
     sp.add_argument("--no-runner", action="store_true", help="не запускать агентов (отладка доски)")
     sp.add_argument("--no-tracker-sync", action="store_true", help="не запускать фоновую синхронизацию трекера")
+    sp.add_argument("--detach", action="store_true", help="запустить в фоне (лог в <home>/server.log), напечатать ссылку")
+    add("stop", cmd_stop, help="остановить запущенную доску")
+    add("version", cmd_version, help="версия agent-board")
     sp = add("init", cmd_init, help="создать проект")
     sp.add_argument("slug")
     sp.add_argument("--title", required=True)
     add("state", cmd_state, help="весь snapshot проекта")
     add("show", cmd_show).add_argument("key")
-    sp = add("status", cmd_status)
-    sp.add_argument("key")
-    sp.add_argument("status")
+    sp = add("status", cmd_status, help="без аргументов: состояние доски и проектов; status <KEY> <STATUS>: "
+                                         "перевести задачу")
+    sp.add_argument("key", nargs="?")
+    sp.add_argument("status", nargs="?")
+    sp.add_argument("--json", action="store_true", help="состояние доски JSON-объектом")
     sp = add("update", cmd_update)
     sp.add_argument("key")
     for _, attr, _ in UPDATE_OPTIONS:

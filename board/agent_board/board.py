@@ -253,10 +253,14 @@ class Board:
             config = ProjectConfig.from_dict(raw)
             moved = isinstance(config.ship, dict) and config.ship.get("command") == raw[LEGACY_SHIP_COMMAND] \
                 and not (isinstance(raw.get("ship"), dict) and raw["ship"].get("command"))
-            self.store.save_config(config)
-            # без on_event: доску создают под блокировкой хаба, подписчикам это событие не нужно
-            self.store.append_event("config_migrated", {"field": LEGACY_SHIP_COMMAND, "to": "ship.command",
-                                                        "moved": bool(moved)}, self._clock())
+            try:
+                self.store.save_config(config)
+                # без on_event: доску создают под блокировкой хаба, подписчикам это событие не нужно
+                self.store.append_event("config_migrated", {"field": LEGACY_SHIP_COMMAND, "to": "ship.command",
+                                                            "moved": bool(moved)}, self._clock())
+            except OSError as e:
+                # проект остаётся рабочим: настройки читаются с переносом в памяти, запись повторится при следующем чтении
+                print("не удалось сохранить перенос настроек проекта %s: %s" % (self.store.slug, e), file=sys.stderr)
 
     def set_stage(self, stage: str, actor: str) -> List[Event]:
         """Переводит проект на следующую стадию; стадии меняет только пользователь."""
