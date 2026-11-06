@@ -108,7 +108,7 @@ All commands except `serve`, `init`, `stop`, `version`, `status` without argumen
 
 - Project stages: `decomposition` → `tracker` (creating tasks in the tracker, can be skipped) → `work` → `done`. Only the user changes the stage (`agent-board stage <stage>`, `POST /api/p/<slug>/stage {"stage", "actor": "user"}`), and stages never go backwards. Task agents work only at the `work` stage: before it, wake-ups accumulate and are kept, and on the move to `work` the tasks with pending wake-ups and the ready tasks start (within limits). The project agent works at any stage; on the move to `work` a project agent without a session starts, as on runner startup. At the `decomposition` stage a user message in a task thread wakes the project agent instead of the task agent (`agent_wake {key: "_project", reason: "message", task: <KEY>}`), so the project agent reads comments on decomposition tasks.
 - A task starts when it is ready (no unfinished dependencies). It gets a worktree `<repo>/.agent-board-worktrees/<KEY>` (the directory is added to `.git/info/exclude`) and a branch from `branch_template`; the base comes from the dependencies, along the chain.
-- One session runs one turn at a time; wake-ups during a turn are merged into the next message. Concurrency is limited by `max_agents` per project and `global_max_agents` per server; the rest wait in a queue. The project agent does not count towards `max_agents` but counts towards the global limit.
+- One session runs one turn at a time; wake-ups during a turn are merged into the next message. Concurrency is limited by `max_agents` per project and `global_max_agents` per server; the rest wait in a queue. The project agent counts towards neither limit: it talks to the user, so it runs at once on top of them (one turn per project), and task agents cannot take its slot.
 - Claude agents are always allowed the board subcommands `status`, `update`, `ask`, `say`, `show`, `thread`, `state`, `events`, `propose`; `lock-run` and other commands follow `permission_mode`. The system prompt is passed on every turn, including resumed sessions.
 - Codex runs with `-c sandbox_workspace_write.network_access=true`: without network access a sandboxed agent cannot reach the local board.
 - The raw stream of each turn is written to `<project>/logs/<KEY>.jsonl`.
@@ -136,7 +136,7 @@ Settings are changed with `agent-board config set`, the "Project settings" windo
 | `repos` | `[{"name", "path", "base"}]` — project repositories |
 | `branch_template` | task branch template, default `{key}` |
 | `max_agents` | concurrent turns per project (3) |
-| `global_max_agents` | concurrent turns per server (6) |
+| `global_max_agents` | concurrent task agent turns per server (6); project agents run on top of it |
 | `resources` | `[{"name", "description"}]` — resources for `lock-run` |
 | `links` | project links for the UI: `[{"title", "href"}]`, `href` is http(s) or a path to a local file: absolute or relative (to the first repository in `repos`, or, without repositories, to the project directory `<home>/projects/<slug>`). A file is served via `GET /api/p/<slug>/file?path=` only from inside the project directory, its repositories and the task worktrees; html is served with `Content-Security-Policy: sandbox`, files up to 2 MB |
 | `language` | language agents use with the user: summaries, questions, thread messages, reports; the board's own system messages in threads and the log are written in it too (already saved messages are not rewritten when it changes) (default `ru`) |

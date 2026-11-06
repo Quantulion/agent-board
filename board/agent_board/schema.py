@@ -11,8 +11,8 @@ DESCRIPTIONS = {
     "title": "Project title shown on the board.",
     "chains": "Start a dependent task once its dependency is approved, from the dependency branch; "
               "false: only after it is done.",
-    "max_agents": "Max concurrent agent turns in this project.",
-    "global_max_agents": "Max concurrent agent turns on the whole server.",
+    "max_agents": "Max concurrent task agent turns in this project; the project agent is not counted.",
+    "global_max_agents": "Max concurrent task agent turns on the whole server; project agents run on top of it, one turn per project.",
     "language": "Language of the UI and agent messages (e.g. ru, en).",
     "repos": "Project repositories: name, absolute path to a git work tree, base branch.",
     "tracker": "Issue tracker for creating issues and reading their statuses; secrets only by env var name or "
