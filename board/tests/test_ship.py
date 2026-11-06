@@ -152,3 +152,40 @@ def test_validate_template_rejects_heredoc(command):
 def test_validate_template_allows_quoted_or_escaped_double_less(command):
     # arrange, act, assert
     ship.validate_template(command)
+
+
+class _Chunks:
+    """Поток вывода, отдающий данные заданными кусками."""
+
+    def __init__(self, chunks):
+        self.chunks = list(chunks)
+
+    def read1(self, n=-1):
+        return self.chunks.pop(0) if self.chunks else b""
+
+
+def test_copy_output_masks_secret_split_between_chunks(tmp_path):
+    # arrange
+    log = tmp_path / "x.ship.log"
+    secret = "abc-SECRET-xyz"
+    scrub = lambda text: text.replace(secret, "***")  # noqa: E731
+    stream = _Chunks([b"line1\ntoken=abc-SEC", "RET-xyz конец\n".encode(), b"tail without newline abc-SECRET-xyz"])
+    # act
+    ship.copy_output(stream, log, scrub)
+    # assert
+    text = log.read_text()
+    assert secret not in text and text == "line1\ntoken=*** конец\ntail without newline ***"
+
+
+def test_copy_output_long_line_without_newline_is_written_in_parts_and_masked(tmp_path, monkeypatch):
+    # arrange
+    monkeypatch.setattr(ship, "COPY_LINE_LIMIT", 64)
+    monkeypatch.setattr(ship, "COPY_KEEP", 32)
+    log = tmp_path / "x.ship.log"
+    secret = "abc-SECRET-xyz"
+    data = (b"x" * 60 + secret.encode()) * 5
+    stream = _Chunks([data[i:i + 7] for i in range(0, len(data), 7)])
+    # act
+    ship.copy_output(stream, log, lambda text: text.replace(secret, "***"))
+    # assert
+    assert log.read_text() == ("x" * 60 + "***") * 5

@@ -1876,3 +1876,31 @@ def test_ship_finished_command_without_children__no_signal_to_its_group(make_pro
     # assert
     assert state["state"] == "done" and started
     assert [sig for pgid, sig in signals if pgid == started[0] and sig != 0] == []
+
+
+SHIP_SECRET = "ship-s3cret-TOKEN-42"
+
+
+@pytest.mark.parametrize("exit_code", [0, 3])
+def test_ship_output_is_scrubbed_of_tracker_secrets(make_project, start_server, calls, monkeypatch, exit_code):
+    # arrange: команда печатает токен трекера
+    monkeypatch.setenv("AB_SHIP_JIRA_TOKEN", SHIP_SECRET)
+    store = make_project(
+        ship={"command": "echo before; echo token=$AB_SHIP_JIRA_TOKEN; echo after; exit %d" % exit_code},
+        tracker={"type": "jira", "url": "https://jira.example.com", "project": "MNZ", "issue_type": "Task",
+                 "auth": {"type": "token_env", "env": "AB_SHIP_JIRA_TOKEN"}})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    runner_sync(srv)
+    # assert
+    log = (store.root / "logs" / "T-1.ship.log").read_text()
+    assert "token=***" in log and "before" in log and "after" in log
+    assert "token=***" in state["output_tail"]
+    texts = "\n".join(thread_texts(store, "T-1"))
+    assert SHIP_SECRET not in log + state["output_tail"] + texts
+    if exit_code:
+        assert "token=***" in texts
+    assert SHIP_SECRET not in "\n".join(p.read_text(errors="replace") for p in store.root.rglob("*") if p.is_file())

@@ -253,6 +253,17 @@ def _load_auth(auth: dict, kind: str) -> _Auth:
     return _Auth({"Authorization": Secret("Bearer " + token)}, [Secret(token)], hint)
 
 
+def secrets_of(cfg: Any) -> List[Secret]:
+    """Секреты трекера проекта для маскирования чужого вывода; без настроенного или доступного секрета — []."""
+    try:
+        validate_config(cfg)
+        if cfg["type"] == "none":
+            return []
+        return _load_auth(cfg["auth"], cfg["type"]).secrets
+    except (TrackerError, ValueError):
+        return []
+
+
 # --- HTTP ---
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):

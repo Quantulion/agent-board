@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
-from . import prompts, ship
+from . import prompts, ship, tracker
 from .board import RETURNED_FROM, Board
 from .graph import base_for, open_deps, ready_tasks
 from .harness import (
@@ -147,12 +147,20 @@ class _ShipBatch:
 
 
 class _Ship:
-    def __init__(self, proc, batch: _ShipBatch, log: Path, timeout: float):
+    def __init__(self, proc, batch: _ShipBatch, log: Path, timeout: float,
+                 scrub: Callable[[str], str] = lambda text: text):
         self.proc = proc
         self.batch = batch
         self.log = log
         self.timeout = timeout
+        self.scrub = scrub
         self.stopped = False
+
+
+def _scrubber(config) -> Callable[[str], str]:
+    """Маскирует секреты трекера проекта в выводе команды отправки."""
+    secrets = tracker.secrets_of(config.tracker)
+    return lambda text: tracker.scrub(text, secrets)
 
 
 class Runner:
@@ -1147,7 +1155,8 @@ class Runner:
         state = dict(task.ship)
         if state.get("state") == "running":
             Runner._kill_leftover(board, task.key, state.get("process"))
-            state["output_tail"] = ship.tail_of(board.store.root / "logs" / (task.key + ".ship.log"))
+            tail = ship.tail_of(board.store.root / "logs" / (task.key + ".ship.log"))
+            state["output_tail"] = _scrubber(board.store.load_config())(tail)
         was_running = state.get("state") == "running"
         state.update(state="interrupted", process=None)
         board.update_task(task.key, "system", {"ship": state})
@@ -1161,7 +1170,7 @@ class Runner:
         sh.stopped = True
         threading.Thread(target=terminate, args=(sh.proc, SHIP_KILL_GRACE), daemon=True).start()
         board = self._board(k[0])
-        self._ship_set(board, k[1], state="cancelled", at=self._clock(), output_tail=ship.tail_of(sh.log),
+        self._ship_set(board, k[1], state="cancelled", at=self._clock(), output_tail=sh.scrub(ship.tail_of(sh.log)),
                        exit_code=None, process=None)
         board.post_message(k[1], "system", SHIP_CANCELLED_TEXT)
         self._ship_next(sh.batch)
@@ -1243,12 +1252,13 @@ class Runner:
             self._ship_fail(batch, key, str(e))
             return False
         log = board.store.root / "logs" / (key + ".ship.log")
+        scrub = _scrubber(config)
         try:
-            proc = ship.start(rendered, path, log, key)
+            proc = ship.start(rendered, path, log, key, scrub=scrub)
         except OSError as e:
             self._ship_fail(batch, key, "не удалось запустить команду: %s" % e)
             return False
-        sh = _Ship(proc, batch, log, timeout)
+        sh = _Ship(proc, batch, log, timeout, scrub)
         k = (slug, key)
 
         def watch() -> None:
@@ -1264,6 +1274,7 @@ class Runner:
                 traceback.print_exc(file=sys.stderr)
             # после команды в группе ничего не остаётся: фоновые потомки не переживают отправку
             signal_group(proc, signal.SIGKILL)
+            ship.finish_output(proc)
             self._inbox.put(("ship_done", k, sh, code, timed_out))
 
         try:
@@ -1285,7 +1296,7 @@ class Runner:
             return
         slug, key = k
         board = self._board(slug)
-        tail = ship.tail_of(sh.log)
+        tail = sh.scrub(ship.tail_of(sh.log))
         ok = code == 0 and not timed_out
         if ok and not board.transition_if(key, Status.APPROVED, Status.SENT, "system"):
             ok = False

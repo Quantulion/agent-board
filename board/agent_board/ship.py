@@ -2,15 +2,22 @@ from __future__ import annotations
 
 import os
 import shlex
+import signal
 import string
 import subprocess
+import threading
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from .model import Status, Task
 
 DEFAULT_TIMEOUT = 600.0
 OUTPUT_TAIL_BYTES = 4096
+# вывод пишется в лог построчно; строка длиннее лимита пишется частями, а конец, где может начинаться секрет,
+# придерживается до следующей части
+COPY_LINE_LIMIT = 64 * 1024
+COPY_KEEP = 16 * 1024
+COPY_JOIN_SECONDS = 5.0
 PLACEHOLDERS = ("key", "title", "branch", "base", "worktree", "repo")
 # зависимость уже влита или отменена: отправлять её не нужно
 SHIPPED = (Status.SENT, Status.DONE, Status.CANCELLED)
@@ -138,11 +145,71 @@ def tail_of(path: Path, limit: int = OUTPUT_TAIL_BYTES) -> str:
     return text
 
 
-def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict] = None) -> "subprocess.Popen":
-    """Запускает команду в своей группе процессов, вывод пишется в лог."""
+def copy_output(src, log: Path, scrub: Callable[[str], str]) -> None:
+    """Переписывает вывод команды в лог, маскируя секреты (scrub) до записи на диск."""
+    def clean(data: bytes) -> bytes:
+        return scrub(data.decode("utf-8", "surrogateescape")).encode("utf-8", "surrogateescape")
+
+    pending = b""
+    with log.open("ab") as out:
+        while True:
+            try:
+                chunk = src.read1(COPY_LINE_LIMIT)
+            except (OSError, ValueError):
+                chunk = b""
+            if not chunk:
+                break
+            pending += chunk
+            cut = pending.rfind(b"\n") + 1
+            if cut:
+                out.write(clean(pending[:cut]))
+                pending = pending[cut:]
+            elif len(pending) > COPY_LINE_LIMIT:
+                cleaned = clean(pending)
+                out.write(cleaned[:-COPY_KEEP])
+                pending = cleaned[-COPY_KEEP:]
+            out.flush()
+        out.write(clean(pending))
+
+
+def start(rendered: str, cwd: Path, log: Path, task_key: str, env: Optional[dict] = None,
+          scrub: Optional[Callable[[str], str]] = None) -> "subprocess.Popen":
+    """Запускает команду в своей группе процессов, вывод пишется в лог (с scrub — через маскирование секретов;
+    поток записи — proc.copier)."""
     log.parent.mkdir(parents=True, exist_ok=True)
     full_env = dict(os.environ if env is None else env, AGENT_BOARD_TASK=task_key)
-    with log.open("wb") as out:
-        return subprocess.Popen(["bash", "-lc", rendered], cwd=str(cwd), env=full_env, stdin=subprocess.DEVNULL,
-                                stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+    if scrub is None:
+        with log.open("wb") as out:
+            proc = subprocess.Popen(["bash", "-lc", rendered], cwd=str(cwd), env=full_env, stdin=subprocess.DEVNULL,
+                                    stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
+        proc.copier = None
+        return proc
+    log.write_bytes(b"")
+    proc = subprocess.Popen(["bash", "-lc", rendered], cwd=str(cwd), env=full_env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)
+    stdout = proc.stdout
+
+    def copy() -> None:
+        try:
+            copy_output(stdout, log, scrub)
+        finally:
+            stdout.close()
+
+    proc.copier = threading.Thread(target=copy, name="board-ship-log-%s" % task_key, daemon=True)
+    try:
+        proc.copier.start()
+    except RuntimeError as e:
+        # без чтения вывода команда встанет на заполненном канале: останавливаем, пока лидер не собран
+        os.killpg(proc.pid, signal.SIGKILL)
+        proc.wait()
+        stdout.close()
+        raise OSError("не удалось запустить запись вывода: %s" % e)
+    return proc
+
+
+def finish_output(proc) -> None:
+    """Дожидается записи вывода в лог (не дольше COPY_JOIN_SECONDS: вывод может держать сбежавший потомок)."""
+    copier = getattr(proc, "copier", None)
+    if copier is not None:
+        copier.join(COPY_JOIN_SECONDS)
 
