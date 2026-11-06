@@ -117,6 +117,19 @@ def test_validate_template_allows_placeholder_outside_quotes(command):
     ship.validate_template(command)
 
 
+@pytest.mark.parametrize("command", ["run $'x' {title}", "run $'{title}'", "run {key} $'\\n'"])
+def test_validate_template_rejects_ansi_c_quotes(command):
+    # arrange, act, assert
+    with pytest.raises(ValueError, match="\\$'"):
+        ship.validate_template(command)
+
+
+@pytest.mark.parametrize("command", ["echo 'cost$' {key}", 'echo "$\'" {key}', "echo \\$'x' {key}"])
+def test_validate_template_allows_dollar_quote_that_is_not_ansi_c(command):
+    # arrange, act, assert
+    ship.validate_template(command)
+
+
 def test_tail_of_stays_within_limit_after_decoding_invalid_utf8(tmp_path):
     # arrange
     log = tmp_path / "x.log"

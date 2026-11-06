@@ -402,3 +402,47 @@ def test_ship_without_command_exits_1_with_reason(srv, capsys):
     code, _, err = run(capsys, "ship", "T-1")
     # assert
     assert code != 0 and "команда отправки" in err
+
+
+@pytest.fixture
+def fake_jira(monkeypatch):
+    from fakes.fake_jira import FakeJira
+
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("JIRA_TOKEN", "cli-token-value")
+    fake = FakeJira(authorization="Bearer cli-token-value").start()
+    yield fake
+    fake.stop()
+
+
+def with_tracker(srv, jira):
+    srv.board_for("pay").update_config({"tracker": {
+        "type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+        "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}})
+
+
+def test_tracker_create_and_check_as_user(srv, capsys, fake_jira):
+    # arrange
+    with_tracker(srv, fake_jira)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").set_stage("tracker", "user")
+    # act
+    created = run_json(capsys, "tracker", "create")
+    checked = run_json(capsys, "tracker", "check")
+    # assert
+    assert created["created"][0]["tracker_key"] == "MNZ-1" and checked == {"ok": True}
+
+
+def test_tracker_errors_exit_1(srv, capsys, fake_jira):
+    # arrange
+    with_tracker(srv, fake_jira)
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    srv.board_for("pay").set_stage("tracker", "user")
+    fake_jira.fail_all = (401, None)
+    # act
+    created = run(capsys, "tracker", "create")
+    checked = run(capsys, "tracker", "check")
+    # assert
+    assert created[0] == 1 and "JIRA_TOKEN" in created[2]
+    assert checked[0] == 1 and "авторизац" in checked[2]

@@ -50,7 +50,7 @@ def _json_arg(raw: str, name: str):
         raise CliError("Некорректный JSON в %s: %s" % (name, e))
 
 
-def _request(method: str, path: str, body: Optional[dict] = None):
+def _request(method: str, path: str, body: Optional[dict] = None, timeout: float = 10):
     info = read_discovery()
     if info is None:
         raise CliError(NOT_RUNNING, 2)
@@ -63,7 +63,7 @@ def _request(method: str, path: str, body: Optional[dict] = None):
         "http://127.0.0.1:%d%s" % (info["port"], path), data=data, method=method, headers=headers
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             return json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
         try:
@@ -168,6 +168,22 @@ def cmd_stage(args):
 
 def cmd_ship(args):
     return _request("POST", _p(args, "ship"), {"keys": args.keys, "actor": "user"})
+
+
+# заведение задач идёт синхронно: по запросу к трекеру на задачу и связь
+TRACKER_TIMEOUT = 600
+
+
+def cmd_tracker(args):
+    result = _request("POST", _p(args, "tracker/" + args.action), {"actor": "user"}, timeout=TRACKER_TIMEOUT)
+    problems = [e["error"] for e in result.get("errors") or []]
+    if args.action == "check" and not result.get("ok"):
+        problems.append(result.get("error") or "нет доступа к трекеру")
+    if problems:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        print("\n".join(problems), file=sys.stderr)
+        raise ExitWith(1)
+    return result
 
 
 def cmd_propose(args):
@@ -309,6 +325,8 @@ def build_parser() -> argparse.ArgumentParser:
         "stage")
     add("ship", cmd_ship, help="отправить одобренные задачи в ревью командой проекта (только пользователь)").add_argument(
         "keys", nargs="+")
+    add("tracker", cmd_tracker, help="завести задачи в трекере (create) или проверить доступ (check); "
+                                     "только пользователь").add_argument("action", choices=["create", "check"])
     sp = add("propose", cmd_propose)
     sp.add_argument("kind")
     sp.add_argument("--json", required=True)

@@ -9,6 +9,7 @@ from typing import Any, Callable, Dict, List, Optional, Set
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
+from .tracker import validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
@@ -23,7 +24,7 @@ UPDATABLE_FIELDS = {
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process", "agent_parked", "review", "ship",
+    "turn_process", "agent_parked", "review", "ship", "tracker_key", "tracker_url",
 }
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
@@ -70,6 +71,8 @@ EVENT_TYPES: Dict[str, str] = {
     "ship_requested": "keys — пользователь попросил отправить задачи в ревью (в порядке отправки)",
     "ship_started": "key — раннер запустил команду отправки",
     "ship_finished": "key, ok, exit_code — команда отправки завершена (exit_code пуст при таймауте)",
+    "tracker_created": "created [ключи], linked [[блокер, блокируемая]], errors [ключи] — пользователь завёл "
+                       "задачи в трекере",
 }
 
 # Причины agent_wake -> дополнительные поля события.
@@ -172,6 +175,8 @@ class Board:
             ship = config.ship if isinstance(config.ship, dict) else {}
             if "ship" in fields and ship.get("command"):
                 ship_settings(config)
+            if "tracker" in fields:
+                validate_tracker(config.tracker)
             self.store.save_config(config)
 
     def set_stage(self, stage: str, actor: str) -> List[Event]:

@@ -1311,3 +1311,121 @@ def test_config_update_with_quoted_placeholder_is_rejected(server):
 def _with_ship(config, command):
     config.ship = {"command": command, "timeout": 5}
     return config
+
+
+# --- трекер ---
+
+TRACKER_TOKEN = "trk-S3CRET-value-42"
+
+
+@pytest.fixture
+def jira(monkeypatch):
+    from fakes.fake_jira import FakeJira
+
+    for name in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("JIRA_TOKEN", TRACKER_TOKEN)
+    fake = FakeJira(authorization="Bearer " + TRACKER_TOKEN).start()
+    yield fake
+    fake.stop()
+
+
+def with_jira(server, jira, stage="tracker"):
+    board = server.board_for("pay")
+    board.update_config({"tracker": {"type": "jira", "url": jira.url, "project": "MNZ", "issue_type": "Task",
+                                     "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}})
+    add_task(server, "A")
+    add_task(server, "B", deps=["A"])
+    if stage == "tracker":
+        board.set_stage("tracker", "user")
+
+
+def test_tracker_create_creates_issues_and_links(server, jira):
+    # arrange
+    with_jira(server, jira)
+    # act
+    r = post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    # assert
+    assert r.status == 200
+    body = r.json()
+    assert body["errors"] == [] and [c["tracker_key"] for c in body["created"]] == ["MNZ-1", "MNZ-2"]
+    assert body["linked"] == [["A", "B"]]
+    tasks = {t["key"]: t for t in get(server, "/api/p/pay/state").json()["tasks"]}
+    assert tasks["B"]["tracker_url"] == jira.url + "/browse/MNZ-2"
+
+
+def test_tracker_create_401_never_leaks_token(server, jira, capfd):
+    # arrange: трекер отвечает 401 и повторяет токен в тексте ошибки
+    with_jira(server, jira)
+    jira.fail_all = (401, {"errorMessages": ["token %s rejected" % TRACKER_TOKEN]})
+    # act
+    r = post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    check = post(server, "/api/p/pay/tracker/check", {"actor": "user"})
+    # assert
+    assert r.status == 200 and "авторизац" in r.json()["errors"][0]["error"]
+    assert check.json()["ok"] is False and check.json()["kind"] == "auth"
+    seen = [r.body.decode(), check.body.decode(), get(server, "/api/p/pay/events").body.decode(),
+            get(server, "/api/p/pay/state").body.decode(), "".join(capfd.readouterr())]
+    home = Path(os.environ["AGENT_BOARD_HOME"])
+    seen += [p.read_bytes().decode("utf-8", "replace") for p in home.rglob("*") if p.is_file()]
+    assert all(TRACKER_TOKEN not in text for text in seen)
+
+
+def test_tracker_create_success_never_leaks_token(server, jira, capfd):
+    # arrange
+    with_jira(server, jira)
+    # act
+    r = post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    # assert
+    assert r.json()["errors"] == []
+    home = Path(os.environ["AGENT_BOARD_HOME"])
+    seen = [r.body.decode(), get(server, "/api/p/pay/events").body.decode(), "".join(capfd.readouterr())]
+    seen += [p.read_bytes().decode("utf-8", "replace") for p in home.rglob("*") if p.is_file()]
+    assert all(TRACKER_TOKEN not in text for text in seen)
+
+
+def test_tracker_create_outside_tracker_stage_is_400(server, jira):
+    # arrange
+    with_jira(server, jira, stage="decomposition")
+    # act
+    r = post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "tracker" in r.json()["error"] and jira.requests == []
+
+
+@pytest.mark.parametrize("route", ["create", "check"])
+def test_tracker_actions_by_agent_are_403(server, jira, route):
+    # arrange
+    with_jira(server, jira)
+    # act
+    r = post(server, "/api/p/pay/tracker/" + route, {"actor": "agent"})
+    # assert
+    assert r.status == 403 and jira.requests == []
+
+
+def test_tracker_check_ok(server, jira):
+    # arrange
+    with_jira(server, jira)
+    # act
+    r = post(server, "/api/p/pay/tracker/check", {"actor": "user"})
+    # assert
+    assert r.status == 200 and r.json() == {"ok": True}
+
+
+def test_tracker_create_missing_env_is_400_naming_variable(server, jira, monkeypatch):
+    # arrange
+    with_jira(server, jira)
+    monkeypatch.delenv("JIRA_TOKEN")
+    # act
+    r = post(server, "/api/p/pay/tracker/create", {"actor": "user"})
+    # assert
+    assert r.status == 400 and "JIRA_TOKEN" in r.json()["error"]
+
+
+def test_agent_cannot_write_tracker_key(server):
+    # arrange
+    add_task(server)
+    # act
+    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": "MNZ-9"}})
+    # assert
+    assert r.status == 403

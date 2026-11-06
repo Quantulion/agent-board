@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
+from . import tracker
 from .board import Board, new_task_from_dict
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
@@ -439,6 +440,10 @@ class _Handler(BaseHTTPRequestHandler):
     def _api_post(self, board: Board, rest: List[str]) -> None:
         body = self._read_body()
         extra: dict = {}
+        if rest == ["tracker", "create"]:
+            return self._send_json(200, tracker.create_issues(board, _need(body, "actor")))
+        if rest == ["tracker", "check"]:
+            return self._send_json(200, tracker.check_access(board, _need(body, "actor")))
         if len(rest) == 3 and rest[0] == "threads" and rest[2] == "read":
             events = board.mark_read(rest[1])
         elif len(rest) == 3 and rest[0] == "threads" and rest[2] == "messages":
