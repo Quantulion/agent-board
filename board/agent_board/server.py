@@ -28,6 +28,8 @@ from .worktree import GitError, changed_files, diff as worktree_diff, worktree_p
 COOKIE_NAME = "board_token"
 COOKIE_MAX_AGE = 30 * 24 * 3600
 KEEPALIVE_SECONDS = 15
+# частый опрос, чтобы остановка сервера не ждала по полсекунды
+SERVE_POLL_INTERVAL = 0.05
 MAX_BODY = 4 * 1024 * 1024
 MAX_DIFF_BYTES = 400 * 1024
 MAX_FILE_BYTES = 2 * 1024 * 1024
@@ -622,7 +624,8 @@ class BoardServer:
             httpd.app = self  # type: ignore[attr-defined]
             self._httpd = httpd
             self.port = httpd.server_address[1]
-            thread = threading.Thread(target=httpd.serve_forever, name="board-http", daemon=True)
+            thread = threading.Thread(target=httpd.serve_forever, args=(SERVE_POLL_INTERVAL,),
+                                      name="board-http", daemon=True)
             thread.start()
             self._thread = thread
             path = discovery_path()
