@@ -166,7 +166,7 @@ def _is_board_server(pid: int) -> bool:
         return False
     argv = identity["command"].split()
     for i in range(len(argv) - 1):
-        if argv[i] == "-m" and i + 2 < len(argv) + 0 and argv[i + 1] == "agent_board" and argv[i + 2] == "serve":
+        if argv[i] == "-m" and i + 2 < len(argv) and argv[i + 1] == "agent_board" and argv[i + 2] == "serve":
             return True
         if os.path.basename(argv[i]) in ("agent-board", "agent_board") and argv[i + 1] == "serve":
             return True

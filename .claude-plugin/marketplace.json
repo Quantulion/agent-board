@@ -8,7 +8,7 @@
     {
       "name": "agent-board",
       "description": "Lay a plan out on a local task board and let background coding agents work on it",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./"
     }
   ]

@@ -196,6 +196,40 @@ def test_update_task_runner_fields_only_by_system(board, actor, field):
     assert board.store.read_events(before) == []
 
 
+def test_update_task__tracker_link_by_user__is_saved(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    board.update_task("A", "user", {"tracker_key": "PRJ-123", "tracker_url": "https://tracker.example/PRJ-123"})
+    # assert
+    task = board.store.load_tasks()["A"]
+    assert (task.tracker_key, task.tracker_url) == ("PRJ-123", "https://tracker.example/PRJ-123")
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "tracker"])
+@pytest.mark.parametrize("field", ["tracker_key", "tracker_url"])
+def test_update_task__tracker_link_by_non_user__rejected(board, actor, field):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.update_task("A", actor, {field: "https://tracker.example/X-1"})
+    assert board.store.load_tasks()["A"].tracker_key is None
+
+
+@pytest.mark.parametrize("fields", [{"tracker_key": ""}, {"tracker_key": "PRJ 1"}, {"tracker_key": 5},
+                                    {"tracker_key": "X" * 101}, {"tracker_url": "file:///etc/passwd"},
+                                    {"tracker_url": "javascript:alert(1)"}])
+def test_update_task__tracker_link_invalid__rejected(board, fields):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError):
+        board.update_task("A", "user", fields)
+    task = board.store.load_tasks()["A"]
+    assert (task.tracker_key, task.tracker_url) == (None, None)
+
+
 def test_update_task_rejects_unknown_field(board):
     board.add_task(mk("A"), "user")
     with pytest.raises(ValueError):

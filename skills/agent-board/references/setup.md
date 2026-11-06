@@ -77,7 +77,7 @@ Ask: none, Jira or GitHub Issues? Default none. Linear is not supported.
   Jira admin → Custom fields, or open `<url>/rest/api/2/field` in their own browser.
 - GitHub: `repo` as `owner/name`, optional `labels`.
 - Auth, Jira: env var with a token (`{"type": "token_env", "env": "JIRA_TOKEN"}`, add `user_env` for Basic login)
-  or a cookie file (`{"type": "cookie_file", "path": "~/keys/jira.txt"}`) holding the Cookie header value.
+  or a cookie file (`{"type": "cookie_file", "path": "~/.config/agent-board/jira-cookie.txt"}`) holding the Cookie header value.
   GitHub: `token_env` only.
 - A token env var must be in the board server's environment. Never `export` a value yourself (in Claude Code an
   export does not persist between Bash calls anyway). Ask the user to set it in their shell profile or terminal.

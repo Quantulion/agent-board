@@ -171,6 +171,21 @@ def test_create__cancelled_tasks__are_skipped(board, jira):
     assert board.store.load_tasks()["B"].tracker_key is None and len(jira.issues) == 1
 
 
+def test_create__task_linked_by_user__is_skipped_and_dependents_link_to_it(board, jira):
+    # arrange: задача A уже есть в трекере, пользователь привязал её ключ
+    setup_board(board, jira_config(jira.url), [make_task("A"), make_task("B", deps=["A"])])
+    board.update_task("A", "user", {"tracker_key": "PROJ-77", "tracker_url": jira.url + "/browse/PROJ-77"})
+    # act
+    result = tracker.create_issues(board, "user")
+    # assert
+    assert result["errors"] == [] and [c["key"] for c in result["created"]] == ["B"]
+    assert len(jira.issues) == 1
+    tasks = board.store.load_tasks()
+    assert tasks["A"].tracker_key == "PROJ-77" and tasks["B"].tracker_key != "PROJ-77"
+    assert [(l["inwardIssue"]["key"], l["outwardIssue"]["key"]) for l in jira.links] == [
+        ("PROJ-77", tasks["B"].tracker_key)]
+
+
 # --- частичный сбой и повтор ---
 
 def test_create__server_error_midway__keeps_created_skips_dependents_and_rerun_finishes(board, jira):
@@ -401,7 +416,7 @@ def test_agent_cannot_forge_tracker_key(board):
     # arrange
     board.add_task(make_task("A"), "user")
     # act / assert
-    for actor in ("agent", "user"):
+    for actor in ("agent", "project_agent", "tracker"):
         with pytest.raises(PermissionError):
             board.update_task("A", actor, {"tracker_key": "PROJ-9"})
 

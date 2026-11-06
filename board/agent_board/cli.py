@@ -166,6 +166,8 @@ UPDATE_OPTIONS = [
     ("description", "description", False),
     ("done_when", "done_when", False),
     ("estimate", "estimate", True),
+    ("tracker_key", "tracker_key", False),
+    ("tracker_url", "tracker_url", False),
 ]
 
 

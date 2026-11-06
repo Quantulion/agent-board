@@ -12,7 +12,12 @@ while [ -h "$script" ]; do
     esac
 done
 here=$(cd -P "$(dirname "$script")" && pwd)
-repo=$(cd -P "$here/../../.." && pwd)
+repo=$(cd -P "$here/../../.." 2>/dev/null && pwd) || repo=""
+if [ ! -d "$repo/board/agent_board" ]; then
+    echo "agent-board: board code not found next to the skill; install via scripts/install-codex.sh (symlink) or the" \
+        "Claude Code plugin: the skill dir must stay inside the agent-board repository" >&2
+    exit 127
+fi
 
 python="${AGENT_BOARD_PYTHON:-python3}"
 if ! command -v "$python" >/dev/null 2>&1; then

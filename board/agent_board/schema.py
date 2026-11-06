@@ -53,7 +53,7 @@ def _shapes() -> dict:
         },
     }
     auth_examples = {"token_env": {"type": "token_env", "env": "TRACKER_TOKEN"},
-                     "cookie_file": {"type": "cookie_file", "path": "~/keys/tracker-cookie.txt"}}
+                     "cookie_file": {"type": "cookie_file", "path": "~/.config/agent-board/jira-cookie.txt"}}
     auth_notes = {"token_env": "env: name of the server env var with the token; user_env (Jira): env var with the "
                                "login, switches to Basic auth.",
                   "cookie_file": "path: file with the Cookie header value (Jira only)."}

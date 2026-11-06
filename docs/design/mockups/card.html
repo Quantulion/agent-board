@@ -947,7 +947,7 @@ function toggleSyncPop(force) {
   const p = $('#syncPop'); const show = force != null ? force : p.hidden;
   if (!show) { p.hidden = true; return; }
   p.innerHTML = `<h4>Фоновое чтение статусов из Jira</h4>
-    ${state.syncErr ? `<div class="errbox"><b>401 Unauthorized</b> — сессия Jira истекла в 14:15. Доска не отстаёт молча: статусы из трекера не читаются 6 минут. Обновите куку в <code>~/keys/jira.txt</code>, синхронизация возобновится сама.</div>` : ''}
+    ${state.syncErr ? `<div class="errbox"><b>401 Unauthorized</b> — сессия Jira истекла в 14:15. Доска не отстаёт молча: статусы из трекера не читаются 6 минут. Обновите куку в <code>~/.config/agent-board/jira-cookie.txt</code>, синхронизация возобновится сама.</div>` : ''}
     <dl><dt>Последняя</dt><dd>${state.syncErr ? '14:15:07 — успешно' : 'сегодня, ' + NOW + ' — успешно'}</dd><dt>Интервал</dt><dd>каждые 30 с · только трекер → доска</dd><dt>Соответствие</dt><dd>Closed, Deployed → Готово; Reopened → В работе</dd></dl>
     <h4>Изменения из трекера</h4>
     <ul><li><span class="sdot" style="--c:var(--s-done)"></span><span><span class="mono">PAY-102</span> → Готово (Deployed), разблокированы 4 задачи</span><span class="t">вчера 18:40</span></li>

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import subprocess
@@ -83,6 +84,17 @@ def test_wrapper__relative_symlink__runs_version(tmp_path, home):
     r = run(["version"], home, wrapper=link, cwd=tmp_path)
     # assert
     assert r.returncode == 0 and r.stdout.strip() == pyproject_version()
+
+
+def test_wrapper__copied_outside_repo__explains_how_to_install(tmp_path, home):
+    # arrange: каталог скилла скопирован без репозитория
+    copy = tmp_path / "skills" / "agent-board" / "scripts" / "agent-board"
+    copy.parent.mkdir(parents=True)
+    shutil.copy2(WRAPPER, copy)
+    # act
+    r = run(["version"], home, wrapper=copy, cwd=tmp_path)
+    # assert
+    assert r.returncode != 0 and "install-codex.sh" in r.stderr and "No module" not in r.stderr
 
 
 def test_wrapper__python_missing__clear_error(home):

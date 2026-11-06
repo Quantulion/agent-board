@@ -20,6 +20,10 @@ target="$skills_dir/agent-board"
 
 if [ "$uninstall" = 1 ]; then
     if [ -h "$target" ]; then
+        if [ "$(readlink "$target")" != "$source_dir" ] && [ "$force" != 1 ]; then
+            echo "install-codex.sh: $target links to $(readlink "$target"), not this skill; use --force to remove it" >&2
+            exit 1
+        fi
         rm "$target"
         echo "removed $target"
     elif [ -e "$target" ]; then

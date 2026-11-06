@@ -695,7 +695,7 @@ def _create(board, adapter: TrackerAdapter) -> dict:
                 stopped = True
                 break
             continue
-        url = issue["url"] if _is_http(issue["url"]) else None
+        url = issue["url"] if is_http_url(issue["url"]) else None
         if url is None:
             warnings.append({"key": key, "warning": "Трекер вернул ссылку на задачу %s не по http(s): ссылка не сохранена"
                                                     % issue["key"]})
@@ -732,7 +732,7 @@ def _create(board, adapter: TrackerAdapter) -> dict:
             "events": [e.to_dict() for e in events]}
 
 
-def _is_http(url: Any) -> bool:
+def is_http_url(url: Any) -> bool:
     if not isinstance(url, str):
         return False
     parts = urllib.parse.urlsplit(url)

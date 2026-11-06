@@ -14,7 +14,7 @@ from .config import (
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .model import Event, Message, Proposal, Question, Status, Task
 from .ship import check_request, order as ship_order, settings as ship_settings
-from .tracker import validate_config as validate_tracker
+from .tracker import is_http_url, validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
@@ -29,8 +29,11 @@ UPDATABLE_FIELDS = {
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
     "worktree", "branch", "base_branch", "session_id", "agent_state", "turn_error", "last_turn_at", "harness",
-    "turn_process", "agent_parked", "review", "ship", "tracker_key", "tracker_url",
+    "turn_process", "agent_parked", "review", "ship",
 }
+# привязку к задаче в трекере ставит доска при заведении задач или пользователь для уже существующей задачи
+TRACKER_LINK_FIELDS = {"tracker_key", "tracker_url"}
+MAX_TRACKER_KEY_CHARS = 100
 # формулировку задачи меняет только пользователь: агент не переписывает себе критерий готовности
 TASK_TEXT_FIELDS = {"title", "description", "done_when", "estimate"}
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
@@ -127,6 +130,16 @@ def new_task_from_dict(d: Any) -> Task:
     if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
         raise ValueError("deps задачи должен быть списком строк")
     return Task(**dict(d, deps=list(deps)))
+
+
+def _check_tracker_link(fields: dict) -> None:
+    key = fields.get("tracker_key")
+    if key is not None and (not isinstance(key, str) or not key or len(key) > MAX_TRACKER_KEY_CHARS
+                            or any(c.isspace() for c in key)):
+        raise ValueError("tracker_key: непустая строка без пробелов, до %d символов" % MAX_TRACKER_KEY_CHARS)
+    url = fields.get("tracker_url")
+    if url is not None and not is_http_url(url):
+        raise ValueError("tracker_url: ссылка http(s)")
 
 
 def _check_task_text(fields: dict) -> None:
@@ -510,6 +523,10 @@ class Board:
             owned = set(fields) & RUNNER_FIELDS
             if owned and actor != "system":
                 raise PermissionError("Эти поля меняет только раннер: %s" % ", ".join(sorted(owned)))
+            if set(fields) & TRACKER_LINK_FIELDS:
+                if actor not in ("user", "system"):
+                    raise PermissionError("Привязку к трекеру меняет только пользователь")
+                _check_tracker_link(fields)
             if set(fields) & TASK_TEXT_FIELDS:
                 if actor not in ("user", "system"):
                     raise PermissionError("Формулировку задачи меняет только пользователь")

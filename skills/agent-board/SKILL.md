@@ -20,8 +20,8 @@ starting task agents, tracker issues, shipping — is a button the user presses 
 the directory of this SKILL.md (Claude Code prints it as the skill's base directory; in Codex it is where you
 read this file). Run it as an ordinary shell command, never as a background job: `serve --detach` returns at once.
 Shell state does not persist and zsh does not word-split variables: write the full
-`sh "<skill-dir>/scripts/agent-board" …` in each call, or define
-`ab() { sh "<skill-dir>/scripts/agent-board" "$@"; }` in the same command.
+`sh <skill-dir>/scripts/agent-board …` in each call, spelled the same every time (no helper functions or
+variables), so one permission rule matches it. Quote the path only if it contains spaces.
 Project commands take `--project <slug>` before the subcommand. Harness details: `references/harness-claude.md`
 (Claude Code), `references/harness-codex.md` (Codex; its sandbox blocks localhost and the board home —
 run board commands outside the sandbox).

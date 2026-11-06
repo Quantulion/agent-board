@@ -868,6 +868,29 @@ def test_update__no_actor_env__acts_as_user(srv, capsys):
     assert task["done_when"] == "тесты" and task["rule_violations"] == [{"rule": "r", "text": "t"}]
 
 
+def test_update__tracker_link_by_user__is_saved(srv, capsys):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    # act
+    run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1", "--tracker-url", "https://tracker.example/PRJ-1")
+    # assert
+    task = run_json(capsys, "show", "T-1")
+    assert (task["tracker_key"], task["tracker_url"]) == ("PRJ-1", "https://tracker.example/PRJ-1")
+
+
+@pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
+def test_update__tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
+    # act
+    code, _, err = run(capsys, "update", "T-1", "--tracker-key", "PRJ-1")
+    # assert
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "show", "T-1")["tracker_key"] is None
+
+
 def test_update__rule_violations_by_task_agent__rejected(srv, capsys, monkeypatch):
     # arrange
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')

@@ -9,10 +9,12 @@ Turn the user's input into board tasks with dependencies. `<slug>` is the projec
 | Plan or spec file (writing-plans, brainstorming, grilling output) | Read it whole. Decompose into tasks |
 | Free text in the chat | Same as a plan; ask about gaps before creating anything |
 | Ready list or table of tasks | Do not re-split. Keep the user's tasks, fill missing fields and dependencies. No `done_when` → propose one from the text and list it as an open question; no estimate → open question only, not a violation |
-| Tracker keys (`PRJ-123`) | Treat as ready tasks; read their text only from what the user gives you |
+| Tracker keys (`PRJ-123`) | Treat as ready tasks; read their text only from what the user gives you. Link each one (below) |
 
-Tracker keys are not a board field you can set: the board links tasks to the tracker itself at the tracker stage.
-Put the key in the description (`Tracker: PRJ-123`) and tell the user linking happens after approval.
+An existing tracker issue is linked after `add-task`, as the user:
+`agent-board --project <slug> update PAY-1 --tracker-key PRJ-123` (add `--tracker-url <issue url>` only if the user
+gave it). `tracker create` creates issues only for tasks without a key, so a linked task never gets a duplicate.
+Never leave a known key only in the description: that task would get a second issue.
 
 ## Task fields
 
@@ -20,7 +22,7 @@ Put the key in the description (`Tracker: PRJ-123`) and tell the user linking ha
 
 | Field | Rule |
 |---|---|
-| `key` | `<PREFIX>-<n>`: PREFIX is the upper-cased first word of the slug, max 6 letters (`items-cli` → `ITEMS`, `input-pipeline` → `INPUT`), or the prefix existing tasks use; the user may override. Unique, never starts with `_` |
+| `key` | `<PREFIX>-<n>`: PREFIX is the slug's first word upper-cased, or a short abbreviation of it, 2–6 letters (`items-cli` → `ITEMS`, `payments-pg` → `PAY`), or the prefix existing tasks use; the user may override. Unique, never starts with `_` |
 | `title` | What the task delivers, ≤ 80 characters, imperative ("Add PG schema for payments") |
 | `description` | What to do: scope, files or components, decisions from the plan that apply. Enough for an agent who has not read the plan |
 | `done_when` | A checkable criterion: tests pass, endpoint returns X, report answers Y. Not "done" or "implemented" |
@@ -70,5 +72,5 @@ agent-board --project <slug> deps PAY-3 --json '["PAY-1", "PAY-2"]'
 
 ## Summary for the user
 
-Created (keys), updated, skipped as duplicates, open questions (also saved in `project_brief`, SKILL.md step 6). No agent has started: work starts when the user
+Created (keys), linked to existing tracker issues, updated, skipped as duplicates, open questions (also saved in `project_brief`, SKILL.md step 6). No agent has started: work starts when the user
 approves the decomposition on the page.

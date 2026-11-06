@@ -232,7 +232,7 @@ def test_secret_token__env_name_only__passes(env):
 
 def test_secret_token__cookie_file_path__passes(env):
     # arrange
-    _jira_board(env, {"type": "cookie_file", "path": "~/keys/jira.txt"})
+    _jira_board(env, {"type": "cookie_file", "path": "~/.config/agent-board/jira-cookie.txt"})
     # act / assert
     assert _errors(env, "4") == []
 

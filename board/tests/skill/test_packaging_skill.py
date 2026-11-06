@@ -112,3 +112,34 @@ def test_install_codex_force_replaces_foreign_symlink_without_touching_target(tm
     assert forced.returncode == 0
     assert os.path.realpath(skills / "agent-board") == str(SKILL_DIR.resolve())
     assert (other / "keep.txt").read_text() == "k"
+
+
+def test_readme_install_line__uses_marketplace_name():
+    # arrange
+    market = json.loads((ROOT / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    # act
+    installs = re.findall(r"/plugin install (\S+)", readme)
+
+    # assert
+    assert installs and all(i == "agent-board@" + market["name"] for i in installs)
+
+
+def test_install_codex_uninstall__foreign_symlink__refused_unless_forced(tmp_path):
+    # arrange
+    other = tmp_path / "other"
+    other.mkdir()
+    skills = tmp_path / "skills"
+    skills.mkdir()
+    link = skills / "agent-board"
+    link.symlink_to(other)
+
+    # act
+    refused = _run(tmp_path, "--uninstall")
+    kept = link.is_symlink()
+    forced = _run(tmp_path, "--uninstall", "--force")
+
+    # assert
+    assert refused.returncode == 1 and "--force" in refused.stderr and kept
+    assert forced.returncode == 0 and not link.is_symlink() and other.is_dir()
