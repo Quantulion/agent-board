@@ -444,3 +444,86 @@ def test_runner_harness_allows_crit_comment_only_for_crit_review(tmp_home):
     assert "Bash(crit comment:*)" in tools({"tool": "crit"})
     assert "Bash(/opt/crit comment:*)" in tools({"tool": "crit", "binary": "/opt/crit"})
     assert not any("crit" in a for a in tools({"tool": "none"}))
+
+
+# --- сигналы группе процессов после завершения лидера ---
+
+@pytest.fixture
+def killpg_calls(monkeypatch):
+    """Записывает сигналы группам процессов; проверка существования (сигнал 0) проходит как есть."""
+    real = os.killpg
+    calls = []
+
+    def record(pgid, sig):
+        calls.append((pgid, sig))
+        return real(pgid, sig)
+
+    monkeypatch.setattr(os, "killpg", record)
+    return calls
+
+
+def _sent(calls, pgid):
+    return [sig for p, sig in calls if p == pgid and sig != 0]
+
+
+def test_signal_group__reaped_leader_and_empty_group__sends_nothing(killpg_calls):
+    # arrange: номер группы собранного лидера без участников мог занять чужой процесс
+    from agent_board.harness import signal_group
+    import signal
+
+    proc = subprocess.Popen(["true"], start_new_session=True)
+    proc.wait()
+    # act
+    signal_group(proc, signal.SIGKILL)
+    # assert
+    assert _sent(killpg_calls, proc.pid) == []
+
+
+def test_signal_group__reaped_leader_with_live_member__kills_group(killpg_calls):
+    # arrange
+    from agent_board.harness import signal_group
+    import signal
+    import time
+
+    proc = subprocess.Popen(["bash", "-c", "sleep 30 & echo $!"], start_new_session=True, stdout=subprocess.PIPE,
+                            text=True)
+    child = int(proc.stdout.readline())
+    proc.wait()
+    proc.stdout.close()
+    # act
+    signal_group(proc, signal.SIGKILL)
+    # assert
+    assert _sent(killpg_calls, proc.pid) == [signal.SIGKILL]
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("участник группы не завершён")
+
+
+def test_terminate__already_reaped_leader__sends_nothing(killpg_calls):
+    # arrange
+    from agent_board.harness import terminate
+
+    proc = subprocess.Popen(["true"], start_new_session=True)
+    proc.wait()
+    # act
+    terminate(proc, 1.0)
+    # assert
+    assert _sent(killpg_calls, proc.pid) == []
+
+
+def test_kill_round__reaped_review_client__sends_nothing(killpg_calls):
+    # arrange
+    from agent_board.review import kill_round
+
+    proc = subprocess.Popen(["true"], start_new_session=True)
+    proc.wait()
+    # act
+    kill_round(proc)
+    # assert
+    assert _sent(killpg_calls, proc.pid) == []

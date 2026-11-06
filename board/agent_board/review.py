@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, List, Optional
 
+from .harness import signal_group
+
 REVIEW_TOOLS = ("crit", "none")
 DEFAULT_BINARY = "crit"
 COMMENTS_TIMEOUT = 30.0
@@ -137,7 +139,7 @@ class CritReview:
                 stdout = out[0] if out else ""
                 f.write(stdout if stdout.endswith("\n") or not stdout else stdout + "\n")
         except BaseException:
-            kill_group(proc.pid)
+            kill_round(proc)
             raise
         if NO_SESSION_MARK in tail:
             return RoundResult("no_session", error=tail.strip(), session=session)
@@ -267,6 +269,11 @@ def make_review(config: dict):
 def port_of(url: Optional[str]) -> Optional[int]:
     m = _PORT.match(url or "")
     return int(m.group(1)) if m else None
+
+
+def kill_round(proc) -> None:
+    """Останавливает клиент раунда (наш дочерний процесс) без SIGTERM, как kill_group."""
+    signal_group(proc, signal.SIGKILL)
 
 
 def kill_group(pgid: Optional[int]) -> None:

@@ -11,6 +11,7 @@ import pytest
 
 from agent_board import harness as harness_mod
 from agent_board import runner as runner_mod
+from agent_board import ship as ship_module
 from agent_board.board import new_task_from_dict
 from agent_board.config import ProjectConfig
 from agent_board.harness import FakeHarness
@@ -1843,3 +1844,35 @@ def test_ship_timeout_message_uses_timeout_of_the_run(make_project, start_server
     wait_ship(store, "T-1")
     # assert
     assert any("(1 с)" in t for t in thread_texts(store, "T-1"))
+
+
+def test_ship_finished_command_without_children__no_signal_to_its_group(make_project, start_server, calls,
+                                                                        monkeypatch):
+    # arrange: после сбора лидера пустая группа не получает сигналов — её номер мог занять чужой процесс
+    store = make_project(ship={"command": "echo {key}"})
+    srv = start_server()
+    approved(srv, store, "T-1")
+    started = []
+    real_start = ship_module.start
+
+    def start(*args, **kwargs):
+        proc = real_start(*args, **kwargs)
+        started.append(proc.pid)
+        return proc
+
+    real_killpg = os.killpg
+    signals = []
+
+    def killpg(pgid, sig):
+        signals.append((pgid, sig))
+        return real_killpg(pgid, sig)
+
+    monkeypatch.setattr(ship_module, "start", start)
+    monkeypatch.setattr(os, "killpg", killpg)
+    # act
+    send(srv, "T-1")
+    state = wait_ship(store, "T-1")
+    runner_sync(srv)
+    # assert
+    assert state["state"] == "done" and started
+    assert [sig for pgid, sig in signals if pgid == started[0] and sig != 0] == []

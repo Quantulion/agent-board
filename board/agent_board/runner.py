@@ -23,11 +23,12 @@ from .harness import (
     is_same_process,
     make_harness,
     terminate,
+    signal_group,
     terminate_group,
     turn_process_record,
 )
 from .model import Event, Status, Task
-from .review import RoundResult, kill_group, make_review, port_of
+from .review import RoundResult, kill_group, kill_round, make_review, port_of
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
 from .worktree import (
@@ -228,7 +229,7 @@ class Runner:
         а следующий старт переподключится к ней (на доске раунд остаётся открытым)."""
         for rv in list(self._reviews.values()):
             rv.stopped = True
-            kill_group(rv.proc.pid)
+            kill_round(rv.proc)
             try:
                 rv.proc.wait(timeout=5)
             except Exception:
@@ -994,7 +995,7 @@ class Runner:
         try:
             threading.Thread(target=watch, name="board-review-%s" % key, daemon=True).start()
         except BaseException:
-            kill_group(proc.pid)
+            kill_round(proc)
             raise
         self._reviews[k] = rv
         state.setdefault("url", None)
@@ -1261,11 +1262,8 @@ class Runner:
                 code = proc.poll()
             except Exception:
                 traceback.print_exc(file=sys.stderr)
-            try:
-                # после команды в группе ничего не остаётся: фоновые потомки не переживают отправку
-                os.killpg(proc.pid, signal.SIGKILL)
-            except OSError:
-                pass
+            # после команды в группе ничего не остаётся: фоновые потомки не переживают отправку
+            signal_group(proc, signal.SIGKILL)
             self._inbox.put(("ship_done", k, sh, code, timed_out))
 
         try:

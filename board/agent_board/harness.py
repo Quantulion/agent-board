@@ -121,33 +121,40 @@ def _feed_stdin(proc, text: str) -> None:
 
 
 def _kill_group(proc) -> None:
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except (OSError, ProcessLookupError):
-        pass
+    signal_group(proc, signal.SIGKILL)
     try:
         proc.wait()
     except Exception:
         pass
 
 
-def terminate(proc, grace: float) -> None:
-    """Останавливает группу процессов хода: SIGTERM, через grace секунд SIGKILL."""
+def signal_group(proc, sig: int) -> bool:
+    """Шлёт сигнал группе процессов нашего дочернего proc; False — сигнал не отправлен.
+
+    Если лидер уже собран и в группе никого не осталось, её номер мог достаться чужому процессу — такую группу
+    не трогаем.
+    """
     pid = getattr(proc, "pid", None)
     if not pid:
-        return
+        return False
+    if getattr(proc, "returncode", None) is not None and not group_alive(pid):
+        return False
     try:
-        os.killpg(pid, signal.SIGTERM)
+        os.killpg(pid, sig)
     except OSError:
+        return False
+    return True
+
+
+def terminate(proc, grace: float) -> None:
+    """Останавливает группу процессов хода: SIGTERM, через grace секунд SIGKILL."""
+    if not signal_group(proc, signal.SIGTERM):
         return
     try:
         proc.wait(timeout=grace)
     except subprocess.TimeoutExpired:
         pass
-    try:
-        os.killpg(pid, signal.SIGKILL)
-    except OSError:
-        pass
+    signal_group(proc, signal.SIGKILL)
 
 
 def group_alive(pgid: int) -> bool:
