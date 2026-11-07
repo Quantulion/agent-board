@@ -121,6 +121,25 @@ def test_commit_all_without_reports_ignore_skips_new_agent_report(git_repo):
     assert (p / "reports" / "T-1.md").exists()
 
 
+@pytest.mark.parametrize("ignore_line", ["reports/", "reports", "/reports/"])
+def test_commit_all_reports_in_gitignore_commits_without_report(git_repo, ignore_line):
+    # arrange
+    (git_repo / ".gitignore").write_text(ignore_line + "\n")
+    run_git(git_repo, "add", "-A")
+    run_git(git_repo, "commit", "-m", "ignore reports")
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "reports").mkdir()
+    (p / "reports" / "T-1.md").write_text("report")
+    (p / "new.txt").write_text("n")
+    # act
+    sha = commit_all(p, "T-1 title")
+    # assert
+    assert sha
+    committed = run_git(p, "show", "--name-only", "--format=", "HEAD").split()
+    assert committed == ["new.txt"]
+    assert (p / "reports" / "T-1.md").exists()
+
+
 def test_commit_all_only_agent_report_left_returns_none(git_repo):
     # arrange
     p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
