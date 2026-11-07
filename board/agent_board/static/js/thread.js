@@ -95,8 +95,13 @@ export function createThread({
   const area = h('textarea', { placeholder, 'aria-label': placeholder });
   area.value = drafts.get(draftKey);
   const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.send);
+  // прервать идущий ход агента: видна, только пока агент этого треда работает
+  const interrupt = h('input', { type: 'checkbox' });
+  const interruptLabel = h('label', { class: 'toggle interrupt', title: T.card.interruptHint, hidden: true },
+    interrupt, ' ' + T.card.interrupt);
   const composer = h('div', { class: 'composer' }, area,
-    h('div', { class: 'row' }, h('span', { class: 'faint hint' }, hint || T.card.composerHint), send));
+    h('div', { class: 'row' }, h('span', { class: 'faint hint' }, hint || T.card.composerHint),
+      h('div', { class: 'acts' }, interruptLabel, send)));
   area.addEventListener('input', () => drafts.set(draftKey, area.value));
   area.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
@@ -145,20 +150,29 @@ export function createThread({
     client.post(path + '/read').catch(() => {}).finally(() => { reading = false; });
   }
 
+  function setRunning(on) {
+    interruptLabel.hidden = !on;
+    // ход закончился — прерывать нечего, отметка не должна сработать на следующем ходе
+    if (!on) interrupt.checked = false;
+  }
+
   function submit() {
     const text = area.value.trim();
     if (!text || send.disabled || locked) return;
     // поле сразу свободно для следующего сообщения; при ошибке отправленный текст возвращается в него
     const sent = area.value;
+    const stop = interrupt.checked && !interruptLabel.hidden;
     area.value = '';
     drafts.set(draftKey, '');
+    interrupt.checked = false;
     send.disabled = true;
     sending = true;
     sendError.hidden = true;
-    client.post(path + '/messages', { author: 'user', text })
+    client.post(path + '/messages', stop ? { author: 'user', text, interrupt: true } : { author: 'user', text })
       .then(() => { if (alive()) toBottom(); })
       .catch(err => {
         area.value = area.value ? sent + '\n\n' + area.value : sent;
+        if (stop && !interruptLabel.hidden) interrupt.checked = true;
         drafts.set(draftKey, area.value);
         sendError.textContent = (err && err.message) || String(err);
         sendError.hidden = false;
@@ -174,12 +188,14 @@ export function createThread({
     list: [loadError, list, empty, indicator.el],
     composer: [composer, sendError],
     area,
+    interrupt,
     // meta — {size, unread, agent}: число сообщений на сервере, непрочитанное и состояние агента
     // из threadAgentModel (без agent индикатора нет)
     paint(meta) {
       const stick = Boolean(meta.agent) && indicator.el.hidden && visible() && atBottom();
       indicator.paint(meta.agent || null);
       if (stick) toBottom();
+      setRunning(Boolean(meta.agent && meta.agent.kind === 'running'));
       size = meta.size || 0;
       unread = meta.unread || 0;
       empty.hidden = messages.length > 0 || size > 0;
