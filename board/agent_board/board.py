@@ -19,9 +19,15 @@ from .tracker import check_issue_key, is_http_url, validate_config as validate_t
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
-AGENT_FORBIDDEN = {Status.APPROVED, Status.DONE, Status.SENT, Status.CANCELLED}
+# агент задачи только берёт задачу в работу и сдаёт её на ревью (ожидание ответа ставит вопрос)
+AGENT_FORBIDDEN = {Status.APPROVED, Status.DONE, Status.SENT, Status.CANCELLED, Status.NOT_STARTED}
 AGENT_LOCKED = {Status.DONE, Status.CANCELLED}
 RETURNED_FROM = {Status.IN_REVIEW, Status.APPROVED, Status.SENT, Status.DONE}
+# статусы, которые агент проекта ставит сам по просьбе пользователя, если это разрешено настройкой
+# project_agent_status; одобрение остаётся за пользователем: оно коммитит работу и может запустить отправку
+PROJECT_AGENT_STATUSES = {Status.DONE, Status.IN_PROGRESS, Status.NOT_STARTED, Status.CANCELLED}
+# акторы, которые меняют статус от имени пользователя: возврат в работу будит агента задачи, завершение — зависимых
+USER_SIDE = {"user", "project_agent"}
 UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "ship", "worktree", "branch", "base_branch",
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
@@ -433,13 +439,16 @@ class Board:
                     events.append(self._emit("deps_changed", {"key": dep_key, "deps": list(t.deps)}))
                 events.extend(self._retire_proposals())
 
+            if actor == "project_agent":
+                events.append(self._append_message(
+                    key, "system", msg("board.project_agent_moved", prev=prev.value, to=to.value))[1])
             events.extend(self._unblocked(before, affected))
-            if actor in ("user", "tracker") and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
+            if actor in USER_SIDE | {"tracker"} and to == Status.IN_PROGRESS and prev in RETURNED_FROM:
                 events.append(self._emit("agent_wake", dict(wake_extra or {}, key=key, reason="returned",
                                                             **{"from": prev.value})))
-            if (actor in ("user", "tracker") or auto) and to in (Status.APPROVED, Status.DONE):
+            if (actor in USER_SIDE | {"tracker"} or auto) and to in (Status.APPROVED, Status.DONE):
                 events.extend(self._rebase_wakes(key, affected))
-            if actor == "user":
+            if actor in USER_SIDE:
                 events.extend(self._manual_wake(task, prev))
             if actor == "agent" and to == Status.IN_REVIEW and task.kind != "research" \
                     and self.store.load_config().auto_approve is True:
@@ -449,16 +458,19 @@ class Board:
 
     def _check_transition(self, key: str, to: Status, actor: str) -> Status:
         """Проверяет переход без изменений; возвращает целевой статус."""
-        self._reject_project_agent(actor)
-        if actor not in ACTORS:
+        if actor == "project_agent":
+            self._check_project_agent_status()
+        elif actor not in ACTORS:
             raise ValueError(msg("board.unknown_actor", actor=actor))
         to = Status(to)
         if to == Status.BLOCKED:
             raise ValueError(msg("board.blocked_computed"))
+        if actor == "project_agent" and to not in PROJECT_AGENT_STATUSES:
+            raise PermissionError(msg("board.project_agent_status", status=to.value))
         if actor == "agent" and to in AGENT_FORBIDDEN:
             raise PermissionError(msg("board.agent_status", status=to.value))
         task = self._get(self.store.load_tasks(), key)
-        # закрытую задачу открывает заново только пользователь
+        # закрытую задачу агент задачи заново не открывает
         if actor == "agent" and task.status in AGENT_LOCKED:
             raise PermissionError(msg("board.agent_status_locked", status=task.status.value))
         return to
@@ -654,6 +666,13 @@ class Board:
                 if actor not in ("user", "system"):
                     raise PermissionError(msg("board.wording_user_only"))
                 _check_task_text(fields)
+            if "external_blocker" in fields:
+                if actor == "project_agent":
+                    self._check_project_agent_status()
+                elif actor not in ("user", "system", "tracker"):
+                    raise PermissionError(msg("board.blocker_user_only"))
+                if fields["external_blocker"] is not None and not isinstance(fields["external_blocker"], str):
+                    raise ValueError(msg("board.blocker_type"))
             if "rule_violations" in fields:
                 if actor not in RULE_VIOLATION_AUTHORS:
                     raise PermissionError(msg("board.violations_actor"))
@@ -1048,6 +1067,11 @@ class Board:
         names = [r.get("name") for r in self.store.load_config().repos if isinstance(r, dict)]
         if repo and names and repo not in names:
             raise ValueError(msg("board.unknown_repo", repo=repo, names=", ".join(map(str, names))))
+
+    def _check_project_agent_status(self) -> None:
+        """Агент проекта меняет статусы и внешний блокер сам, только если пользователь включил это в настройках."""
+        if not self.store.load_config().project_agent_status:
+            self._reject_project_agent("project_agent")
 
     @staticmethod
     def _reject_project_agent(actor: str) -> None:

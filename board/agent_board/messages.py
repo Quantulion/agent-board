@@ -281,6 +281,15 @@ CATALOG: Dict[str, tuple] = {
                            "Репозиторий {repo} не из настроек проекта: {names}"),
     "board.graph_via_proposals": ("The project agent changes the graph only through proposals",
                                   "Агент проекта меняет граф только через предложения"),
+    "board.project_agent_status": ("The project agent cannot set status {status}: prepare a set_status proposal for "
+                                   "the user to apply",
+                                   "Агент проекта не может ставить статус {status}: подготовьте предложение "
+                                   "set_status, его применит пользователь"),
+    "board.project_agent_moved": ("The project agent moved the task from {prev} to {to}",
+                                  "Агент проекта перевёл задачу из {prev} в {to}"),
+    "board.blocker_user_only": ("Only the user sets and removes the external blocker",
+                                "Внешний блокер ставит и снимает только пользователь"),
+    "board.blocker_type": ("external_blocker must be a string or null", "external_blocker должен быть строкой или null"),
     "board.unknown_task": ("Unknown task: {key}", "Неизвестная задача: {key}"),
     "board.bad_ident": ("Invalid identifier ({what}): {value!r}", "Недопустимый идентификатор ({what}): {value!r}"),
     "board.ident_project": ("project", "проект"),
@@ -371,6 +380,8 @@ CATALOG: Dict[str, tuple] = {
                              "harness.allowed_tools должен быть списком строк"),
     "config.chains": ("chains must be true or false", "chains должен быть true или false"),
     "config.auto_approve": ("auto_approve must be true or false", "auto_approve должен быть true или false"),
+    "config.project_agent_status": ("project_agent_status must be true or false",
+                                    "project_agent_status должен быть true или false"),
     "config.tracker_object": ("tracker must be an object with a type field",
                               "tracker должен быть объектом с полем type"),
     # --- трекер ---

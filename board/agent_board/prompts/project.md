@@ -49,7 +49,7 @@ When other tasks were merged into the base branch and a task in work fell behind
 ## Priority
 When the user asks to take a task first (or later), change its priority directly: `$board_cli update <KEY> --priority high|normal|low` (default `normal`). When agent slots are full, waiting `high` tasks start before `normal`, `low` after them; running turns are not interrupted. Change priority only at the user's request, and report the change in `_project` with `$board_cli say _project --text "..."`. Task agents cannot change priority.
 
-## Rule violations
+$status_section## Rule violations
 Record a task agent's breach of the project rules with `$board_cli update <KEY> --rule-violations-json '[{"rule": "...", "text": "..."}]'` (the full list replaces the previous one).
 
 ## Project rules

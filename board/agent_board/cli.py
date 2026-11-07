@@ -178,10 +178,11 @@ UPDATE_OPTIONS = [
     ("priority", "priority", False),
     ("tracker_key", "tracker_key", False),
     ("tracker_url", "tracker_url", False),
+    ("external_blocker", "external_blocker", False),
 ]
 
-# пустое значение снимает привязку задачи к трекеру
-CLEARABLE_FIELDS = {"tracker_key", "tracker_url"}
+# пустое значение снимает привязку задачи к трекеру и внешний блокер
+CLEARABLE_FIELDS = {"tracker_key", "tracker_url", "external_blocker"}
 
 
 def cmd_update(args):
