@@ -457,6 +457,30 @@ def test_transition_invalid_status_leaves_state_unchanged(board):
     assert snap["tasks"][0]["status"] == "not_started" and snap["last_seq"] == last
 
 
+@pytest.mark.parametrize("closed", [Status.DONE, Status.CANCELLED])
+def test_transition__agent_on_closed_task__rejected_and_status_kept(board, closed):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", closed, "user")
+    last = board.snapshot()["last_seq"]
+    # act / assert
+    for to in (Status.IN_REVIEW, Status.IN_PROGRESS):
+        with pytest.raises(PermissionError):
+            board.transition("A", to, "agent")
+    snap = board.snapshot()
+    assert snap["tasks"][0]["status"] == closed.value and snap["last_seq"] == last
+
+
+def test_transition__user_reopens_done_task__allowed(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.DONE, "user")
+    # act
+    board.transition("A", Status.IN_PROGRESS, "user")
+    # assert
+    assert board.snapshot()["tasks"][0]["status"] == "in_progress"
+
+
 def test_project_agent_cannot_change_graph(board):
     board.add_task(mk("A"), "user")
     board.add_task(mk("B"), "user")

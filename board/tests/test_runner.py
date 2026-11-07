@@ -1341,6 +1341,52 @@ def test_approved_task_gets_no_turn_until_returned(make_project, start_server, c
     assert not store.load_meta()["runner_pending"]
 
 
+def test_done_task_with_deferred_wake_gets_no_turn_until_returned(make_project, start_server, calls):
+    # arrange: одобренная задача копит сообщение агента проекта
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1", script({"write": {"path": "f.txt", "text": "x"}}))
+    wait_events(store, "turn_finished", "T-1")
+    board.transition("T-1", Status.APPROVED, "user")
+    wait_events(store, "task_committed", "T-1")
+    board.post_message("T-1", "project_agent", "проверь ещё логи")
+    runner_sync(srv)
+    assert [r["reason"] for r in store.load_meta()["runner_pending"]["T-1"]] == ["message"]
+    # act
+    board.transition("T-1", Status.DONE, "user")
+    runner_sync(srv)
+    # assert: ход не запущен, задача осталась в done, причина ждёт возврата в работу
+    assert len(calls) == 1
+    assert task(store, "T-1").status == Status.DONE
+    assert task(store, "T-1").agent_state == "idle"
+    assert [r["reason"] for r in store.load_meta()["runner_pending"]["T-1"]] == ["message"]
+    # act: пользователь возвращает задачу в работу
+    board.transition("T-1", Status.IN_PROGRESS, "user")
+    wait_events(store, "turn_finished", "T-1", count=2)
+    runner_sync(srv)
+    # assert
+    assert [c["kind"] for c in calls] == ["start", "resume"]
+    assert "проверь ещё логи" in calls[1]["text"]
+
+
+def test_message_to_done_task_gets_no_turn(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+    board.transition("T-1", Status.DONE, "user")
+    runner_sync(srv)
+    # act
+    board.post_message("T-1", "user", "а ещё вот что")
+    runner_sync(srv)
+    # assert
+    assert len(calls) == 1
+    assert task(store, "T-1").status == Status.DONE
+
+
 def test_task_agents_start_only_in_work_stage(make_project, start_server, calls):
     # arrange: T-3 готова, но пробуждения о ней не было
     store = make_project(stage="decomposition", project_session_id="p-0")
