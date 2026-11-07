@@ -847,3 +847,9 @@ span.chip.trk { font-family: var(--mono); font-size: 11px; }
 .settings input.num { width: 120px; }
 .settings textarea.json { font-size: 12.5px; line-height: 1.4; min-height: 0; white-space: pre; overflow-wrap: normal; overflow-x: auto; }
 .settings .hint.mono { overflow-wrap: anywhere; }
+/* кнопка «Повторить» у ошибки хода агента */
+.retry { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sec.err .retry { margin-top: 8px; }
+.retry .retry-err { padding: 3px 8px; }
+.attn-retry { display: inline-flex; align-items: center; gap: 4px; }
+.attn-retry .btn { height: 26px; }

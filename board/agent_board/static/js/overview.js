@@ -9,6 +9,7 @@ import { proposalNote, proposalSignature, proposalsTouching } from './project.js
 import { shipSection } from './ship.js';
 import { slotNote, slotWait } from './slot.js';
 import { externalBlockerDialog } from './status.js';
+import { retryControl } from './retry.js';
 import { formatTime } from './thread.js';
 import { toast } from './ui.js';
 
@@ -36,8 +37,11 @@ export function overviewPane(pc) {
       proposals.hidden = !touching.length;
       const wait = slotWait(t.agent_state, t.wait_reason, snap.config);
       parts.slot.paint(wait, () => wait ? slotNote(wait) : null);
-      parts.error.paint(t.turn_error, () => t.turn_error ? h('section', { class: 'sec err' },
-        h('h3', null, icon('warn'), T.card.turnError), h('pre', { class: 'errtext' }, t.turn_error)) : null);
+      const failed = t.agent_state === 'error';
+      parts.error.paint([t.turn_error, failed], () => t.turn_error || failed ? h('section', { class: 'sec err' },
+        h('h3', null, icon('warn'), T.card.turnError),
+        t.turn_error ? h('pre', { class: 'errtext' }, t.turn_error) : null,
+        failed ? retryControl(client, key, () => toast(T.agentRetry.started(key))).el : null) : null);
       parts.ship.paint(t.ship || null, () => shipSection(t));
       const violations = t.rule_violations || [];
       parts.violations.paint(violations, () => violations.length ? sec(T.card.violations,

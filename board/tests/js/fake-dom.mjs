@@ -4,6 +4,11 @@ class FakeNode {
   get children() { return this.childNodes.filter(n => n.nodeType === 1); }
   get firstChild() { return this.childNodes[0] || null; }
   get textContent() { return this.childNodes.map(n => n.textContent).join(''); }
+  set textContent(text) {
+    this.childNodes.forEach(n => { n.parentNode = null; });
+    this.childNodes = text === '' ? [] : [new FakeText(text)];
+    this.childNodes.forEach(n => { n.parentNode = this; });
+  }
   _adopt(node) {
     if (node.nodeType === 11) return [...node.childNodes].flatMap(n => this._adopt(n));
     if (node.parentNode) node.parentNode._detach(node);
