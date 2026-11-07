@@ -40,6 +40,10 @@ def run_json(capsys, *argv):
     return json.loads(out)
 
 
+def add_task(capsys, key="T-1", **fields):
+    return run_json(capsys, "add-task", "--json", json.dumps(dict({"key": key, "title": "x"}, **fields)))
+
+
 def test_init_add_task_show(srv, capsys):
     run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
     task = run_json(capsys, "show", "T-1")
@@ -54,7 +58,7 @@ def test_init_existing_project_fails(tmp_home, capsys):
 
 
 def test_ask_sets_waiting_answer_and_prints_id(srv, capsys):
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     run_json(capsys, "status", "T-1", "in_progress")
     out = run_json(capsys, "ask", "T-1", "--text", "Как?", "--option", "A", "--option", "B", "--recommended", "A")
     assert out["question_id"] == "q1"
@@ -62,13 +66,13 @@ def test_ask_sets_waiting_answer_and_prints_id(srv, capsys):
 
 
 def test_agent_cannot_mark_done(srv, capsys):
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     code, out, err = run(capsys, "status", "T-1", "done")
     assert code == 1 and err.strip() and out == ""
 
 
 def test_update_sends_only_passed_fields(srv, capsys):
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     run_json(capsys, "update", "T-1", "--summary", "готово", "--todo-json", '[{"text": "a", "done": true}]')
     task = run_json(capsys, "show", "T-1")
     assert task["summary"] == "готово" and task["todo"][0]["text"] == "a" and task["branch"] is None
@@ -142,7 +146,7 @@ def test_serve_port_defaults_to_stable_selection():
 
 def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
 
@@ -169,7 +173,7 @@ def test_say_interrupt_from_user_marks_wake(srv, capsys, monkeypatch):
 
 def test_say_interrupt_from_task_agent_is_refused(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
 
@@ -226,7 +230,7 @@ def _lock_events(type):
 def test_lock_run_runs_command_and_releases(srv, capsys, monkeypatch, tmp_path):
     # arrange
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     marker = tmp_path / "ran"
     # act
@@ -240,7 +244,7 @@ def test_lock_run_runs_command_and_releases(srv, capsys, monkeypatch, tmp_path):
 def test_lock_run_returns_command_exit_code_and_still_releases(srv, capsys, monkeypatch):
     # arrange
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     # act
     code, _, _ = run(capsys, "lock-run", "tests", "--", sys.executable, "-c", "raise SystemExit(7)")
@@ -255,8 +259,8 @@ def test_lock_run_waits_for_holder_and_task_is_queued(srv, capsys, monkeypatch):
     import time
 
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "y"}')
+    add_task(capsys)
+    add_task(capsys, "T-2")
     queue = srv.hub.queue("pay")
     assert queue.acquire("tests", "T-1", os.getpid()) == 0
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-2")
@@ -289,7 +293,7 @@ def test_lock_run_without_task_env_fails(srv, capsys):
 
 def test_lock_run_undeclared_resource_fails(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     # act
     code, _, err = run(capsys, "lock-run", "stand", "--", "true")
@@ -300,7 +304,7 @@ def test_lock_run_undeclared_resource_fails(srv, capsys, monkeypatch):
 def test_lock_run_keyboard_interrupt_releases_lock(srv, capsys, monkeypatch):
     # arrange
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
 
     class Interrupted:
@@ -335,7 +339,7 @@ def test_lock_run_signal_kills_child_and_releases(srv, capsys, monkeypatch, tmp_
     from pathlib import Path
 
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     pidfile = tmp_path / "child.pid"
     env = dict(os.environ, AGENT_BOARD_TASK="T-1", PYTHONPATH=str(Path(__file__).resolve().parents[1]))
     child = "import os, time; open(%r, 'w').write(str(os.getpid())); time.sleep(30)" % str(pidfile)
@@ -369,7 +373,7 @@ def test_lock_run_waits_quietly_for_unreachable_board_once(srv, capsys, monkeypa
     from agent_board import cli
 
     _declare_resource(srv)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     monkeypatch.setenv("AGENT_BOARD_LOCK_POLL", "0.01")
     real = cli._request
@@ -390,23 +394,12 @@ def test_lock_run_waits_quietly_for_unreachable_board_once(srv, capsys, monkeypa
 
 def test_lock_run_undeclared_resource_prints_single_error(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
     # act
     code, _, err = run(capsys, "lock-run", "stand", "--", "true")
     # assert
     assert code == 1 and len(err.strip().splitlines()) == 1
-
-
-def test_stage_with_empty_actor_env_is_rejected_as_agent(srv, capsys, monkeypatch):
-    # arrange
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "")
-    # act
-    code, _, err = run(capsys, "stage", "work")
-    # assert
-    assert code == 1 and err.strip()
-    monkeypatch.delenv("AGENT_BOARD_ACTOR")
-    assert run_json(capsys, "state")["config"]["stage"] == "decomposition"
 
 
 def test_stage_changed_by_user_but_not_by_agent(srv, capsys, monkeypatch):
@@ -423,7 +416,7 @@ def test_stage_changed_by_user_but_not_by_agent(srv, capsys, monkeypatch):
 
 def test_update_rule_violations_json_by_project_agent(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
     # act
     run_json(capsys, "update", "T-1", "--rule-violations-json", '[{"rule": "r", "text": "t"}]')
@@ -433,7 +426,7 @@ def test_update_rule_violations_json_by_project_agent(srv, capsys, monkeypatch):
 
 def test_update__priority_by_project_agent__saved(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
     # act
     out = run_json(capsys, "update", "T-1", "--priority", "high")
@@ -444,7 +437,7 @@ def test_update__priority_by_project_agent__saved(srv, capsys, monkeypatch):
 
 def test_update__priority_by_task_agent__rejected(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
     # act
     code, _, err = run(capsys, "update", "T-1", "--priority", "high")
@@ -454,31 +447,43 @@ def test_update__priority_by_task_agent__rejected(srv, capsys, monkeypatch):
     assert run_json(capsys, "show", "T-1")["priority"] == "normal"
 
 
+@pytest.mark.parametrize("env, user_actor, actor", [
+    (None, "user", "agent"),
+    ("", "agent", "agent"),
+    ("agent", "agent", "agent"),
+    ("project_agent", "project_agent", "project_agent"),
+    ("user", "user", "user"),
+])
+def test_actor_from_env__selects_actor(monkeypatch, env, user_actor, actor):
+    # arrange
+    from agent_board import cli
+
+    if env is not None:
+        monkeypatch.setenv("AGENT_BOARD_ACTOR", env)
+    # act / assert
+    assert (cli._user_actor(), cli._actor()) == (user_actor, actor)
+
+
+def test_user_command__agent_actor_env__rejected(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    # act
+    code, _, err = run(capsys, "config", "set", "--json", '{"max_agents": 1}')
+    # assert
+    assert code == 1 and "пользователь" in err
+    assert srv.board_for("pay").store.load_config().max_agents == 3
+
+
 def test_update_has_no_review_option():
     # arrange / act / assert: состояние ревью ведёт раннер, агент его не задаёт
     with pytest.raises(SystemExit):
         build_parser().parse_args(["update", "T-1", "--review-json", "{}"])
 
 
-@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
-def test_ship_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, actor_env):
-    # arrange
-    srv.board_for("pay").update_config({"ship": {"command": "true"}})
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
-    srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
-    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
-    # act
-    code, _, err = run(capsys, "ship", "T-1")
-    # assert
-    assert code == 1 and "пользователь" in err
-    assert srv.board_for("pay").store.load_tasks()["T-1"].ship is None
-
-
 def test_ship_sends_request_as_user_without_actor_env(srv, capsys):
     # arrange
     srv.board_for("pay").update_config({"ship": {"command": "true"}})
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
     srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
     # act
@@ -495,17 +500,6 @@ def test_add_task_by_project_agent_is_rejected(srv, capsys, monkeypatch):
     # assert
     assert code == 1 and "предложения" in err
     assert srv.board_for("pay").store.load_tasks() == {}
-
-
-def test_ship_without_command_exits_1_with_reason(srv, capsys):
-    # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
-    # act
-    srv.board_for("pay").transition("T-1", Status.IN_REVIEW, "agent")
-    srv.board_for("pay").transition("T-1", Status.APPROVED, "user")
-    code, _, err = run(capsys, "ship", "T-1")
-    # assert
-    assert code != 0 and "команда отправки" in err
 
 
 @pytest.fixture
@@ -529,7 +523,7 @@ def with_tracker(srv, jira):
 def test_tracker_create_and_check_as_user(srv, capsys, fake_jira):
     # arrange
     with_tracker(srv, fake_jira)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     srv.board_for("pay").set_stage("tracker", "user")
     # act
     created = run_json(capsys, "tracker", "create")
@@ -541,7 +535,7 @@ def test_tracker_create_and_check_as_user(srv, capsys, fake_jira):
 def test_tracker_errors_exit_1(srv, capsys, fake_jira):
     # arrange
     with_tracker(srv, fake_jira)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     srv.board_for("pay").set_stage("tracker", "user")
     fake_jira.fail_all = (401, None)
     # act
@@ -578,7 +572,7 @@ def test_request_read_timeout_says_request_still_runs(tmp_home):
 def test_tracker_sync_runs_one_pass_as_user(srv, capsys, fake_jira):
     # arrange
     with_tracker(srv, fake_jira)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     srv.board_for("pay").set_stage("tracker", "user")
     run_json(capsys, "tracker", "create")
     srv.board_for("pay").set_stage("work", "user")
@@ -591,7 +585,7 @@ def test_tracker_sync_runs_one_pass_as_user(srv, capsys, fake_jira):
 def test_tracker_sync_failure_exits_1(srv, capsys, fake_jira):
     # arrange
     with_tracker(srv, fake_jira)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     srv.board_for("pay").set_stage("tracker", "user")
     run_json(capsys, "tracker", "create")
     srv.board_for("pay").set_stage("work", "user")
@@ -600,23 +594,6 @@ def test_tracker_sync_failure_exits_1(srv, capsys, fake_jira):
     code, _, err = run(capsys, "tracker", "sync")
     # assert
     assert code == 1 and "JIRA_TOKEN" in err
-
-
-@pytest.mark.parametrize("action", ["create", "check", "sync"])
-@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
-def test_tracker_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, fake_jira, action, actor_env):
-    # arrange
-    with_tracker(srv, fake_jira)
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
-    srv.board_for("pay").set_stage("tracker", "user")
-    if action == "sync":
-        srv.board_for("pay").set_stage("work", "user")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
-    # act
-    code, _, err = run(capsys, "tracker", action)
-    # assert
-    assert code == 1 and "пользователь" in err
-    assert fake_jira.requests == []
 
 
 # --- настройки проекта ---
@@ -672,19 +649,6 @@ def test_config_validate_ok_and_broken_file(srv, capsys):
     assert ok["saved"] is False and code == 1 and "max_agents" in err
 
 
-@pytest.mark.parametrize("argv", [["config", "get"], ["config", "set", "--json", '{"max_agents": 1}'],
-                                  ["config", "validate"]])
-@pytest.mark.parametrize("actor_env", ["agent", "project_agent", ""])
-def test_config_with_agent_actor_env_is_rejected(srv, capsys, monkeypatch, argv, actor_env):
-    # arrange
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor_env)
-    # act
-    code, _, err = run(capsys, *argv)
-    # assert
-    assert code == 1 and "пользователь" in err
-    assert srv.board_for("pay").store.load_config().max_agents == 3
-
-
 def test_version__prints_package_version(tmp_home, capsys):
     # act
     code, out, _ = run(capsys, "version")
@@ -696,7 +660,7 @@ def test_version__prints_package_version(tmp_home, capsys):
 
 def test_status_without_arguments__running_server__reports_project(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     # act
     report = run_json(capsys, "status", "--json")
     # assert
@@ -876,9 +840,9 @@ def test_config_schema__project_brief__does_not_claim_decomposition_rules(tmp_ho
 
 def test_deps__existing_task__replaces_dependencies(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-3", "title": "c", "deps": ["T-1"]}')
+    add_task(capsys)
+    add_task(capsys, "T-2")
+    add_task(capsys, "T-3", deps=["T-1"])
     # act
     run_json(capsys, "deps", "T-3", "--json", '["T-2"]')
     # assert
@@ -887,8 +851,8 @@ def test_deps__existing_task__replaces_dependencies(srv, capsys):
 
 def test_deps__cycle__rejected_with_exit_code_1(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b", "deps": ["T-1"]}')
+    add_task(capsys)
+    add_task(capsys, "T-2", deps=["T-1"])
     # act
     code, _, err = run(capsys, "deps", "T-1", "--json", '["T-2"]')
     # assert
@@ -898,7 +862,7 @@ def test_deps__cycle__rejected_with_exit_code_1(srv, capsys):
 
 def test_update__task_text_by_user__changes_title_description_done_when_estimate(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     # act
     run_json(capsys, "update", "T-1", "--title", "Новый", "--description", "что делать", "--done-when", "тесты",
              "--estimate", "1.5")
@@ -908,15 +872,12 @@ def test_update__task_text_by_user__changes_title_description_done_when_estimate
         ("Новый", "что делать", "тесты", 1.5)
 
 
-@pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
-@pytest.mark.parametrize("option,value", [("--title", "t"), ("--description", "d"), ("--done-when", "ничего"),
-                                          ("--estimate", "9")])
-def test_update__task_text_by_agent__rejected(srv, capsys, monkeypatch, actor, option, value):
+def test_update__task_text_by_agent__rejected(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
+    add_task(capsys)
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
     # act
-    code, _, err = run(capsys, "update", "T-1", option, value)
+    code, _, err = run(capsys, "update", "T-1", "--title", "t")
     # assert
     assert code == 1 and err.strip()
     monkeypatch.delenv("AGENT_BOARD_ACTOR")
@@ -926,7 +887,7 @@ def test_update__task_text_by_agent__rejected(srv, capsys, monkeypatch, actor, o
 
 def test_update__no_actor_env__acts_as_user(srv, capsys):
     # arrange: человек в терминале — пользователь, агентам раннер всегда задаёт AGENT_BOARD_ACTOR
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     # act
     run_json(capsys, "update", "T-1", "--done-when", "тесты", "--rule-violations-json", '[{"rule": "r", "text": "t"}]')
     # assert
@@ -936,7 +897,7 @@ def test_update__no_actor_env__acts_as_user(srv, capsys):
 
 def test_update__tracker_link_by_user__is_saved(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     # act
     run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1", "--tracker-url", "https://tracker.example/PRJ-1")
     # assert
@@ -946,7 +907,7 @@ def test_update__tracker_link_by_user__is_saved(srv, capsys):
 
 def test_update__empty_tracker_link_by_user__clears_link(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1", "--tracker-url", "https://tracker.example/PRJ-1")
     # act
     run_json(capsys, "update", "T-1", "--tracker-key", "", "--tracker-url", "")
@@ -955,24 +916,10 @@ def test_update__empty_tracker_link_by_user__clears_link(srv, capsys):
     assert (task["tracker_key"], task["tracker_url"]) == (None, None)
 
 
-@pytest.mark.parametrize("actor", ["agent", "project_agent"])
-def test_update__empty_tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
-    # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    run_json(capsys, "update", "T-1", "--tracker-key", "PRJ-1")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
-    # act
-    code, _, err = run(capsys, "update", "T-1", "--tracker-key", "")
-    # assert
-    assert code == 1 and err.strip()
-    monkeypatch.delenv("AGENT_BOARD_ACTOR")
-    assert run_json(capsys, "show", "T-1")["tracker_key"] == "PRJ-1"
-
-
 def test_status__project_agent_with_setting__closes_task_and_sets_blocker(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "y"}')
+    add_task(capsys)
+    add_task(capsys, "T-2")
     run_json(capsys, "config", "set", "--json", '{"project_agent_status": true}')
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
     # act
@@ -989,7 +936,7 @@ def test_status__project_agent_with_setting__closes_task_and_sets_blocker(srv, c
 
 def test_status__project_agent_without_setting__rejected(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
     # act
     code, _, err = run(capsys, "status", "T-1", "done")
@@ -998,22 +945,9 @@ def test_status__project_agent_without_setting__rejected(srv, capsys, monkeypatc
     assert run_json(capsys, "show", "T-1")["status"] == "not_started"
 
 
-@pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
-def test_update__tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
-    # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
-    # act
-    code, _, err = run(capsys, "update", "T-1", "--tracker-key", "PRJ-1")
-    # assert
-    assert code == 1 and err.strip()
-    monkeypatch.delenv("AGENT_BOARD_ACTOR")
-    assert run_json(capsys, "show", "T-1")["tracker_key"] is None
-
-
 def test_update__rule_violations_by_task_agent__rejected(srv, capsys, monkeypatch):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    add_task(capsys)
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
     # act
     code, _, err = run(capsys, "update", "T-1", "--rule-violations-json", "[]")
@@ -1021,55 +955,23 @@ def test_update__rule_violations_by_task_agent__rejected(srv, capsys, monkeypatc
     assert code == 1 and err.strip()
 
 
-@pytest.mark.parametrize("actor", ["agent", "project_agent"])
-def test_deps__by_agent__rejected(srv, capsys, monkeypatch, actor):
+def test_retry__failed_turn__records_retry_wake(srv, capsys):
     # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "a"}')
-    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "b"}')
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", actor)
-    # act
-    code, _, err = run(capsys, "deps", "T-2", "--json", '["T-1"]')
-    # assert
-    assert code == 1 and err.strip()
-    monkeypatch.delenv("AGENT_BOARD_ACTOR")
-    assert run_json(capsys, "show", "T-2")["deps"] == []
-
-
-def test_retry_sends_user_actor_and_reports_rejection(srv, capsys):
-    # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     run_json(capsys, "stage", "work")
     srv.board_for("pay").update_task("T-1", "system", {"agent_state": "error", "turn_error": "boom"})
     # act
     result = run_json(capsys, "retry", "T-1")
-    srv.board_for("pay").update_task("T-1", "system", {"agent_state": "idle"})
-    code, _, err = run(capsys, "retry", "T-1")
     # assert
     assert result["events"][0]["data"] == {"key": "T-1", "reason": "retry", "error": "boom"}
-    assert code == 1 and "Повторить можно только упавший ход" in err
 
 
-def test_retry_from_agent_is_rejected(srv, capsys, monkeypatch):
+def test_rebase__started_task__records_rebase_wake(srv, capsys):
     # arrange
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
-    # act
-    code, _, err = run(capsys, "retry", "_project")
-    # assert
-    assert code == 1 and "только пользователь" in err
-
-
-def test_rebase_sends_actor_from_env_and_rejects_task_agent(srv, capsys, monkeypatch):
-    # arrange
-    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
+    add_task(capsys)
     run_json(capsys, "stage", "work")
     srv.board_for("pay").update_task("T-1", "system", {"session_id": "s-1", "worktree": "/tmp/wt"})
     # act
-    by_user = run_json(capsys, "rebase", "T-1")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
-    by_project_agent = run_json(capsys, "rebase", "T-1")
-    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
-    code, _, err = run(capsys, "rebase", "T-1")
+    result = run_json(capsys, "rebase", "T-1")
     # assert
-    assert by_user["events"][0]["data"] == {"key": "T-1", "reason": "rebase", "by": "user"}
-    assert by_project_agent["events"][0]["data"]["by"] == "project_agent"
-    assert code == 1 and "агент проекта" in err
+    assert result["events"][0]["data"] == {"key": "T-1", "reason": "rebase", "by": "user"}

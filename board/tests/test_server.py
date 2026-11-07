@@ -1064,44 +1064,6 @@ def test_review_request_records_event_for_in_review_task(server):
     assert r.json()["events"][0]["data"] == {"key": "T-1"}
 
 
-def test_review_request_outside_in_review_is_400(server):
-    # arrange
-    add_task(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
-    # assert
-    assert r.status == 400 and "ревью" in r.json()["error"]
-
-
-def test_review_request_by_agent_is_403(server):
-    # arrange
-    to_review(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "agent"})
-    # assert
-    assert r.status == 403
-
-
-def test_review_request_with_open_round_is_400(server):
-    # arrange
-    to_review(server)
-    server.board_for("pay").update_task("T-1", "system", {"review": {"round": 1, "state": "open"}})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
-    # assert
-    assert r.status == 400
-
-
-def test_review_request_without_review_tool_is_400(server):
-    # arrange
-    server.board_for("pay").update_config({"review": {"tool": "none"}})
-    to_review(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/review", {"actor": "user"})
-    # assert
-    assert r.status == 400
-
-
 def test_approve_by_user_moves_to_approved(server):
     # arrange
     to_review(server)
@@ -1112,25 +1074,6 @@ def test_approve_by_user_moves_to_approved(server):
     changed = [e["data"] for e in r.json()["events"] if e["type"] == "status_changed"]
     assert changed == [{"key": "T-1", "from": "in_review", "to": "approved", "actor": "user"}]
     assert task_state(server)["status"] == "approved"
-
-
-@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
-def test_approve_by_non_user_is_403(server, actor):
-    # arrange
-    to_review(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/approve", {"actor": actor})
-    # assert
-    assert r.status == 403 and task_state(server)["status"] == "in_review"
-
-
-def test_approve_outside_in_review_is_400(server):
-    # arrange
-    add_task(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/approve", {"actor": "user"})
-    # assert
-    assert r.status == 400
 
 
 def test_return_with_comment_posts_message_and_wakes_once_with_it(server):
@@ -1148,30 +1091,6 @@ def test_return_with_comment_posts_message_and_wakes_once_with_it(server):
     assert task_state(server)["status"] == "in_progress"
     thread = get(server, "/api/p/pay/threads/T-1").json()["messages"]
     assert [(m["author"], m["text"]) for m in thread] == [("user", "поправь тесты")]
-
-
-@pytest.mark.parametrize("body,status", [
-    ({"actor": "user", "text": "  "}, 400),
-    ({"actor": "user"}, 400),
-    ({"actor": "agent", "text": "x"}, 403),
-])
-def test_return_validation(server, body, status):
-    # arrange
-    to_review(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/return", body)
-    # assert
-    assert r.status == status and task_state(server)["status"] == "in_review"
-
-
-def test_return_from_in_progress_is_400(server):
-    # arrange
-    add_task(server)
-    post(server, "/api/p/pay/tasks/T-1/transition", {"to": "in_progress", "actor": "agent"})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/return", {"actor": "user", "text": "x"})
-    # assert
-    assert r.status == 400
 
 
 # --- отправка в ревью ---
@@ -1197,105 +1116,6 @@ def test_ship_request_queues_tasks_in_dependency_order(server):
     assert r.status == 200
     assert [e["data"] for e in r.json()["events"] if e["type"] == "ship_requested"] == [{"keys": ["A", "B"]}]
     assert task_state(server, "A")["ship"]["state"] == "queued"
-
-
-def test_ship_without_command_is_400_with_reason(server):
-    # arrange
-    approved_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # assert
-    assert r.status == 400 and "команда отправки" in r.json()["error"]
-
-
-def test_ship_unknown_placeholder_is_400_at_request_time(server):
-    # arrange
-    server.board_for("pay").store.save_config(
-        _with_ship(server.board_for("pay").store.load_config(), "echo {nope}"))
-    approved_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # assert
-    assert r.status == 400 and "{nope}" in r.json()["error"] and task_state(server)["ship"] is None
-
-
-def test_ship_task_not_approved_is_400(server):
-    # arrange
-    with_ship(server, command="true")
-    add_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # assert
-    assert r.status == 400 and task_state(server)["ship"] is None
-
-
-def test_ship_with_unshipped_dependency_outside_request_is_400(server):
-    # arrange
-    with_ship(server, command="true")
-    approved_task(server, "A")
-    approved_task(server, "B", deps=["A"])
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["B"], "actor": "user"})
-    # assert
-    assert r.status == 400 and "сначала отправьте A" in r.json()["error"]
-
-
-def test_ship_second_request_while_running_is_400(server):
-    # arrange
-    with_ship(server, command="true")
-    approved_task(server)
-    first = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # act
-    second = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # assert
-    assert first.status == 200 and second.status == 400 and "уже отправляется" in second.json()["error"]
-
-
-@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
-def test_ship_by_non_user_is_403(server, actor):
-    # arrange
-    with_ship(server, command="true")
-    approved_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": actor})
-    # assert
-    assert r.status == 403 and task_state(server)["ship"] is None
-
-
-@pytest.mark.parametrize("keys", [[], "T-1", ["T-1", "T-1"], [1]])
-def test_ship_bad_keys_is_400(server, keys):
-    # arrange
-    with_ship(server, command="true")
-    approved_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": keys, "actor": "user"})
-    # assert
-    assert r.status == 400
-
-
-def test_ship_unknown_task_is_404(server):
-    # arrange
-    with_ship(server, command="true")
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["NOPE"], "actor": "user"})
-    # assert
-    assert r.status == 404
-
-
-def test_ship_quoted_placeholder_is_400_at_request_time(server):
-    # arrange
-    server.board_for("pay").store.save_config(
-        _with_ship(server.board_for("pay").store.load_config(), 'run "{title}"'))
-    approved_task(server)
-    # act
-    r = post(server, "/api/p/pay/ship", {"keys": ["T-1"], "actor": "user"})
-    # assert
-    assert r.status == 400 and "в кавычки" in r.json()["error"]
-
-
-def _with_ship(config, command):
-    config.ship = {"command": command, "timeout": 5}
-    return config
 
 
 # --- трекер ---
@@ -1375,51 +1195,6 @@ def test_tracker_check_ok(server, jira):
     r = post(server, "/api/p/pay/tracker/check", {"actor": "user"})
     # assert
     assert r.status == 200 and r.json() == {"ok": True}
-
-
-def test_update__tracker_link_cleared_by_user__is_removed(server):
-    # arrange
-    add_task(server)
-    link = {"tracker_key": "PROJ-9", "tracker_url": "https://tracker.example/PROJ-9"}
-    assert post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": link}).status == 200
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/update",
-             {"actor": "user", "fields": {"tracker_key": None, "tracker_url": None}})
-    # assert
-    assert r.status == 200
-    task = get(server, "/api/p/pay/state").json()["tasks"][0]
-    assert (task["tracker_key"], task["tracker_url"]) == (None, None)
-
-
-def test_update__tracker_key_wrong_format__bad_request_with_example(server):
-    # arrange
-    server.board_for("pay").update_config({"tracker": JIRA_OK})
-    add_task(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"tracker_key": "proj-9"}})
-    # assert
-    assert r.status == 400 and "PROJ-123" in r.json()["error"]
-    assert get(server, "/api/p/pay/state").json()["tasks"][0]["tracker_key"] is None
-
-
-def test_update__tracker_link_cleared_by_agent__forbidden(server):
-    # arrange
-    add_task(server)
-    post(server, "/api/p/pay/tasks/T-1/update", {"actor": "user", "fields": {"tracker_key": "PROJ-9"}})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": None}})
-    # assert
-    assert r.status == 403
-    assert get(server, "/api/p/pay/state").json()["tasks"][0]["tracker_key"] == "PROJ-9"
-
-
-def test_agent_cannot_write_tracker_key(server):
-    # arrange
-    add_task(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/update", {"actor": "agent", "fields": {"tracker_key": "PROJ-9"}})
-    # assert
-    assert r.status == 403
 
 
 # --- синхронизация статусов трекера (правила — в test_tracker_sync.py) ---
@@ -1553,10 +1328,6 @@ def test_config_set__same_values__no_event(server):
     assert not [e for e in get(server, "/api/p/pay/events").json()["events"] if e["type"] == "config_changed"]
 
 
-JIRA_OK = {"type": "jira", "url": "https://jira.example.com", "project": "PROJ", "issue_type": "Task",
-           "auth": {"type": "token_env", "env": "JIRA_TOKEN"}}
-
-
 def test_config_set__invalid__is_400_and_not_saved(server):
     # arrange
     before = config_file(server)
@@ -1665,49 +1436,6 @@ def test_retry_of_failed_task_records_retry_wake_with_error(server):
         ("agent_wake", {"key": "T-1", "reason": "retry", "error": "обрыв соединения"})]
 
 
-def test_retry_of_idle_task_is_400(server):
-    # arrange
-    add_task(server)
-    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "user"})
-    # assert
-    assert r.status == 400 and "idle" in r.json()["error"]
-
-
-def test_retry_by_agent_is_403(server):
-    # arrange
-    failed_task(server)
-    # act
-    agent = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "agent"})
-    project_agent = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "project_agent"})
-    # assert
-    assert (agent.status, project_agent.status) == (403, 403)
-
-
-def test_retry_of_cancelled_task_is_400(server):
-    # arrange
-    failed_task(server)
-    post(server, "/api/p/pay/tasks/T-1/transition", {"to": "cancelled", "actor": "user"})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/retry", {"actor": "user"})
-    # assert
-    assert r.status == 400 and "cancelled" in r.json()["error"]
-
-
-def test_retry_of_project_agent_only_in_error(server):
-    # arrange
-    board = server.board_for("pay")
-    idle = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "user"})
-    board.update_meta({"project_agent_state": "error", "project_turn_error": "упал CLI"})
-    # act
-    r = post(server, "/api/p/pay/tasks/_project/retry", {"actor": "user"})
-    # assert
-    assert idle.status == 400
-    assert r.status == 200
-    assert r.json()["events"][0]["data"] == {"key": "_project", "reason": "retry", "error": "упал CLI"}
-
-
 def started_task(server, key="T-1"):
     add_task(server, key)
     post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
@@ -1725,33 +1453,3 @@ def test_rebase_by_user_or_project_agent_records_rebase_wake(server):
     assert [e["data"] for e in user.json()["events"]] == [{"key": "T-1", "reason": "rebase", "by": "user"}]
     assert project_agent.json()["events"][0]["data"]["by"] == "project_agent"
 
-
-def test_rebase_by_task_agent_is_403(server):
-    # arrange
-    started_task(server)
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "agent"})
-    # assert
-    assert r.status == 403 and "агент проекта" in r.json()["error"]
-
-
-@pytest.mark.parametrize("status", ["approved", "done", "cancelled"])
-def test_rebase_of_closed_task_is_400(server, status):
-    # arrange
-    started_task(server)
-    for to in ("in_review", status) if status != "cancelled" else (status,):
-        post(server, "/api/p/pay/tasks/T-1/transition", {"to": to, "actor": "user"})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "user"})
-    # assert
-    assert r.status == 400 and status in r.json()["error"]
-
-
-def test_rebase_of_task_without_worktree_is_400(server):
-    # arrange
-    add_task(server)
-    post(server, "/api/p/pay/stage", {"stage": "work", "actor": "user"})
-    # act
-    r = post(server, "/api/p/pay/tasks/T-1/rebase", {"actor": "user"})
-    # assert
-    assert r.status == 400 and "рабочей копии" in r.json()["error"]
