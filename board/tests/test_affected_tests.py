@@ -49,12 +49,12 @@ def test_affected__directory_and_its_files__directory_only():
     assert tests == ["skill/", "test_publishability.py"]
 
 
-def test_affected__docs_only__only_publishability():
+def test_affected__docs_only__docs_and_publishability():
     # act
-    tests = affected_tests.affected(["docs/superpowers/specs/x.md"])
+    tests = affected_tests.affected(["docs/cli.md"])
 
     # assert
-    assert tests == ["test_publishability.py"]
+    assert tests == ["test_docs.py", "test_publishability.py"]
 
 
 def test_rules__every_package_module_has_rule_and_targets_exist():
