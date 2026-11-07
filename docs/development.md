@@ -74,6 +74,20 @@ of the main checkout (so the checks run from a worktree), `python3` from `PATH`.
 Some scripts also take snapshots of design mockups for comparison when those files are present locally; they are not
 part of the repository.
 
+### README demo
+
+`docs/media/demo.gif` is recorded from a demo project: the board, a task card with an agent question, its thread
+and diff, and the project agent proposing a new task. Nothing real runs: the only agent turn is the fake agent, the
+repositories are temporary and have no remote, and no ship command is set. Re-record it after visible UI changes
+(needs Pillow: `python3 -m pip install pillow`):
+
+```bash
+cd ui-tests && npm run readme-media
+```
+
+`readme-media.mjs` saves the frames to `ui-tests/out/readme/frames`, and `frames_to_gif.py` turns them into a GIF
+with a steady frame rate and one palette for the whole clip.
+
 ## Versions
 
 Every release bumps the version in `pyproject.toml`, `board/agent_board/__init__.py`, `.claude-plugin/plugin.json`

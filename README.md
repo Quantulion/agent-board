@@ -8,6 +8,8 @@ questions, report progress and hand their work to you for review. Nothing is com
 It is a small Python 3.9+ server with no dependencies and a browser UI that works offline. Everything stays on
 your machine.
 
+![agent-board: the board, a task card with an agent question, its thread and diff, and the project agent proposing a new task](docs/media/demo.gif)
+
 ## Why
 
 Running several coding agents at once quickly turns into juggling terminals. agent-board gives them one place:
@@ -23,12 +25,6 @@ Running several coding agents at once quickly turns into juggling terminals. age
 - **Shipping and trackers.** Your own ship command (push, pull request, tracker transition), optionally right after
   approval; Jira or GitHub Issues for creating issues and following their statuses; merged tasks close by
   themselves.
-
-```mermaid
-flowchart LR
-  P[Plan] --> D[Decomposition] --> W[Agents work in worktrees] --> R[You review] --> A[Approved: commit] --> S[Shipped] --> M[Merged: done]
-  R -- comments --> W
-```
 
 ## Quick start
 
