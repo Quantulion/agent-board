@@ -130,7 +130,11 @@ def commit_all(path: Path, message: str) -> Optional[str]:
         _check_no_merge_state(path)
     # новые отчёты агентов не попадают в коммит, даже если проект не игнорирует их каталог;
     # изменения уже отслеживаемых файлов берутся все
-    run_git(path, "add", "-A", "--", ":/", ":(top,exclude)" + REPORTS_DIR)
+    pathspec = [":/"]
+    # исключение для каталога, который проект и так игнорирует, git считает ошибкой
+    if _git(path, "check-ignore", "-q", "--", REPORTS_DIR).returncode != 0:
+        pathspec.append(":(top,exclude)" + REPORTS_DIR)
+    run_git(path, "add", "-A", "--", *pathspec)
     run_git(path, "add", "-u", "--", ":/")
     if merging:
         # вливание с конфликтом агент разрешает правкой файлов: завершаем его, если следов конфликта не осталось

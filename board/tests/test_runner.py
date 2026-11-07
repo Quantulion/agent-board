@@ -2606,6 +2606,28 @@ def test_auto_approve__agent_moves_to_review__commits_and_ships_without_user(mak
     assert task(store, "A").review is None
 
 
+@pytest.mark.parametrize("gitignore", [None, "reports/\n"])
+def test_auto_approve__agent_left_report__commits_work_without_report(make_project, start_server, calls,
+                                                                      git_repo, gitignore):
+    # arrange
+    if gitignore is not None:
+        (git_repo / ".gitignore").write_text(gitignore)
+        run_git(git_repo, "add", "-A")
+        run_git(git_repo, "commit", "-m", "ignore reports")
+    store = make_project(auto_approve=True)
+    srv = start_server()
+    # act
+    add(srv, "A", script({"write": {"path": "a-file.txt", "text": "from A"}},
+                         {"write": {"path": "reports/A.md", "text": "отчёт"}},
+                         {"cli": ["status", "A", "in_review"]}))
+    wait_events(store, "task_committed", "A")
+    runner_sync(srv)
+    # assert
+    assert task(store, "A").status == Status.APPROVED
+    committed = run_git(git_repo, "show", "--name-only", "--format=", "A").split()
+    assert committed == ["a-file.txt"]
+
+
 def test_auto_approve__disabled__task_waits_in_review(make_project, start_server, calls):
     # arrange
     store = make_project()
