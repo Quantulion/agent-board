@@ -29,6 +29,11 @@ def script(*steps) -> str:
     return "FAKE-SCRIPT: " + json.dumps(list(steps), ensure_ascii=False)
 
 
+def hold(gate: Path) -> dict:
+    """Шаг агента: ход не закончится, пока тест не создаст файл gate."""
+    return {"wait-file": str(gate)}
+
+
 def wait_for(cond, timeout=TIMEOUT, what="условие"):
     deadline = time.monotonic() + timeout
     while True:
@@ -174,16 +179,18 @@ def test_board_cli_wrapper_runs_package(make_project, start_server):
     assert res.returncode == 0 and "lock-run" in res.stdout
 
 
-def test_messages_during_turn_go_in_one_next_turn(make_project, start_server, calls):
+def test_messages_during_turn_go_in_one_next_turn(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project()
     srv = start_server()
     board = srv.board_for("pay")
-    add(srv, "T-1", script({"sleep": 2}))
+    gate = tmp_path / "gate"
+    add(srv, "T-1", script(hold(gate)))
     wait_events(store, "turn_started", "T-1")
     # act
     board.post_message("T-1", "user", "первое")
     board.post_message("T-1", "user", "второе")
+    gate.touch()
     wait_events(store, "turn_finished", "T-1", count=2)
     runner_sync(srv)
     # assert
@@ -217,16 +224,18 @@ def runner_sync(srv):
     assert srv.runner.sync(TIMEOUT)
 
 
-def test_max_agents_limit_queues_second_task(make_project, start_server, calls):
+def test_max_agents_limit_queues_second_task(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project(max_agents=1)
     srv = start_server()
+    gate = tmp_path / "gate"
     # act
-    add(srv, "A", script({"sleep": 1}))
+    add(srv, "A", script(hold(gate)))
     wait_events(store, "turn_started", "A")
     add(srv, "B")
     wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
     waiting_reason = task(store, "B").wait_reason
+    gate.touch()
     wait_events(store, "turn_finished", "B")
     # assert
     a_done = events(store, "turn_finished", "A")[0].seq
@@ -641,16 +650,18 @@ def commit_to_main(git_repo, name, text):
 
 
 def test_rebase_request_waits_for_running_turn_and_carries_work_onto_fresh_base(make_project, start_server, calls,
-                                                                               git_repo):
+                                                                               git_repo, tmp_path):
     # arrange
     store = make_project()
     srv = start_server()
     board = srv.board_for("pay")
-    add(srv, "T", script({"sleep": 1.0}, {"write": {"path": "t.txt", "text": "работа T\n"}}))
+    gate = tmp_path / "gate"
+    add(srv, "T", script(hold(gate), {"write": {"path": "t.txt", "text": "работа T\n"}}))
     wait_events(store, "turn_started", "T")
     commit_to_main(git_repo, "fresh.txt", "свежая база\n")
     # act
     board.request_rebase("T", "user")
+    gate.touch()
     wait_events(store, "turn_finished", "T", count=2)
     # assert
     wt = Path(task(store, "T").worktree)
@@ -970,11 +981,11 @@ def test_worker_exception_is_reported_on_the_card(make_project, start_server, ca
 
 # --- лимиты и повторы ---
 
-def test_project_agent_runs_over_full_global_limit(make_project, start_server, calls):
+def test_project_agent_runs_over_full_global_limit(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project(global_max_agents=1)
     srv = start_server()
-    add(srv, "A", script({"sleep": 2}))
+    add(srv, "A", script(hold(tmp_path / "gate")))
     wait_events(store, "turn_started", "A")
     # act
     srv.board_for("pay").post_message("_project", "user", "привет")
@@ -984,25 +995,31 @@ def test_project_agent_runs_over_full_global_limit(make_project, start_server, c
     assert not events(store, "turn_finished", "A")
 
 
-def test_task_waits_for_global_limit_while_project_agent_runs(make_project, start_server, calls):
+def test_task_waits_for_global_limit_while_project_agent_runs(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project(global_max_agents=1)
     srv = start_server()
-    srv.board_for("pay").post_message("_project", "user", script({"sleep": 2}))
-    add(srv, "A", script({"sleep": 2}))
+    gate = tmp_path / "gate"
+    srv.board_for("pay").post_message("_project", "user", script(hold(tmp_path / "project-gate")))
+    wait_events(store, "turn_started", "_project")
+    add(srv, "A", script(hold(gate)))
     wait_events(store, "turn_started", "A")
     # act
     add(srv, "B")
+    wait_for(lambda: task(store, "B").wait_reason == "global", what="B упёрся в общий лимит")
+    gate.touch()
     wait_events(store, "turn_finished", "B")
     # assert
     assert events(store, "turn_started", "B")[0].seq > events(store, "turn_finished", "A")[0].seq
+    assert not events(store, "turn_finished", "_project")
 
 
-def test_raised_limit_starts_queued_task_without_waiting_for_running_turn(make_project, start_server, calls):
+def test_raised_limit_starts_queued_task_without_waiting_for_running_turn(make_project, start_server, calls,
+                                                                         tmp_path):
     # arrange
     store = make_project(max_agents=1)
     srv = start_server()
-    add(srv, "A", script({"sleep": 5}))
+    add(srv, "A", script(hold(tmp_path / "gate")))
     wait_events(store, "turn_started", "A")
     add(srv, "B")
     wait_for(lambda: task(store, "B").wait_reason == "project", what="B в очереди")
@@ -1014,11 +1031,12 @@ def test_raised_limit_starts_queued_task_without_waiting_for_running_turn(make_p
 
 
 
-def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, start_server, calls):
+def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project(max_agents=1, global_max_agents=1)
     srv = start_server()
-    add(srv, "A", script({"sleep": 4}))
+    gate = tmp_path / "gate"
+    add(srv, "A", script(hold(gate)))
     wait_events(store, "turn_started", "A")
     add(srv, "B")
     wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
@@ -1026,6 +1044,7 @@ def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, 
     # act
     srv.board_for("pay").set_config("user", {"global_max_agents": 2})
     wait_for(lambda: task(store, "B").wait_reason == "project", what="B упёрся в лимит проекта")
+    gate.touch()
     wait_events(store, "turn_finished", "B")
     # assert
     assert first == "global"
@@ -1033,15 +1052,17 @@ def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, 
     assert task(store, "B").wait_reason == ""
 
 
-def test_project_agent_not_counted_in_project_limit(make_project, start_server, calls):
+def test_project_agent_not_counted_in_project_limit(make_project, start_server, calls, tmp_path):
     # arrange
     store = make_project(max_agents=1)
     srv = start_server()
-    srv.board_for("pay").post_message("_project", "user", script({"sleep": 2}))
+    gate = tmp_path / "gate"
+    srv.board_for("pay").post_message("_project", "user", script(hold(gate)))
     wait_events(store, "turn_started", "_project")
     # act
     add(srv, "A")
     wait_events(store, "turn_finished", "A")
+    gate.touch()
     wait_events(store, "turn_finished", "_project")
     # assert
     assert events(store, "turn_finished", "A")[0].seq < events(store, "turn_finished", "_project")[0].seq
@@ -1698,7 +1719,7 @@ def test_next_round_waits_while_agent_asks_and_opens_after_it_returns_to_review(
     assert len(fake_crit.review_calls(crit_dir(store))) == 2
 
 
-def test_approval_drops_undelivered_review_comments(make_project, start_server, calls, crit_bin):
+def test_approval_drops_undelivered_review_comments(make_project, start_server, calls, crit_bin, tmp_path):
     # arrange
     store = review_project(make_project, crit_bin)
     srv = start_server()
@@ -1706,12 +1727,12 @@ def test_approval_drops_undelivered_review_comments(make_project, start_server, 
     board = srv.board_for("pay")
     board.request_review("A", "user")
     first = wait_round(store, 1)
-    board.post_message("A", "user", script({"sleep": 3}))
-    wait_for(lambda: task(store, "A").agent_state == "running", what="агент занят")
+    gate = busy_agent(srv, store, tmp_path)
     fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": "устаревшее замечание"}])
     wait_for(lambda: review(store).get("state") == "changes", what="раунд с замечаниями")
     # act
     board.approve("A", "user")
+    gate.touch()
     wait_events(store, "task_committed", "A")
     board.return_to_work("A", "user", "ещё одна правка")
     wait_events(store, "turn_finished", "A", count=3)
@@ -1723,14 +1744,17 @@ def test_approval_drops_undelivered_review_comments(make_project, start_server, 
 
 
 
-def busy_agent(srv, store, key="A", seconds=3):
-    srv.board_for("pay").post_message(key, "user", script({"sleep": seconds}))
+def busy_agent(srv, store, tmp_path, key="A"):
+    """Агент занят ходом, пока тест не создаст возвращённый файл."""
+    gate = tmp_path / ("gate-" + key)
+    srv.board_for("pay").post_message(key, "user", script(hold(gate)))
     wait_for(lambda: task(store, key).agent_state == "running", what="агент занят")
+    return gate
 
 
 @pytest.mark.parametrize("action", ["approve", "cancel", "return"])
 @pytest.mark.parametrize("phase", ["changes", "next_round"])
-def test_closing_review_stops_crit_daemon(make_project, start_server, calls, crit_bin, action, phase):
+def test_closing_review_stops_crit_daemon(make_project, start_server, calls, crit_bin, action, phase, tmp_path):
     # arrange
     store = review_project(make_project, crit_bin)
     srv = start_server()
@@ -1738,8 +1762,7 @@ def test_closing_review_stops_crit_daemon(make_project, start_server, calls, cri
     board = srv.board_for("pay")
     board.request_review("A", "user")
     first = wait_round(store, 1)
-    if phase == "changes":
-        busy_agent(srv, store)
+    gate = busy_agent(srv, store, tmp_path) if phase == "changes" else None
     fake_crit.finish(crit_dir(store), first["session"], [{"path": "f.txt", "line": 1, "body": "замечание"}])
     if phase == "changes":
         wait_for(lambda: review(store).get("state") == "changes", what="раунд с замечаниями")
@@ -1754,22 +1777,25 @@ def test_closing_review_stops_crit_daemon(make_project, start_server, calls, cri
         board.transition("A", Status.CANCELLED, "user")
     else:
         board.return_to_work("A", "user", "доделай")
+    if gate:
+        gate.touch()
     # assert
     wait_for(lambda: not harness_mod.group_alive(daemon), what="демон crit остановлен")
     assert fake_crit.daemon(crit_dir(store), first["session"]) is None
 
 
-def test_review_approved_during_agent_turn_is_left_to_the_user(make_project, start_server, calls, crit_bin):
+def test_review_approved_during_agent_turn_is_left_to_the_user(make_project, start_server, calls, crit_bin, tmp_path):
     # arrange
     store = review_project(make_project, crit_bin)
     srv = start_server()
     to_review(srv, store)
     srv.board_for("pay").request_review("A", "user")
     first = wait_round(store, 1)
-    busy_agent(srv, store)
+    gate = busy_agent(srv, store, tmp_path)
     # act
     fake_crit.finish(crit_dir(store), first["session"])
     wait_for(lambda: CATALOG["run.review_during_turn"][1] in thread_texts(store, "A"), what="сообщение на карточке")
+    gate.touch()
     wait_events(store, "turn_finished", "A", count=2)
     runner_sync(srv)
     # assert

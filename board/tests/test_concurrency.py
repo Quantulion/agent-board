@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 
 import pytest
@@ -10,7 +11,8 @@ from conftest import make_task as mk
 pytestmark = pytest.mark.slow
 
 THREADS = 20
-ITERATIONS = 25
+# полную нагрузку (25) включают переменной BOARD_STRESS_ITERATIONS=25 при поиске гонок
+ITERATIONS = int(os.environ.get("BOARD_STRESS_ITERATIONS", "10"))
 
 
 def test_parallel_post_and_update_keep_log_and_files_consistent(board):

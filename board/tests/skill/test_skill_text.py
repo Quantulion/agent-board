@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import re
 import shlex
@@ -7,6 +9,7 @@ from pathlib import Path
 
 import pytest
 
+from agent_board import cli
 from test_setup_reference import _FENCE, _INLINE, _cli, _subcommand
 
 SKILL_DIR = Path(__file__).resolve().parents[3] / "skills" / "agent-board"
@@ -53,6 +56,17 @@ def _commands():
     return result
 
 
+def _help(words):
+    """Справка команды доски: код выхода и текст. Работу обёртки скилла проверяет test_setup_reference."""
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        try:
+            code = cli.main(list(words) + ["--help"])
+        except SystemExit as e:
+            code = e.code
+    return code, out.getvalue()
+
+
 def _option(tokens, name):
     return tokens[tokens.index(name) + 1]
 
@@ -92,8 +106,7 @@ def test_skill__references__all_linked_from_skill_md():
     assert not unlinked, unlinked
 
 
-@pytest.mark.slow
-def test_skill__commands__exist_with_their_options(tmp_path):
+def test_skill__commands__exist_with_their_options():
     # arrange
     commands = _commands()
     checked = {}
@@ -104,9 +117,9 @@ def test_skill__commands__exist_with_their_options(tmp_path):
         assert words, (name, tokens)
         key = tuple(words)
         if key not in checked:
-            res = _cli(words + ["--help"], tmp_path)
-            assert res.returncode == 0, (name, tokens, res.stderr)
-            checked[key] = res.stdout
+            code, text = _help(words)
+            assert code == 0, (name, tokens)
+            checked[key] = text
         for flag in flags:
             if flag != "--project":
                 assert flag in checked[key], (name, tokens, flag)
