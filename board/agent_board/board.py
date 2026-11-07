@@ -20,6 +20,7 @@ from .store import PROJECT_THREAD, ProjectStore, _check_ident
 
 ACTORS = {"user", "agent", "tracker", "system"}
 AGENT_FORBIDDEN = {Status.APPROVED, Status.DONE, Status.SENT, Status.CANCELLED}
+AGENT_LOCKED = {Status.DONE, Status.CANCELLED}
 RETURNED_FROM = {Status.IN_REVIEW, Status.APPROVED, Status.SENT, Status.DONE}
 UPDATABLE_FIELDS = {
     "summary", "todo", "changed_files", "review", "ship", "worktree", "branch", "base_branch",
@@ -437,7 +438,10 @@ class Board:
             raise ValueError(msg("board.blocked_computed"))
         if actor == "agent" and to in AGENT_FORBIDDEN:
             raise PermissionError(msg("board.agent_status", status=to.value))
-        self._get(self.store.load_tasks(), key)
+        task = self._get(self.store.load_tasks(), key)
+        # закрытую задачу открывает заново только пользователь
+        if actor == "agent" and task.status in AGENT_LOCKED:
+            raise PermissionError(msg("board.agent_status_locked", status=task.status.value))
         return to
 
     def transition_if(self, key: str, expected: Status, to: Status, actor: str,

@@ -711,8 +711,10 @@ class Runner:
 
     @staticmethod
     def _on_hold(config, task: Task) -> bool:
-        """Агенту задачи ходы не положены: проект ещё не на стадии работы или задача одобрена."""
-        return config.stage != "work" or task.status in (Status.APPROVED, Status.SENT)
+        """Агенту задачи ходы не положены: проект ещё не на стадии работы, задача одобрена или закрыта.
+
+        Причины пробуждения при этом не теряются и доставляются, когда пользователь вернёт задачу в работу."""
+        return config.stage != "work" or task.status in (Status.APPROVED, Status.SENT, Status.DONE)
 
     # --- очередь, лимиты, повторы ---
 

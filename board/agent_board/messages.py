@@ -199,6 +199,8 @@ CATALOG: Dict[str, tuple] = {
                                "Статус blocked вычисляется по зависимостям; внешнюю блокировку задают полем "
                                "external_blocker"),
     "board.agent_status": ("An agent cannot set status {status}", "Агент не может ставить статус {status}"),
+    "board.agent_status_locked": ("An agent cannot change the status of a task in {status}",
+                                  "Агент не может менять статус задачи в статусе {status}"),
     "board.review_user_only": ("Only the user starts a review", "Ревью начинает только пользователь"),
     "board.review_not_in_review": ("A review starts only for a task in review (now {status})",
                                    "Ревью начинается только для задачи на ревью (сейчас {status})"),
