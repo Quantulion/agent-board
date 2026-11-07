@@ -48,7 +48,7 @@ The user reviews your work in rounds, usually in crit (an inline review tool in 
 - Keep the task in review (`$board_cli status <KEY> in_review`) and end your turn; the board opens the next round.
 
 ## Dependencies and rebasing
-Your branch may be based on branches of finished dependencies. When a dependency changes, the board moves your uncommitted work onto the new base itself and tells you the outcome in the wake message. Follow that message; never run a rebase yourself.
+Your branch may be based on branches of finished dependencies. When a dependency changes, the board moves your uncommitted work onto the new base itself and tells you the outcome in the wake message. The same happens when the user asks to bring your branch up to date or the task comes back after a failed merge. If your branch already has its own commits (for example, the commit made on approval), they come back as uncommitted changes with conflict markers where they clash with the base: resolve the markers by editing files and do not commit. Follow that message; never run a rebase yourself.
 
 ## Failed sending
 After approval the board may send your branch on (push, merge into the base). If that fails, the project may return the task to you: you are woken with reason `ship_failed`, the tail of the command output, and the result of moving your branch onto the fresh base. Then:

@@ -205,11 +205,16 @@ def _rebase_outcome(r: dict, cause: str, cli: str, key: str, ok_tail: str = "") 
     if r.get("rebase_ok") is False:
         return ("%s; the board could not move your work onto %s. "
                 "Do not run any git commands; ask a question on the card." % (cause, base))
+    unfolded = ""
+    if r.get("unfolded_commits"):
+        unfolded = (" Your branch's own commits on top of the old base (for example, the commit made when the "
+                    "task was approved) are now uncommitted changes in the worktree together with the rest of "
+                    "your work; this is expected, do not commit them.")
     if files:
         return ("%s; the board moved your work onto %s, but these files "
-                "still contain conflict markers: %s. Remove the markers by editing the files; do not commit."
-                % (cause, base, ", ".join(files)))
-    return "%s; the board moved your work onto %s.%s" % (cause, base, ok_tail)
+                "still contain conflict markers: %s. Remove the markers by editing the files; do not commit.%s"
+                % (cause, base, ", ".join(files), unfolded))
+    return "%s; the board moved your work onto %s.%s%s" % (cause, base, unfolded, ok_tail)
 
 
 def _ship_failed_line(r: dict, cli: str, key: str) -> str:
@@ -261,7 +266,8 @@ def wake_message(reasons: List[dict], digest: str, board_cli: str = "agent-board
     Ключи reason-словаря (все необязательны; при отсутствии текст отсылает агента к доске):
       message -> message_id, text, task (комментарий пользователя к этой задаче для агента проекта); answer -> question_id, question, choice, comment;
       returned -> from, text (комментарий пользователя к возврату); review -> round, comments, binary, crit_dir;
-      rebase -> from (или by при ручном переносе), base, rebase_ok, conflict_files, merge_branches, carried_ref;
+      rebase -> from (или by при ручном переносе), base, rebase_ok, conflict_files, merge_branches, carried_ref,
+      unfolded_commits;
       ship_failed -> exit_code, output (хвост вывода команды отправки) и поля переноса на базу, как у rebase;
       escalation -> from, text; proposal_rejected -> id;
       retry -> error; interrupted, queued_restart, unblocked, ready, manual -> без полей.
