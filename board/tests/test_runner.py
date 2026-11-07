@@ -741,8 +741,10 @@ def test_approved_task_merged_into_base_becomes_done_and_dependent_rebases(make_
     wait_events(store, "turn_finished", "B")
     # act
     run_git(git_repo, "merge", "--no-ff", "--no-edit", "A")
-    wait_for(lambda: task(store, "A").status == Status.DONE, what="A в done")
+    # сообщение о вливе пишется последним, после смены статуса
+    wait_for(lambda: "Влито в main" in thread_texts(store, "A"), what="сообщение о вливе A")
     # assert
+    assert task(store, "A").status == Status.DONE
     changed = events(store, "status_changed", "A")[-1].data
     assert (changed["from"], changed["actor"]) == ("approved", "system")
     assert thread_texts(store, "A")[-1] == "Влито в main"
@@ -1972,6 +1974,7 @@ def test_ship_timeout_kills_process_group(make_project, start_server, calls, tmp
     # act
     send(srv, "T-1")
     state = wait_ship(store, "T-1")
+    runner_sync(srv)
     # assert
     pid = int(pidfile.read_text())
     wait_for(lambda: not _alive(pid), what="процесс потомка завершён")
@@ -2133,6 +2136,7 @@ def test_ship_in_progress_is_marked_interrupted_after_restart(make_project, star
     # act
     srv = restart(srv, start_server)
     state = wait_ship(store, "T-1")
+    runner_sync(srv)
     # assert
     assert state["state"] == "interrupted" and "partial" in state["output_tail"]
     assert task(store, "T-1").status == Status.APPROVED
@@ -2244,8 +2248,9 @@ def test_queued_ship_after_restart_gets_not_started_text(make_project, start_ser
     srv.stop()
     srv.board_for("pay").update_task("T-1", "system", {"ship": {"state": "queued", "at": "x"}})
     # act
-    start_server()
+    srv = start_server()
     state = wait_ship(store, "T-1")
+    runner_sync(srv)
     # assert
     assert state["state"] == "interrupted"
     assert any("не была запущена" in t for t in thread_texts(store, "T-1"))
@@ -2274,6 +2279,7 @@ def test_ship_timeout_message_uses_timeout_of_the_run(make_project, start_server
     srv.board_for("pay").update_config({"ship": {"command": "sleep 300", "timeout": 999}})
     # act
     wait_ship(store, "T-1")
+    runner_sync(srv)
     # assert
     assert any("(1 с)" in t for t in thread_texts(store, "T-1"))
 
