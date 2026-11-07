@@ -70,6 +70,7 @@ RULES = [
     ("scripts/install-codex.sh", ["skill/test_packaging_skill.py"]),
     ("scripts/export-repo.py", ["test_export_repo.py"]),
     ("scripts/affected-tests.py", ["test_affected_tests.py"]),
+    ("scripts/test-parallel.py", ["test_test_parallel.py"]),
     ("README*.md", ["test_license.py", "skill/test_packaging_skill.py"]),
     ("LICENSE", ["test_license.py"]),
     ("pyproject.toml", ALL),

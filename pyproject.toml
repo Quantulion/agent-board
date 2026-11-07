@@ -23,4 +23,7 @@ agent_board = ["prompts/*.md", "static/*.html", "static/*.css", "static/js/*.js"
 [tool.pytest.ini_options]
 testpaths = ["board/tests"]
 pythonpath = ["board"]
-markers = ["slow: долгие тесты; по ходу работы запускают -m \"not slow\", полный набор — перед ревью"]
+markers = [
+    "slow: долгие тесты; по ходу работы запускают -m \"not slow\", полный набор — перед ревью",
+    "default_port: тест занимает порт доски по умолчанию; scripts/test-parallel.py запускает такие тесты по одному",
+]

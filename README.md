@@ -322,6 +322,8 @@ Rule for running tests:
 
 When a new package module appears, add it to the `RULES` map in `scripts/affected-tests.py` (a test checks that every module has a rule).
 
+`scripts/test-parallel.py` runs the suite (or the given paths) in several pytest processes, standard library only: `.venv/bin/python scripts/test-parallel.py`. It collects the tests once and splits them into groups of similar duration: a file goes to one group whole, while `test_runner.py` and the skill tests are split by test. Durations come from the previous run (cached in `.pytest_cache`). Tests marked `default_port` occupy the board's default port and run one at a time after the other groups. At the end it prints the totals, the failed tests and the logs of the failed groups; the exit code is non-zero if any test failed or fewer tests ran than were collected. `-n` sets the number of processes (4 by default: tests of other agents may be running on the machine), `--plan` only shows the groups, and pytest options go after `--`, for example `-- -m "not slow"`. The parallel run can replace the full suite before review.
+
 The interface is ES modules in `board/agent_board/static/`, with no build step and no dependencies; the server serves them at `/static/...`. The UI logic is tested with Node's built-in test runner:
 
 ```bash

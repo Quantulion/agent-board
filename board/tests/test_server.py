@@ -510,6 +510,7 @@ def test_token_persisted_with_private_mode(tmp_home):
     assert (path.stat().st_mode & 0o777) == 0o600
 
 
+@pytest.mark.default_port
 def test_restart_keeps_token_and_default_port(tmp_home):
     # arrange
     ProjectStore("pay").create(ProjectConfig(slug="pay", title="P", chains=True))
@@ -580,6 +581,7 @@ def test_all_default_ports_busy_falls_back_to_random(tmp_home, monkeypatch):
     assert port > 0 and port != busy_port
 
 
+@pytest.mark.default_port
 def test_default_port_with_foreign_listener_on_all_interfaces_is_skipped(tmp_home):
     # arrange
     foreign = socket.socket()
