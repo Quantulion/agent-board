@@ -107,6 +107,47 @@ def test_commit_all_commits_and_returns_none_when_clean(git_repo):
     assert again is None
 
 
+def test_commit_all_without_reports_ignore_skips_new_agent_report(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "reports").mkdir()
+    (p / "reports" / "T-1.md").write_text("report")
+    (p / "new.txt").write_text("n")
+    # act
+    commit_all(p, "T-1 title")
+    # assert
+    committed = run_git(p, "show", "--name-only", "--format=", "HEAD").split()
+    assert committed == ["new.txt"]
+    assert (p / "reports" / "T-1.md").exists()
+
+
+def test_commit_all_only_agent_report_left_returns_none(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "reports").mkdir()
+    (p / "reports" / "T-1.md").write_text("report")
+    head = run_git(p, "rev-parse", "HEAD").strip()
+    # act
+    sha = commit_all(p, "T-1 title")
+    # assert
+    assert sha is None
+    assert run_git(p, "rev-parse", "HEAD").strip() == head
+
+
+def test_commit_all_tracked_file_in_reports_commits_its_change(git_repo):
+    # arrange
+    (git_repo / "reports").mkdir()
+    (git_repo / "reports" / "keep.md").write_text("v1")
+    run_git(git_repo, "add", "-A")
+    run_git(git_repo, "commit", "-m", "tracked report")
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "reports" / "keep.md").write_text("v2")
+    # act
+    commit_all(p, "T-1 title")
+    # assert
+    assert run_git(p, "show", "HEAD:reports/keep.md") == "v2"
+
+
 def test_commit_all_without_identity_raises_git_error(git_repo, tmp_path, monkeypatch):
     # arrange
     run_git(git_repo, "config", "--unset", "user.name")
