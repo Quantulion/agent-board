@@ -6,6 +6,7 @@ import { h, icon } from './dom.js';
 import { T, statusInfo } from './i18n.js';
 import { requestMove, statusMenu } from './status.js';
 import { createThread, draftsFor } from './thread.js';
+import { threadAgentModel } from './agent-status.js';
 import { toast } from './ui.js';
 import { changesPane } from './changes.js';
 import { overviewPane } from './overview.js';
@@ -258,9 +259,13 @@ function createCard(ctx, key, returnFocus) {
         h('section', { class: 'sec' }, h('h3', null, T.card.threadTitle, sessionNote), thread.list, thread.composer));
       return {
         el,
-        paint(t) {
+        paint(t, snap) {
           sessionNote.textContent = t.session_id ? T.card.sessionShort(t.session_id.slice(0, 8)) : '';
-          thread.paint({ size: t.thread_size, unread: t.unread });
+          const agent = threadAgentModel({
+            state: t.agent_state, turn_error: t.turn_error, wait_reason: t.wait_reason, parked: t.agent_parked,
+            turn_process: t.turn_process,
+          }, snap && snap.config);
+          thread.paint({ size: t.thread_size, unread: t.unread, agent });
         },
         shown: thread.shown,
       };

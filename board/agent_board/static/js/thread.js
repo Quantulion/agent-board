@@ -2,6 +2,9 @@
 // Общий для карточки задачи и панели «Проект».
 import { h, icon, patchList, safeMarkdown } from './dom.js';
 import { T } from './i18n.js';
+import { createAgentIndicator } from './agent-status.js';
+import { retryControl } from './retry.js';
+import { toast } from './ui.js';
 
 // столько пикселей от низа ещё считается «внизу»: новое сообщение прокрутит к себе
 const BOTTOM_SLACK = 40;
@@ -77,9 +80,15 @@ export function renderMessage(m, agentName) {
 
 // Тред thread. scroller — прокручиваемый контейнер списка; visible() — тред сейчас на экране;
 // alive() — владелец ещё открыт (ответы сервера после закрытия игнорируются);
-// draftKey — под каким ключом хранить черновик, если у того же треда есть другое поле ввода.
-export function createThread({ client, thread, drafts, scroller, visible, alive, placeholder, hint, agentName, draftKey = thread }) {
+// draftKey — под каким ключом хранить черновик, если у того же треда есть другое поле ввода;
+// parkedText — пояснение под тредом, когда переписка агентов остановлена.
+export function createThread({
+  client, thread, drafts, scroller, visible, alive, placeholder, hint, agentName, parkedText, draftKey = thread,
+}) {
   const list = h('div', { class: 'thread' });
+  // у треда задачи агент назван её ключом, у треда проекта имени нет
+  const retry = retryControl(client, thread, () => toast(T.agentRetry.started(agentName || '')));
+  const indicator = createAgentIndicator({ parkedText: parkedText || T.card.parked, alive, retry });
   const empty = h('p', { class: 'muted', hidden: true }, T.card.noMessages);
   const loadError = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const sendError = h('div', { class: 'ferr', role: 'alert', hidden: true });
@@ -162,11 +171,15 @@ export function createThread({ client, thread, drafts, scroller, visible, alive,
 
   return {
     // список и поле ввода раскладывает владелец: в карточке они рядом, в панели поле прижато к низу
-    list: [loadError, list, empty],
+    list: [loadError, list, empty, indicator.el],
     composer: [composer, sendError],
     area,
-    // meta — {size, unread}: число сообщений на сервере и непрочитанное
+    // meta — {size, unread, agent}: число сообщений на сервере, непрочитанное и состояние агента
+    // из threadAgentModel (без agent индикатора нет)
     paint(meta) {
+      const stick = Boolean(meta.agent) && indicator.el.hidden && visible() && atBottom();
+      indicator.paint(meta.agent || null);
+      if (stick) toBottom();
       size = meta.size || 0;
       unread = meta.unread || 0;
       empty.hidden = messages.length > 0 || size > 0;

@@ -59,7 +59,7 @@ async function main(browser) {
 
   const attnTask = '.attn .attn-retry button[data-retry="PAY-1"]';
   const attnProject = '.attn .attn-retry button[data-retry="_project"]';
-  const dockProject = '.dock .pbanners button[data-retry="_project"]';
+  const dockProject = '.dock .agent-status button[data-retry="_project"]';
   check('«Ждут вас»: кнопка у ошибки агента задачи', await waits(page, s => document.querySelector(s), 10000, attnTask));
   check('«Ждут вас»: кнопка у ошибки агента проекта', await waits(page, s => document.querySelector(s), 10000, attnProject));
   check('панель проекта: кнопка у ошибки хода', await waits(page, s => document.querySelector(s), 10000, dockProject));

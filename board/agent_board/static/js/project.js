@@ -1,8 +1,7 @@
 // Панель «Проект»: тред с агентом проекта, его состояние и предложения по изменению графа задач.
 import { h, icon, patchList } from './dom.js';
 import { T } from './i18n.js';
-import { retryControl } from './retry.js';
-import { slotNote, slotWait } from './slot.js';
+import { threadAgentModel } from './agent-status.js';
 import { createThread, draftsFor } from './thread.js';
 import { toast } from './ui.js';
 
@@ -226,9 +225,6 @@ export function mountProjectPanel(ctx, store, toggleButton) {
   const stateDot = h('span', { class: 'sdot' });
   const stateText = h('span');
   const scroll = h('div', { class: 'scroll' });
-  const banners = h('div', { class: 'pbanners', hidden: true });
-  // одна кнопка на всю жизнь панели: перерисовка снимка не сбрасывает идущий запрос
-  const retry = retryControl(ctx.client, PROJECT_THREAD, () => toast(T.agentRetry.started('')));
   const historyCount = h('span');
   const history = h('div', { class: 'phist' });
   const historyBox = h('details', { class: 'phistory', hidden: true }, h('summary', null, historyCount), history);
@@ -240,8 +236,9 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     alive: () => alive,
     placeholder: T.project.composer,
     hint: T.project.composerHint,
+    parkedText: T.project.parked,
   });
-  scroll.append(banners, historyBox, ...thread.list, openList);
+  scroll.append(historyBox, ...thread.list, openList);
   const el = h('aside', { class: 'dock', 'aria-label': T.projectPanel, hidden: !open },
     h('header', null,
       h('span', { class: 'av' }, icon('spark')),
@@ -299,18 +296,6 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     const line = agentStateLine(pa);
     stateDot.className = 'sdot ' + line.cls;
     stateText.textContent = line.text;
-    const notes = [];
-    const failed = pa.state === 'error';
-    if (!failed) retry.reset();
-    if (pa.turn_error || failed) {
-      notes.push(h('div', { class: 'ferr' }, h('b', null, T.card.turnError + ': '), pa.turn_error || T.project.state.error));
-      if (failed) notes.push(retry.el);
-    }
-    if (pa.parked) notes.push(h('div', { class: 'pa-note' }, T.project.parked));
-    const wait = slotWait(pa.state, pa.wait_reason, snap.config);
-    if (wait) notes.push(slotNote(wait));
-    banners.replaceChildren(...notes);
-    banners.hidden = !notes.length;
 
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const proposals = snap.proposals || [];
@@ -321,7 +306,7 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     patchList(history, done, p => p.id + ':' + p.status, p => proposalCard(ctx, p, byKey));
     historyBox.hidden = !done.length;
     historyCount.textContent = T.project.history(done.length);
-    thread.paint({ size: snap.project_thread_size, unread: snap.project_unread });
+    thread.paint({ size: snap.project_thread_size, unread: snap.project_unread, agent: threadAgentModel(pa, snap.config) });
   }
 
   const unsubscribe = store.subscribe(paint);

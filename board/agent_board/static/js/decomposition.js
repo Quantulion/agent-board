@@ -8,6 +8,7 @@ import { T } from './i18n.js';
 import { PROJECT_THREAD, agentStateLine, proposalCard, proposalSignature } from './project.js';
 import { boardHref } from './router.js';
 import { createThread, draftsFor } from './thread.js';
+import { threadAgentModel } from './agent-status.js';
 import { openModal, toast } from './ui.js';
 import { settingsButton } from './settings.js';
 
@@ -117,6 +118,7 @@ export function mountDecomposition(root, store, ctx) {
     alive: () => alive,
     placeholder: T.dc.generalPh,
     hint: T.dc.generalHint,
+    parkedText: T.project.parked,
   });
   gScroll.append(...general.list, proposals);
   // писать можно только после того, как снимок покажет, что разбивка ещё не утверждена
@@ -446,7 +448,9 @@ export function mountDecomposition(root, store, ctx) {
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const open = summary.readOnly ? [] : (snap.proposals || []).filter(p => p.status === 'open');
     patchList(proposals, open, p => proposalSignature(p, byKey), p => proposalCard(ctx, p, byKey));
-    general.paint({ size: snap.project_thread_size, unread: snap.project_unread });
+    general.paint({
+      size: snap.project_thread_size, unread: snap.project_unread, agent: threadAgentModel(snap.project_agent, snap.config),
+    });
     paintApproval(snap, summary);
     ctx.applyFocus();
   }

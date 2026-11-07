@@ -47,12 +47,22 @@ def test_snapshot_contains_project_agent_state(board):
     snap = board.snapshot()
     # assert
     assert snap["project_agent"] == {"state": "error", "turn_error": "упал", "session_id": "p-1", "parked": False,
-                                     "wait_reason": ""}
+                                     "wait_reason": "", "turn_process": None}
 
 
 def test_snapshot_project_agent_defaults(board):
     assert board.snapshot()["project_agent"] == {"state": "idle", "turn_error": "", "session_id": None, "parked": False,
-                                                   "wait_reason": ""}
+                                                   "wait_reason": "", "turn_process": None}
+
+
+def test_snapshot_project_agent_running_turn_start(board):
+    # arrange
+    record = {"pgid": 42, "started": "Thu Nov  5 19:09:21 2026", "mark": "p-1", "at": "2026-11-05T16:09:21+00:00"}
+    board.update_meta({"project_agent_state": "running", "project_turn_process": record})
+    # act
+    pa = board.snapshot()["project_agent"]
+    # assert
+    assert pa["state"] == "running" and pa["turn_process"] == record
 
 
 def test_snapshot_project_agent_parked_flag(board):

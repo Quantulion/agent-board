@@ -263,6 +263,11 @@ const RU = {
     raise: field => 'Поднять лимит ' + field + ': ',
   },
   agentError: 'ошибка агента',
+  // индикатор состояния агента внизу треда
+  thread: {
+    running: 'Агент работает над ответом',
+    elapsed: { s: s => s + ' с', m: (m, s) => m + ' мин ' + s + ' с', h: (h, m) => h + ' ч ' + m + ' мин' },
+  },
   chainFrom: branch => 'от ' + branch,
   proposalChip: 'предложение',
   proposalsCount: n => n + ' ' + plural(n, ['предложение', 'предложения', 'предложений']),
@@ -807,6 +812,10 @@ const EN = {
     raise: field => 'Raise the ' + field + ' limit: ',
   },
   agentError: 'agent error',
+  thread: {
+    running: 'The agent is working on a reply',
+    elapsed: { s: s => s + 's', m: (m, s) => m + 'm ' + s + 's', h: (h, m) => h + 'h ' + m + 'm' },
+  },
   chainFrom: branch => 'from ' + branch,
   proposalChip: 'proposal',
   proposalsCount: n => count(n, 'proposal'),
