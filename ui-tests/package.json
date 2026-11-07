@@ -17,7 +17,8 @@
     "proposals": "node proposals.mjs",
     "slot": "node slot.mjs && node retry.mjs",
     "thread-agent": "node thread-agent.mjs",
-    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs && node retry.mjs && node thread-agent.mjs && node proposals.mjs"
+    "interrupt": "node interrupt.mjs",
+    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs && node retry.mjs && node thread-agent.mjs && node proposals.mjs && node interrupt.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"
