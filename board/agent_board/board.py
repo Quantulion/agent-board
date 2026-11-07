@@ -13,7 +13,7 @@ from .config import (
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .messages import Msg, localize, msg, normalize
-from .model import Event, Message, Proposal, Question, Status, Task
+from .model import PRIORITIES, Event, Message, Proposal, Question, Status, Task
 from .ship import check_auto, check_request, is_shipping, order as ship_order, settings as ship_settings
 from .tracker import check_issue_key, is_http_url, validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
@@ -26,7 +26,7 @@ UPDATABLE_FIELDS = {
     "session_id", "report", "tracker_key", "tracker_url", "external_blocker",
     "description", "done_when", "title", "estimate",
     "agent_state", "turn_error", "last_turn_at", "harness", "turn_process", "rule_violations", "agent_parked",
-    "wait_reason",
+    "wait_reason", "priority",
 }
 # поля, которые ведёт только раннер: по ним он выполняет git-операции и управляет процессами
 RUNNER_FIELDS = {
@@ -40,12 +40,14 @@ MAX_TRACKER_KEY_CHARS = 100
 TASK_TEXT_FIELDS = {"title", "description", "done_when", "estimate"}
 # нарушения правил фиксируют пользователь и агент проекта, но не агент самой задачи
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
+# приоритет меняют пользователь и агент проекта; агент задачи не может поднять себя в очереди
+PRIORITY_AUTHORS = {"user", "project_agent"}
 MAX_RULE_VIOLATIONS = 50
 MAX_RULE_CHARS = 200
 MAX_RULE_TEXT_CHARS = 2000
 LAST_MESSAGE_CHARS = 200
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
-CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps")
+CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps", "priority")
 TASK_KINDS = ("code", "research")
 # стадии проекта: разбивка, заведение задач в трекере (необязательно), работа агентов, завершение
 STAGE_TRANSITIONS = {
@@ -60,6 +62,7 @@ EVENT_TYPES: Dict[str, str] = {
     "status_changed": "key, from, to, actor; auto — одобрено доской по настройке auto_approve",
     "task_updated": "key, fields (список изменённых полей)",
     "deps_changed": "key, deps",
+    "priority_changed": "key, from, to, actor — изменился приоритет задачи в очереди агентов",
     "task_unblocked": "key — задача стала готова к работе",
     "agent_stop": "key — агент задачи должен остановиться",
     "agent_wake": "key (ключ задачи или _project), reason, доп. поля по reason",
@@ -135,7 +138,14 @@ def new_task_from_dict(d: Any) -> Task:
     deps = d.get("deps", [])
     if not isinstance(deps, list) or not all(isinstance(x, str) for x in deps):
         raise ValueError(msg("board.task_deps"))
+    if "priority" in d:
+        _check_priority(d["priority"])
     return Task(**dict(d, deps=list(deps)))
+
+
+def _check_priority(value) -> None:
+    if value not in PRIORITIES:
+        raise ValueError(msg("board.priority", values=", ".join(PRIORITIES)))
 
 
 def _check_tracker_link(fields: dict) -> None:
@@ -365,6 +375,7 @@ class Board:
             tasks = self.store.load_tasks()
             self._check_new_key(task.key, tasks)
             self._check_repo(task.repo)
+            _check_priority(task.priority)
             validate_deps(task.key, task.deps, tasks)
             task.status = Status.NOT_STARTED
             task.updated_at = self._clock()
@@ -624,14 +635,22 @@ class Board:
                 if actor not in RULE_VIOLATION_AUTHORS:
                     raise PermissionError(msg("board.violations_actor"))
                 fields = dict(fields, rule_violations=_clean_rule_violations(fields["rule_violations"]))
+            if "priority" in fields:
+                if actor not in PRIORITY_AUTHORS:
+                    raise PermissionError(msg("board.priority_actor"))
+                _check_priority(fields["priority"])
             tasks = self.store.load_tasks()
             task = self._get(tasks, key)
             before = self._ready(tasks)
+            prev_priority = task.priority
             for name, value in self._localized(fields).items():
                 setattr(task, name, value)
             task.updated_at = self._clock()
             self.store.save_task(task)
             events = [self._emit("task_updated", {"key": key, "fields": sorted(fields)})]
+            if "priority" in fields and fields["priority"] != prev_priority:
+                events.append(self._emit("priority_changed", {
+                    "key": key, "from": prev_priority, "to": fields["priority"], "actor": actor}))
             if "external_blocker" in fields:
                 events.extend(self._unblocked(before, [key]))
             return events

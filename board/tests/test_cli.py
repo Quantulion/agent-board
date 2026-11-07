@@ -388,6 +388,29 @@ def test_update_rule_violations_json_by_project_agent(srv, capsys, monkeypatch):
     assert run_json(capsys, "show", "T-1")["rule_violations"] == [{"rule": "r", "text": "t"}]
 
 
+def test_update__priority_by_project_agent__saved(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    # act
+    out = run_json(capsys, "update", "T-1", "--priority", "high")
+    # assert
+    assert "priority_changed" in [e["type"] for e in out["events"]]
+    assert run_json(capsys, "show", "T-1")["priority"] == "high"
+
+
+def test_update__priority_by_task_agent__rejected(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+    # act
+    code, _, err = run(capsys, "update", "T-1", "--priority", "high")
+    # assert
+    assert code == 1 and err.strip()
+    monkeypatch.delenv("AGENT_BOARD_ACTOR")
+    assert run_json(capsys, "show", "T-1")["priority"] == "normal"
+
+
 def test_update_has_no_review_option():
     # arrange / act / assert: состояние ревью ведёт раннер, агент его не задаёт
     with pytest.raises(SystemExit):

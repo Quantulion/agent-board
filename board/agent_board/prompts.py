@@ -7,7 +7,7 @@ from string import Template
 from typing import Any, Dict, List, Optional
 
 from .config import ProjectConfig
-from .model import Event, Task
+from .model import DEFAULT_PRIORITY, Event, Task
 
 _DIR = Path(__file__).parent / "prompts"
 _NONE = "(none)"
@@ -70,6 +70,8 @@ def _snapshot_text(snapshot: dict) -> str:
     lines = []
     for t in snapshot.get("tasks", []):
         line = "- %s [%s] %s" % (t["key"], t.get("display_status") or t.get("status"), t.get("title", ""))
+        if t.get("priority") and t["priority"] != DEFAULT_PRIORITY:
+            line += " (priority: %s)" % t["priority"]
         if t.get("open_deps"):
             line += " (waiting for: %s)" % ", ".join(t["open_deps"])
         elif t.get("deps"):
@@ -293,6 +295,8 @@ def _event_line(e: Event) -> Optional[str]:
         return "%s: task added" % k
     if t == "deps_changed":
         return "%s: deps now [%s]" % (k, ", ".join(d.get("deps", [])))
+    if t == "priority_changed":
+        return "%s: priority %s -> %s (by %s)" % (k, d.get("from"), d.get("to"), d.get("actor", "?"))
     if t == "agent_wake" and d.get("reason") == "escalation":
         return "%s escalated to the project thread" % d.get("from", k)
     return None

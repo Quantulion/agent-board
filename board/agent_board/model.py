@@ -35,6 +35,10 @@ _LABELS = {
     Status.CANCELLED: "Отменена",
 }
 
+# приоритет задачи в очереди агентов: от первого к последнему
+PRIORITIES = ("high", "normal", "low")
+DEFAULT_PRIORITY = "normal"
+
 DEP_SATISFIED_CHAINS = {Status.APPROVED, Status.SENT, Status.DONE}
 DEP_SATISFIED_STRICT = {Status.DONE}
 
@@ -90,6 +94,7 @@ class Task(_Serializable):
     kind: str = "code"
     estimate: Optional[float] = None
     deps: List[str] = field(default_factory=list)
+    priority: str = DEFAULT_PRIORITY
     status: Status = Status.NOT_STARTED
     external_blocker: Optional[str] = None
     summary: str = ""

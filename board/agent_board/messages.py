@@ -179,6 +179,10 @@ CATALOG: Dict[str, tuple] = {
                               "rule_violations должен быть списком не длиннее {max}"),
     "board.rule_violation_item": ("A rule_violations item must be an object with strings rule and text",
                                   "Элемент rule_violations должен быть объектом со строками rule и text"),
+    "board.priority": ("priority must be one of: {values}", "priority должен быть одним из: {values}"),
+    "board.priority_actor": ("Priority is changed by the user and the project agent: ask the project agent "
+                             "(say _project)",
+                             "Приоритет меняют пользователь и агент проекта: попросите агента проекта (say _project)"),
     "board.unknown_event": ("Unknown event type: {type!r}", "Неизвестный тип события: {type!r}"),
     "board.config_user_only": ("Only the user can change project settings",
                                "Настройки проекта меняет только пользователь"),

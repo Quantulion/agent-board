@@ -1320,3 +1320,59 @@ def test_auto_approve__review_set_not_by_agent__not_approved(board, actor):
     board.transition("A", Status.IN_REVIEW, actor)
     # assert
     assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+
+
+def test_add_task__without_priority__is_normal(board):
+    # arrange / act
+    board.add_task(mk("A"), "user")
+    # assert
+    assert board.store.load_tasks()["A"].priority == "normal"
+
+
+@pytest.mark.parametrize("actor", ["user", "project_agent"])
+def test_update_task__priority_by_user_or_project_agent__saved_with_event(board, actor):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    ev = board.update_task("A", actor, {"priority": "high"})
+    # assert
+    assert board.store.load_tasks()["A"].priority == "high"
+    changed = [e for e in ev if e.type == "priority_changed"]
+    assert [e.data for e in changed] == [{"key": "A", "from": "normal", "to": "high", "actor": actor}]
+
+
+def test_update_task__same_priority__no_priority_event(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act
+    ev = board.update_task("A", "user", {"priority": "normal"})
+    # assert
+    assert [e.type for e in ev] == ["task_updated"]
+
+
+@pytest.mark.parametrize("actor", ["agent", "tracker"])
+def test_update_task__priority_by_task_agent__rejected(board, actor):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.update_task("A", actor, {"priority": "high"})
+    assert board.store.load_tasks()["A"].priority == "normal"
+
+
+@pytest.mark.parametrize("value", ["urgent", "", None, 1])
+def test_update_task__unknown_priority__rejected(board, value):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError):
+        board.update_task("A", "user", {"priority": value})
+
+
+def test_new_task_from_dict__priority__validated():
+    # arrange
+    from agent_board.board import new_task_from_dict
+    # act / assert
+    assert new_task_from_dict({"key": "A", "title": "a", "priority": "low"}).priority == "low"
+    with pytest.raises(ValueError):
+        new_task_from_dict({"key": "A", "title": "a", "priority": "urgent"})
