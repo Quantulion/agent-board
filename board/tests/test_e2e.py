@@ -23,6 +23,8 @@ from agent_board.worktree import run_git
 
 from test_runner import script, wait_events, wait_for
 
+pytestmark = pytest.mark.slow
+
 PKG_ROOT = str(Path(__file__).resolve().parent.parent)
 WAIT = 20.0
 

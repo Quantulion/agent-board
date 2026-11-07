@@ -313,6 +313,15 @@ python3 -m venv .venv && .venv/bin/pip install pytest
 .venv/bin/python -m pytest -q
 ```
 
+The full run takes several minutes. Slow tests (skill scenarios, the wrapper, installation, end-to-end, concurrency and runner tests with the fake agent) carry the `slow` marker. `scripts/affected-tests.py` prints the test files touched by the current changes: uncommitted edits and new files against `HEAD`, or everything that differs from a branch with `--base <branch>`. Shared fixtures, `pyproject.toml` or a file without a rule select the whole suite; with no changes it prints nothing, and pytest then runs the whole suite.
+
+Rule for running tests:
+
+- while working — the tests affected by your changes, slow ones included: `.venv/bin/python -m pytest -q $(python3 scripts/affected-tests.py)`, and the fast suite for everything else: `.venv/bin/python -m pytest -q -m "not slow"`;
+- before sending to review — the full suite without filters: `.venv/bin/python -m pytest -q`.
+
+When a new package module appears, add it to the `RULES` map in `scripts/affected-tests.py` (a test checks that every module has a rule).
+
 The interface is ES modules in `board/agent_board/static/`, with no build step and no dependencies; the server serves them at `/static/...`. The UI logic is tested with Node's built-in test runner:
 
 ```bash

@@ -23,6 +23,13 @@ os.environ["AGENT_BOARD_HOME"] = tempfile.mkdtemp(prefix="agent-board-home-")
 atexit.register(shutil.rmtree, os.environ["AGENT_BOARD_HOME"], True)
 
 
+def pytest_collection_modifyitems(items):
+    """Тесты раннера с fake-агентом медленные: каждый поднимает сервер и ждёт ходов агента."""
+    for item in items:
+        if "start_server" in getattr(item, "fixturenames", ()):
+            item.add_marker(pytest.mark.slow)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def real_board_home_untouched():
     """Проверка в конце прогона: тесты не создали проектов и не меняли настройки настоящей доски."""

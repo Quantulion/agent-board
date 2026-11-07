@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 SCENARIOS = Path(__file__).resolve().parent / "scenarios"
 sys.path.insert(0, str(SCENARIOS))
 
