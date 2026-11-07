@@ -121,17 +121,23 @@ def _check_no_markers(path: Path) -> None:
         raise GitError("conflict markers left in {}: {}".format(path, ", ".join(marked)))
 
 
+REPORTS_DIR = "reports"
+
+
 def commit_all(path: Path, message: str) -> Optional[str]:
     merging = _merge_in_progress(path)
     if not merging:
         _check_no_merge_state(path)
-    run_git(path, "add", "-A")
+    # новые отчёты агентов не попадают в коммит, даже если проект не игнорирует их каталог;
+    # изменения уже отслеживаемых файлов берутся все
+    run_git(path, "add", "-A", "--", ":/", ":(top,exclude)" + REPORTS_DIR)
+    run_git(path, "add", "-u", "--", ":/")
     if merging:
         # вливание с конфликтом агент разрешает правкой файлов: завершаем его, если следов конфликта не осталось
         unmerged = unmerged_files(path)
         if unmerged:
             raise GitError("unmerged paths in {}: {}".format(path, ", ".join(unmerged)))
-    elif not run_git(path, "status", "--porcelain").strip():
+    elif not run_git(path, "diff", "--cached", "--name-only", "HEAD").strip():
         return None
     _check_no_markers(path)
     res = _git(path, "commit", "-m", message)
