@@ -4,31 +4,37 @@ import { STAGES, T } from './i18n.js';
 import { openModal, toast } from './ui.js';
 
 // порядок простых полей в форме; поля, которых здесь нет, идут следом в порядке схемы
-const ORDER = ['title', 'language', 'max_agents', 'global_max_agents', 'chains', 'auto_approve', 'project_agent_status',
+const ORDER = ['title', 'language', 'max_agents', 'global_max_agents', 'chains', 'project_agent_status',
   'branch_template', 'project_brief', 'agent_rules', 'decomposition_rules'];
 const LONG_TEXT = new Set(['project_brief', 'agent_rules', 'decomposition_rules']);
 const KINDS = { boolean: 'bool', integer: 'int', object: 'json', array: 'json' };
 // поля со своим редактором вместо JSON
 const CUSTOM = { ship: 'ship' };
-const GROUP = { json: 2, ship: 1 };
+// поля блока «что происходит после сдачи задачи»; там же переключатель ship.on_approve
+const AFTER = new Set(['auto_approve']);
+const GROUP = { simple: 0, ship: 1, after: 2, json: 3 };
 const DEFAULT_SHIP_TIMEOUT = 600;
 
 // --- Чистые функции ---
 
-// Поля формы по схеме настроек: сначала простые, затем отправка в ревью, затем составные (JSON).
+// Поля формы по схеме настроек: простые, отправка в ревью, что происходит после сдачи задачи, составные (JSON).
 export function settingsFields(schema) {
-  const list = (schema && Array.isArray(schema.fields) ? schema.fields : []).map((f, i) => ({
-    name: f.name,
-    type: f.type,
-    kind: CUSTOM[f.name] || KINDS[f.type] || (LONG_TEXT.has(f.name) ? 'textarea' : 'text'),
-    description: f.description || '',
-    example: f.shape && f.shape.example !== undefined ? f.shape.example : null,
-    placeholders: f.shape && Array.isArray(f.shape.placeholders) ? f.shape.placeholders : [],
-    default: f.default,
-    index: i,
-  }));
+  const list = (schema && Array.isArray(schema.fields) ? schema.fields : []).map((f, i) => {
+    const kind = CUSTOM[f.name] || KINDS[f.type] || (LONG_TEXT.has(f.name) ? 'textarea' : 'text');
+    return {
+      name: f.name,
+      type: f.type,
+      kind,
+      group: AFTER.has(f.name) ? 'after' : kind === 'ship' || kind === 'json' ? kind : 'simple',
+      description: f.description || '',
+      example: f.shape && f.shape.example !== undefined ? f.shape.example : null,
+      placeholders: f.shape && Array.isArray(f.shape.placeholders) ? f.shape.placeholders : [],
+      default: f.default,
+      index: i,
+    };
+  });
   const rank = f => (ORDER.includes(f.name) ? ORDER.indexOf(f.name) : ORDER.length);
-  return list.sort((a, b) => (GROUP[a.kind] || 0) - (GROUP[b.kind] || 0) || rank(a) - rank(b) || a.index - b.index);
+  return list.sort((a, b) => GROUP[a.group] - GROUP[b.group] || rank(a) - rank(b) || a.index - b.index);
 }
 
 // Начальное значение поля в форме: составные — отформатированным JSON, числа — строкой.
@@ -37,7 +43,8 @@ export function formValue(field, value) {
   if (field.kind === 'json') return JSON.stringify(v === undefined ? null : v, null, 2);
   if (field.kind === 'ship') {
     const ship = v && typeof v === 'object' ? v : {};
-    return { command: typeof ship.command === 'string' ? ship.command : '', timeout: String(ship.timeout ?? DEFAULT_SHIP_TIMEOUT) };
+    return { command: typeof ship.command === 'string' ? ship.command : '', timeout: String(ship.timeout ?? DEFAULT_SHIP_TIMEOUT),
+      on_approve: ship.on_approve === true };
   }
   if (field.kind === 'bool') return Boolean(v);
   if (field.kind === 'int') return v === undefined || v === null ? '' : String(v);
@@ -55,7 +62,8 @@ export function parseField(field, raw) {
     const command = String((raw && raw.command) ?? '').trim();
     const timeout = String((raw && raw.timeout) ?? '').trim();
     if (!/^\d+$/.test(timeout) || Number(timeout) < 1) return { error: T.settings.shipTimeoutInt };
-    return { value: { command: command || null, timeout: Number(timeout) } };
+    // без команды отправлять нечего, автоотправка выключается вместе с ней
+    return { value: { command: command || null, timeout: Number(timeout), on_approve: Boolean(command && raw.on_approve) } };
   }
   if (field.kind !== 'json') return { value: String(raw ?? '') };
   let value;
@@ -79,12 +87,25 @@ export function collectChanges(fields, raws, config) {
     if (parsed.error) errors[f.name] = parsed.error;
     else {
       const before = config[f.name] === undefined ? f.default : config[f.name];
-      // редактор отправки правит только свои ключи, остальные ключи объекта сохраняются
-      const value = f.kind === 'ship' && before && typeof before === 'object' ? { ...before, ...parsed.value } : parsed.value;
+      const value = f.kind === 'ship' ? shipValue(f, before, parsed.value) : parsed.value;
       if (JSON.stringify(value) !== JSON.stringify(before)) changes[f.name] = value;
     }
   }
   return { changes, errors };
+}
+
+// Новое значение ship: меняются только ключи, которые поправили в форме, остальные остаются как были.
+function shipValue(field, before, parsed) {
+  const base = before && typeof before === 'object' ? before : {};
+  const initial = parseField(field, formValue(field, base)).value || {};
+  const value = { ...base };
+  for (const key of Object.keys(parsed)) if (parsed[key] !== initial[key]) value[key] = parsed[key];
+  return value;
+}
+
+// Автоотправку можно включить только при заданной команде отправки.
+export function canShipOnApprove(command) {
+  return String(command ?? '').trim() !== '';
 }
 
 // подсказки по тексту ошибки сервера, когда в нём нет имени поля
@@ -134,7 +155,7 @@ function control(field, value) {
   return area;
 }
 
-// Редактор команды отправки: шаблон команды с плейсхолдерами и таймаут.
+// Редактор команды отправки: шаблон команды с плейсхолдерами, таймаут и переключатель автоотправки.
 function shipControl(field, value) {
   const command = h('textarea', { id: 'st-ship', class: 'mono', spellcheck: 'false', rows: '3',
     placeholder: typeof field.example === 'string' ? field.example : '' });
@@ -142,11 +163,24 @@ function shipControl(field, value) {
   const timeout = h('input', { type: 'text', id: 'st-ship-timeout', inputmode: 'numeric', autocomplete: 'off', class: 'num' });
   timeout.value = value.timeout;
   command._timeout = timeout;
+  const onApprove = h('input', { type: 'checkbox', id: 'st-ship-on_approve' });
+  onApprove.checked = value.on_approve;
+  const note = h('span', { class: 'hint', 'data-role': 'no-command' }, T.settings.after.noCommand);
+  const sync = () => {
+    const allowed = canShipOnApprove(command.value);
+    onApprove.disabled = !allowed;
+    if (!allowed) onApprove.checked = false;
+    note.hidden = allowed;
+  };
+  command.addEventListener('input', sync);
+  sync();
+  command._onApprove = onApprove;
+  command._onApproveNote = note;
   return command;
 }
 
 function readValue(field, input) {
-  if (field.kind === 'ship') return { command: input.value, timeout: input._timeout.value };
+  if (field.kind === 'ship') return { command: input.value, timeout: input._timeout.value, on_approve: input._onApprove.checked };
   return field.kind === 'bool' ? input.checked : input.value;
 }
 
@@ -194,8 +228,8 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
       err.hidden = true;
       input.removeAttribute('aria-invalid');
     });
-    const help = T.settings.help(f.name) || f.description;
-    const label = [T.settings.labels[f.name] || f.name, ' ', h('code', { class: 'fname' }, f.name)];
+    const help = (f.group === 'after' && T.settings.after.help[f.name]) || T.settings.help(f.name) || f.description;
+    const label = [(f.group === 'after' && T.settings.after.labels[f.name]) || T.settings.labels[f.name] || f.name, ' ', h('code', { class: 'fname' }, f.name)];
     const example = f.kind === 'json' && f.example !== null
       ? h('span', { class: 'hint mono' }, T.settings.example + ': ' + JSON.stringify(f.example)) : null;
     if (f.kind === 'ship') {
@@ -220,6 +254,16 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
       help ? h('span', { class: 'hint' }, help) : null, example, err);
   }
 
+  // Переключатель ship.on_approve: значение читается вместе с редактором отправки, ошибки — под ним же.
+  function onApproveRow(ship) {
+    const A = T.settings.after;
+    const box = ship._onApprove;
+    box.addEventListener('change', () => { errs.ship.hidden = true; });
+    return h('div', { class: 'field', 'data-subfield': 'ship.on_approve' },
+      h('label', { class: 'toggle', for: box.id }, box, A.onApprove, ' ', h('code', { class: 'fname' }, 'ship.on_approve')),
+      h('span', { class: 'hint' }, A.onApproveHint), ship._onApproveNote);
+  }
+
   function render(schema) {
     fields = settingsFields(schema);
     const stage = STAGES.find(s => s.id === config.stage);
@@ -229,13 +273,17 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
       h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.settings.stage),
         h('span', { class: 'roval', 'data-field': 'stage' }, stage ? stage.label : String(config.stage || '')),
         h('span', { class: 'hint' }, T.settings.stageHint)));
-    const simple = fields.filter(f => f.kind !== 'json' && f.kind !== 'ship');
-    const ship = fields.filter(f => f.kind === 'ship');
-    const compound = fields.filter(f => f.kind === 'json');
+    const simple = fields.filter(f => f.group === 'simple');
+    const ship = fields.filter(f => f.group === 'ship');
+    const after = fields.filter(f => f.group === 'after');
+    const compound = fields.filter(f => f.group === 'json');
+    const shipRows = ship.map(row);
+    const afterRows = [...after.map(row), ...(inputs.ship ? [onApproveRow(inputs.ship)] : [])];
     content.replaceChildren(
       fixed,
       h('h3', { class: 'sgroup' }, T.settings.simple), ...simple.map(row),
-      ...(ship.length ? [h('h3', { class: 'sgroup', 'data-group': 'ship' }, T.settings.labels.ship), ...ship.map(row)] : []),
+      ...(ship.length ? [h('h3', { class: 'sgroup', 'data-group': 'ship' }, T.settings.labels.ship), ...shipRows] : []),
+      ...(afterRows.length ? [h('h3', { class: 'sgroup', 'data-group': 'after' }, T.settings.after.title), ...afterRows] : []),
       h('h3', { class: 'sgroup' }, T.settings.compound), h('p', { class: 'hint' }, T.settings.jsonHint), ...compound.map(row));
     saveBtn.disabled = false;
     if (focus && inputs[focus]) {

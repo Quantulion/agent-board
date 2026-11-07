@@ -1,6 +1,7 @@
 // Настройки проекта: окно открывается из шапки, простое и составное поля сохраняются и видны в `config get`,
 // ошибка проверки на сервере показывается у поля, а введённое остаётся в форме и ничего не записывается.
-// Включённое автоодобрение помечается в шапке проекта.
+// Включённое автоодобрение помечается в шапке проекта. Автоотправка без команды отправки недоступна,
+// а её переключатель меняет только ship.on_approve, не трогая остальные ключи ship.
 // Запуск из корня репозитория: node ui-tests/settings.mjs
 import path from 'node:path';
 import puppeteer from 'puppeteer';
@@ -106,9 +107,44 @@ try {
   results.serverError = after.open && after.title === 'Новое название' && after.repos === badRepos && after.invalid === 'true'
     && unchanged.title === 'Платежи' && unchanged.repos.length === 0 ? 'ok' : { after, unchanged };
   results.serverErrorText = await fieldError(page, 'repos');
+  await page.click('.modal.settingsmodal footer .btn:not(.primary)');
+  await page.waitForFunction(() => !document.querySelector('.modal.settingsmodal'), { timeout: 10000 });
+
+  // автоотправка: без команды выключена с пояснением, с командой включается и сохраняет остальные ключи ship
+  env.cli('config', 'set', '--json', JSON.stringify({ ship: { command: null, timeout: 120, on_failure: 'return' } }));
+  await openSettings(page);
+  const shipToggle = () => page.evaluate(() => {
+    const box = document.querySelector('#st-ship-on_approve');
+    const note = document.querySelector('[data-subfield="ship.on_approve"] [data-role="no-command"]');
+    const after = document.querySelector('.settings [data-group="after"]');
+    return { disabled: box.disabled, checked: box.checked, note: !note.hidden,
+      grouped: Boolean(after && after.compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING
+        && after.compareDocumentPosition(document.querySelector('#st-auto_approve')) & Node.DOCUMENT_POSITION_FOLLOWING) };
+  });
+  const noCommand = await shipToggle();
+  await typeInto(page, '#st-ship', 'echo {branch}');
+  const withCommand = await shipToggle();
+  await page.click('#st-ship-on_approve');
+  await page.screenshot({ path: path.join(out, 'settings-ship-on-approve.png') });
+  await (await saveButton(page)).click();
+  await page.waitForFunction(() => !document.querySelector('.modal.settingsmodal'), { timeout: 10000 });
+  const shipped = configGet().ship;
+  results.shipOnApprove = noCommand.disabled && !noCommand.checked && noCommand.note && noCommand.grouped
+    && !withCommand.disabled && !withCommand.note && shipped.on_approve === true && shipped.command === 'echo {branch}'
+    && shipped.timeout === 120 && shipped.on_failure === 'return' ? 'ok' : { noCommand, withCommand, shipped };
+
+  // повторное открытие: переключатель включён; выключение трогает только on_approve
+  await openSettings(page);
+  const reopenedShip = await shipToggle();
+  await page.click('#st-ship-on_approve');
+  await (await saveButton(page)).click();
+  await page.waitForFunction(() => !document.querySelector('.modal.settingsmodal'), { timeout: 10000 });
+  const unshipped = configGet().ship;
+  results.shipOffApprove = reopenedShip.checked && unshipped.on_approve === false && unshipped.command === 'echo {branch}'
+    && unshipped.on_failure === 'return' && unshipped.timeout === 120 ? 'ok' : { reopenedShip, unshipped };
 
   results.errors = errors;
-  ok = ['form', 'saved', 'autoApproveMark', 'reopened', 'jsonError', 'serverError'].every(k => results[k] === 'ok') && !errors.length;
+  ok = ['form', 'saved', 'autoApproveMark', 'reopened', 'jsonError', 'serverError', 'shipOnApprove', 'shipOffApprove'].every(k => results[k] === 'ok') && !errors.length;
 } catch (e) {
   results.exception = String(e && e.stack || e);
 } finally {

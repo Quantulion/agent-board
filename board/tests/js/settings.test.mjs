@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setLanguage } from '../../agent_board/static/js/i18n.js';
-import { collectChanges, errorField, formValue, parseField, settingsFields } from '../../agent_board/static/js/settings.js';
+import { canShipOnApprove, collectChanges, errorField, formValue, parseField, settingsFields } from '../../agent_board/static/js/settings.js';
 
 const SCHEMA = {
   fields: [
@@ -115,11 +115,13 @@ test('редактор отправки: пустая команда выклю�
   setLanguage('ru');
   const ship = settingsFields(SHIP_SCHEMA).find(f => f.name === 'ship');
   // act + assert
-  assert.deepEqual(formValue(ship, undefined), { command: '', timeout: '600' });
-  assert.deepEqual(formValue(ship, { command: 'git push', timeout: 60 }), { command: 'git push', timeout: '60' });
-  assert.deepEqual(parseField(ship, { command: '  git push origin {branch} ', timeout: ' 120 ' }),
-    { value: { command: 'git push origin {branch}', timeout: 120 } });
-  assert.deepEqual(parseField(ship, { command: '   ', timeout: '600' }), { value: { command: null, timeout: 600 } });
+  assert.deepEqual(formValue(ship, undefined), { command: '', timeout: '600', on_approve: false });
+  assert.deepEqual(formValue(ship, { command: 'git push', timeout: 60, on_approve: true }),
+    { command: 'git push', timeout: '60', on_approve: true });
+  assert.deepEqual(parseField(ship, { command: '  git push origin {branch} ', timeout: ' 120 ', on_approve: true }),
+    { value: { command: 'git push origin {branch}', timeout: 120, on_approve: true } });
+  assert.deepEqual(parseField(ship, { command: '   ', timeout: '600', on_approve: true }),
+    { value: { command: null, timeout: 600, on_approve: false } });
   assert.deepEqual(parseField(ship, { command: 'x', timeout: '0' }), { error: 'Таймаут — целое число секунд не меньше 1' });
 });
 
@@ -134,4 +136,46 @@ test('collectChanges: команда отправки уходит объект�
   // assert
   assert.deepEqual(same.changes, {});
   assert.deepEqual(set.changes, { ship: { command: 'git push origin {branch}', timeout: 600 } });
+});
+
+test('collectChanges: переключатель автоотправки меняет только ship.on_approve', () => {
+  // arrange
+  const fields = settingsFields(SHIP_SCHEMA);
+  const ship = { command: 'git push', on_failure: 'return', extra: 1 };
+  const config = { title: 'P', repos: [], ship };
+  const raws = Object.fromEntries(fields.map(f => [f.name, formValue(f, config[f.name])]));
+  // act
+  const on = collectChanges(fields, { ...raws, ship: { ...raws.ship, on_approve: true } }, config);
+  const off = collectChanges(fields, raws, { ...config, ship: { ...ship, on_approve: true } });
+  // assert
+  assert.deepEqual(on.changes, { ship: { ...ship, on_approve: true } });
+  assert.deepEqual(off.changes, { ship: { ...ship, on_approve: false } });
+});
+
+test('collectChanges: снятая команда отправки выключает и автоотправку', () => {
+  // arrange
+  const fields = settingsFields(SHIP_SCHEMA);
+  const config = { title: 'P', repos: [], ship: { command: 'git push', timeout: 60, on_approve: true } };
+  const raws = Object.fromEntries(fields.map(f => [f.name, formValue(f, config[f.name])]));
+  // act
+  const cleared = collectChanges(fields, { ...raws, ship: { ...raws.ship, command: '' } }, config);
+  // assert
+  assert.deepEqual(cleared.changes, { ship: { command: null, timeout: 60, on_approve: false } });
+});
+
+test('canShipOnApprove: автоотправка доступна только с командой отправки', () => {
+  // act + assert
+  assert.equal(canShipOnApprove('git push'), true);
+  assert.equal(canShipOnApprove('  '), false);
+  assert.equal(canShipOnApprove(null), false);
+});
+
+test('settingsFields: автоодобрение — в блоке после сдачи задачи, между отправкой и составными', () => {
+  // arrange
+  const schema = { fields: [...SHIP_SCHEMA.fields, { name: 'auto_approve', type: 'boolean', default: false }] };
+  // act
+  const fields = settingsFields(schema);
+  // assert
+  assert.deepEqual(fields.map(f => [f.name, f.group]),
+    [['title', 'simple'], ['ship', 'ship'], ['auto_approve', 'after'], ['repos', 'json']]);
 });
