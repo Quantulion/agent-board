@@ -186,7 +186,10 @@ try {
   await page.evaluate(() => {
     window.__drawer = document.querySelector('.drawer');
     window.__anims = 0;
-    document.addEventListener('animationstart', e => { if (e.target.closest && e.target.closest('.drawer, .dscrim')) window.__anims++; }, true);
+    // индикатор агента под тредом анимирован сам по себе и в подсчёт не входит
+    document.addEventListener('animationstart', e => {
+      if (e.target.closest && e.target.closest('.drawer, .dscrim') && !e.target.closest('.agent-status')) window.__anims++;
+    }, true);
   });
   await page.click('.tabs [data-tab="thread"]');
   await page.click('.drawer .composer textarea');

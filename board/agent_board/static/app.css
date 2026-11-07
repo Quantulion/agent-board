@@ -143,6 +143,18 @@ input[type=text]:focus, textarea:focus, select:focus { outline: none; border-col
 
 /* Треды */
 .thread { display: grid; gap: 12px; }
+/* состояние агента под тредом: работает, ждёт слота, ошибка хода, переписка остановлена */
+.agent-status { margin-top: 12px; }
+.agent-status .ferr { white-space: pre-wrap; }
+.agent-status .agent-err { display: grid; gap: 8px; justify-items: start; }
+.agent-status .ferr b svg { width: 13px; height: 13px; vertical-align: -2px; margin-right: 4px; }
+.agent-run { display: flex; gap: 8px; align-items: center; font-size: 12.5px; color: var(--fg-2); border: 1px dashed var(--line-strong); border-radius: 10px; padding: 8px 12px; }
+.agent-run .dots { display: inline-flex; gap: 3px; }
+.agent-run .dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--s-progress); animation: pulse 1.2s infinite; }
+.agent-run .dots i:nth-child(2) { animation-delay: .2s; }
+.agent-run .dots i:nth-child(3) { animation-delay: .4s; }
+.agent-run .elapsed { margin-left: auto; color: var(--muted); font-size: 12px; }
+@media (prefers-reduced-motion: reduce) { .agent-run .dots i { animation: none; } }
 .msg { display: grid; grid-template-columns: 28px minmax(0,1fr); gap: 10px; align-items: start; }
 .msg .av { width: 28px; height: 28px; border-radius: 8px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: #fff; background: var(--s-progress); }
 .msg.user .av { background: var(--fg-2); color: var(--surface); }
@@ -619,7 +631,7 @@ svg .node:focus-visible rect.bg { stroke: var(--focus); stroke-width: 2.2; }
 .dock .pstate .sdot.run { --c: var(--s-progress); animation: pulse 1.4s infinite; }
 .dock .pstate .sdot.err { --c: var(--s-blocked); }
 .dock .pstate .sdot.wait { --c: var(--s-queue); }
-.dock .pbanners, .dock .popen, .dock .phist { display: grid; gap: 10px; }
+.dock .popen, .dock .phist { display: grid; gap: 10px; }
 .dock .phistory summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--muted); }
 .dock .phistory[open] summary { margin-bottom: 10px; }
 .dock .foot .ferr { margin-top: 8px; }

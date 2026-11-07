@@ -23,6 +23,10 @@ class FakeNode {
     }
   }
   appendChild(node) { this.append(node); return node; }
+  replaceChildren(...nodes) {
+    for (const c of [...this.childNodes]) this._detach(c);
+    this.append(...nodes);
+  }
   insertBefore(node, ref) {
     if (ref === null) return this.appendChild(node);
     const adopted = this._adopt(node);
@@ -56,6 +60,8 @@ class FakeElement extends FakeNode {
   setAttribute(k, v) { this.attributes.set(k, String(v)); }
   getAttribute(k) { return this.attributes.has(k) ? this.attributes.get(k) : null; }
   hasAttribute(k) { return this.attributes.has(k); }
+  get hidden() { return this.attributes.has('hidden'); }
+  set hidden(on) { if (on) this.attributes.set('hidden', ''); else this.attributes.delete('hidden'); }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
 }
 

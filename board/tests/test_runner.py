@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -1070,6 +1071,7 @@ def test_recorded_identity_matches_running_turn_process(make_project, start_serv
     proc = task(store, "T-1").turn_process
     assert proc["pgid"] == calls[0]["proc"].pid and proc["mark"] == calls[0]["session"]
     assert harness_mod.process_identity(proc["pgid"])["started"] == proc["started"]
+    assert datetime.fromisoformat(proc["at"]).tzinfo is not None, "время начала хода для интерфейса"
 
 
 def test_failure_after_start_turn_terminates_started_process(make_project, start_server, calls, monkeypatch):

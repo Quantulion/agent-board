@@ -351,6 +351,7 @@ class Board:
                     "wait_reason": meta.get("project_wait_reason") or "",
                     "session_id": config.project_session_id,
                     "parked": bool(meta.get("project_agent_parked")),
+                    "turn_process": meta.get("project_turn_process"),
                 },
                 "tracker_sync": meta.get("tracker_sync"),
                 "last_seq": self.store.last_seq(),

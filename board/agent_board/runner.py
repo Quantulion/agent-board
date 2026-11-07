@@ -1028,6 +1028,9 @@ class Runner:
         self._turns[k] = turn
         self._pending[k] = [r for r in self._pending.get(k, []) if not any(r is x for x in delivered)]
         record = turn_process_record(proc, turn.session_id)
+        if record is not None:
+            # с этого момента интерфейс отсчитывает, сколько идёт ход
+            record["at"] = self._clock()
         if k[1] == PROJECT_THREAD:
             self._update_project_meta(board, {"project_agent_state": "running", "project_turn_error": "",
                                               "project_wait_reason": "", "project_turn_process": record})
