@@ -42,7 +42,6 @@ from .worktree import (
     ensure_worktree,
     is_ancestor,
     rebase_carrying_changes,
-    uncommit_onto,
     unmerged_files,
     worktree_path,
 )
@@ -948,19 +947,16 @@ class Runner:
             reason.update(base=base, rebase_ok=False, merge_branches=list(merges))
             return reason
         try:
-            path = self._own_worktree(config, task)
-            outcome = rebase_carrying_changes(path, base, carry_ref(task.key))
-            if reason.get("reason") == "ship_failed" and not outcome.ok and not outcome.carried_ref:
-                # отправка упала на конфликте с базой: без коммитов перенос оставит конфликты маркерами в файлах
-                head = uncommit_onto(path, base)
-                if head:
-                    board.post_message(task.key, "system", msg("run.ship_uncommitted", base=base, head=head[:10]))
-                    outcome = rebase_carrying_changes(path, base, carry_ref(task.key))
+            outcome = rebase_carrying_changes(self._own_worktree(config, task), base, carry_ref(task.key))
         except GitError as e:
             board.post_message(task.key, "system", msg("run.rebase_failed", base=base, error=error_text(e)))
             outcome = RebaseOutcome(False)
         ok = outcome.ok
         reason.update(base=base, rebase_ok=ok, conflict_files=outcome.conflict_files)
+        if outcome.unfolded_commits:
+            reason["unfolded_commits"] = outcome.unfolded_commits
+            board.post_message(task.key, "system",
+                               msg("run.rebase_unfolded", base=base, head=(outcome.previous_head or "")[:10]))
         if outcome.carried_ref:
             reason["carried_ref"] = outcome.carried_ref
             ref = outcome.carried_ref

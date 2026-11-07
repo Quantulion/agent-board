@@ -682,6 +682,33 @@ def test_rebase_request_conflict_keeps_work_in_carry_ref_with_card_message(make_
 
 
 
+def test_rebase_request_unfolds_approval_commit_of_returned_task_into_markers(make_project, start_server, calls,
+                                                                              git_repo):
+    # arrange: одобренная задача не влилась из-за конфликта с базой и вернулась в работу
+    store = make_project()
+    srv = start_server()
+    board = srv.board_for("pay")
+    add(srv, "T", script({"write": {"path": "shared.txt", "text": "работа T\n"}}))
+    wait_events(store, "turn_finished", "T")
+    board.transition("T", Status.APPROVED, "user")
+    wait_events(store, "task_committed", "T")
+    commit_to_main(git_repo, "shared.txt", "версия базы\n")
+    board.return_to_work("T", "user", "влив упал с конфликтом")
+    wait_events(store, "turn_finished", "T", count=2)
+    # act
+    board.request_rebase("T", "user")
+    wait_events(store, "turn_finished", "T", count=3)
+    # assert
+    wt = Path(task(store, "T").worktree)
+    assert run_git(wt, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    text = (wt / "shared.txt").read_text()
+    assert "<<<<<<< " in text and "работа T" in text and "версия базы" in text
+    assert run_git(git_repo, "for-each-ref", "refs/agent-board/") == ""
+    assert "conflict markers: shared.txt" in calls[-1]["text"]
+    assert "own commits on top of the old base" in calls[-1]["text"]
+    assert any("разобраны в незакоммиченные" in t for t in thread_texts(store, "T"))
+
+
 # --- влив в базовую ветку ---
 
 def approve_with_work(store, srv, key, **extra):

@@ -580,12 +580,10 @@ CATALOG: Dict[str, tuple] = {
                           "the sending error and return the task to review.",
                           "Задача возвращена в работу: агент перенесёт ветку на свежую базу, разберёт ошибку отправки "
                           "и вернёт задачу на ревью."),
-    "run.ship_uncommitted": ("The task branch does not go onto {base} without conflicts: its commits were turned into "
-                             "uncommitted changes (the old branch tip is {head}), the agent will resolve the conflicts "
-                             "in the files.",
-                             "Ветка задачи не переносится на {base} без конфликтов: её коммиты разобраны в "
-                             "незакоммиченные изменения (прежняя вершина ветки — {head}), конфликты агент разрешит "
-                             "в файлах."),
+    "run.rebase_unfolded": ("The task branch's own commits were moved onto {base} as uncommitted changes (the old "
+                            "branch tip is {head}); the board commits them again on approval.",
+                            "Собственные коммиты ветки задачи перенесены на {base} и разобраны в незакоммиченные "
+                            "изменения (прежняя вершина ветки — {head}); при одобрении доска закоммитит их заново."),
     "run.ship_dep_no_branch": ("dependency {key} has no branch", "у зависимости {key} нет ветки"),
     "run.ship_dep_failed": ("dependency {keys} was not sent", "зависимость {keys} не отправлена"),
     "run.ship_not_approved": ("the task is no longer approved ({status})", "задача уже не одобрена ({status})"),

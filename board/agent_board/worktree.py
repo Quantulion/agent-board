@@ -177,11 +177,15 @@ def carry_ref(key: str) -> str:
 @dataclass
 class RebaseOutcome:
     """ok — ветка на новой базе; conflict_files — файлы с маркерами после возврата работы;
-    carried_ref — работу не удалось вернуть в файлы, она сохранена в этом ref."""
+    carried_ref — работу не удалось вернуть в файлы, она сохранена в этом ref;
+    unfolded_commits — сколько собственных коммитов ветки стали незакоммиченными правками;
+    previous_head — вершина ветки до переноса, если её коммиты стали правками."""
 
     ok: bool
     conflict_files: List[str] = field(default_factory=list)
     carried_ref: Optional[str] = None
+    unfolded_commits: int = 0
+    previous_head: Optional[str] = None
 
 
 def _git_with_index(path: Path, index: str, *args: str, stdin: str = "") -> str:
@@ -196,9 +200,10 @@ def _git_with_index(path: Path, index: str, *args: str, stdin: str = "") -> str:
     return res.stdout
 
 
-def _snapshot(path: Path, message: str) -> str:
-    """Коммит в формате git stash (рабочие файлы, индекс, неотслеживаемые) без записи в общий список stash."""
-    head = run_git(path, "rev-parse", "HEAD").strip()
+def _snapshot(path: Path, message: str, head: str) -> str:
+    """Коммит в формате git stash (рабочие файлы, индекс, неотслеживаемые) без записи в общий список stash.
+
+    head — коммит, относительно которого работа будет возвращаться в файлы."""
     index_tree = run_git(path, "write-tree").strip()
     index_commit = run_git(path, "commit-tree", index_tree, "-p", head, "-m", "index on " + message).strip()
     parents = ["-p", head, "-p", index_commit]
@@ -239,20 +244,37 @@ def _restore(path: Path, snapshot: str, ref: str) -> Tuple[bool, List[str]]:
     return True, conflicts
 
 
+def _fork_point(path: Path, new_base: str) -> Tuple[str, str, int]:
+    """Вершина ветки, общая с новой базой точка и число собственных коммитов ветки поверх неё.
+
+    Коммиты, уже попавшие в базу (например, влитой зависимости), собственными не считаются."""
+    head = run_git(path, "rev-parse", "HEAD").strip()
+    res = _git(path, "merge-base", head, new_base)
+    if res.returncode != 0:
+        return head, head, 0
+    fork = res.stdout.strip()
+    return head, fork, int(run_git(path, "rev-list", "--count", fork + ".." + head).strip())
+
+
 def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcome:
     """Ребейз ветки с переносом незакоммиченной работы.
 
+    Собственные коммиты ветки поверх базы (например, коммит одобрения задачи, вернувшейся в работу) переносятся
+    вместе с работой и становятся незакоммиченными правками: так конфликт с базой оказывается маркерами в файлах,
+    а не отменой ребейза.
     Работа на время ребейза сохраняется в ref (общий список git stash не трогается) и после возврата в файлы
     удаляется. Если вернуть её не удалось, файлы остаются как в HEAD, а ref остаётся и указан в carried_ref.
     """
     _check_no_rebase(path)
     if _git(path, "rev-parse", "-q", "--verify", ref).returncode == 0:
         raise GitError("previous work carried at {} is not restored yet: restore and delete it first".format(ref))
-    if not run_git(path, "status", "--porcelain").strip():
+    head, fork, unfolded = _fork_point(path, new_base)
+    previous = head if unfolded else None
+    if not unfolded and not run_git(path, "status", "--porcelain").strip():
         return RebaseOutcome(rebase_onto(path, new_base))
-    snapshot = _snapshot(path, "agent-board: rebase onto " + new_base)
+    snapshot = _snapshot(path, "agent-board: rebase onto " + new_base, fork)
     run_git(path, "update-ref", ref, snapshot)
-    run_git(path, "reset", "-q", "--hard")
+    run_git(path, "reset", "-q", "--hard", fork)
     run_git(path, "clean", "-fdq")
     try:
         ok = rebase_onto(path, new_base)
@@ -264,21 +286,9 @@ def rebase_carrying_changes(path: Path, new_base: str, ref: str) -> RebaseOutcom
         raise
     restored, conflicts = _restore(path, snapshot, ref)
     if not restored:
-        return RebaseOutcome(ok, [], carried_ref=ref)
+        return RebaseOutcome(ok, [], carried_ref=ref, unfolded_commits=unfolded, previous_head=previous)
     run_git(path, "update-ref", "-d", ref)
-    return RebaseOutcome(ok, conflicts)
-
-
-def uncommit_onto(path: Path, base: str) -> Optional[str]:
-    """Превращает коммиты ветки после общей с base точки в незакоммиченные изменения, чтобы перенос на base
-    оставил конфликты маркерами в файлах; возвращает прежнюю вершину ветки или None, если коммитов нет."""
-    _check_no_rebase(path)
-    head = run_git(path, "rev-parse", "HEAD").strip()
-    fork = run_git(path, "merge-base", "HEAD", base).strip()
-    if fork == head:
-        return None
-    run_git(path, "reset", "-q", "--soft", fork)
-    return head
+    return RebaseOutcome(ok, conflicts, unfolded_commits=unfolded, previous_head=previous)
 
 
 def _untracked(path: Path) -> List[str]:

@@ -371,22 +371,59 @@ def test_rebase_carrying_changes_pop_conflict_leaves_markers_and_clean_index(git
     assert run_git(p, "diff", "--name-only", "--diff-filter=U").strip() == ""
 
 
-def test_rebase_carrying_changes_rebase_conflict_aborts_and_restores_changes(git_repo):
-    # arrange
+def test_rebase_carrying_changes_own_commit_conflict_unfolds_into_markers(git_repo):
+    # arrange: коммит одобрения задачи на старой базе конфликтует с базой
     p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
     (p / "a.txt").write_text("mine\n")
     commit_all(p, "mine")
     head = run_git(p, "rev-parse", "HEAD").strip()
     (p / "wip.txt").write_text("w\n")
-    (p / "a.txt").write_text("mine more\n")
     commit_file(git_repo, "a.txt", "theirs\n")
     # act
     outcome = rebase_carrying_changes(p, "main", carry_ref("T-1"))
     # assert
-    assert outcome == RebaseOutcome(False, [])
-    assert run_git(p, "rev-parse", "HEAD").strip() == head
-    assert (p / "wip.txt").read_text() == "w\n" and (p / "a.txt").read_text() == "mine more\n"
+    assert outcome == RebaseOutcome(True, ["a.txt"], unfolded_commits=1, previous_head=head)
+    assert run_git(p, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    text = (p / "a.txt").read_text()
+    assert "<<<<<<< " in text and "mine" in text and "theirs" in text
+    assert (p / "wip.txt").read_text() == "w\n"
+    assert run_git(p, "diff", "--name-only", "--diff-filter=U").strip() == ""
+    assert run_git(p, "for-each-ref", "refs/agent-board/").strip() == ""
     assert run_git(p, "stash", "list").strip() == ""
+
+
+def test_rebase_carrying_changes_unfolds_own_commit_on_clean_tree(git_repo):
+    # arrange
+    p = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
+    (p / "t.txt").write_text("работа\n")
+    commit_all(p, "T-1 approved")
+    head = run_git(p, "rev-parse", "HEAD").strip()
+    commit_file(git_repo, "main.txt", "x")
+    # act
+    outcome = rebase_carrying_changes(p, "main", carry_ref("T-1"))
+    # assert
+    assert outcome == RebaseOutcome(True, [], unfolded_commits=1, previous_head=head)
+    assert run_git(p, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    assert (p / "main.txt").exists() and (p / "t.txt").read_text() == "работа\n"
+    assert run_git(p, "status", "--porcelain").splitlines() == ["A  t.txt"]
+
+
+def test_rebase_carrying_changes_does_not_duplicate_merged_dependency_commits(git_repo):
+    # arrange: задача на ветке зависимости D, D влита в main, а main потом изменил её файл
+    make_branch(git_repo, "D", "d.txt", "D v1\n")
+    p = ensure_worktree(git_repo, "T-1", "T-1", "D", [])
+    (p / "t.txt").write_text("работа T\n")
+    commit_all(p, "T-1 approved")
+    head = run_git(p, "rev-parse", "HEAD").strip()
+    run_git(git_repo, "merge", "--no-ff", "--no-edit", "D")
+    commit_file(git_repo, "d.txt", "D v2 в main\n")
+    # act
+    outcome = rebase_carrying_changes(p, "main", carry_ref("T-1"))
+    # assert
+    assert outcome == RebaseOutcome(True, [], unfolded_commits=1, previous_head=head)
+    assert run_git(p, "rev-parse", "HEAD") == run_git(git_repo, "rev-parse", "main")
+    assert (p / "d.txt").read_text() == "D v2 в main\n"
+    assert run_git(p, "status", "--porcelain").splitlines() == ["A  t.txt"]
 
 
 def test_commit_all_refuses_markers_left_by_stash_pop_conflict(git_repo):
