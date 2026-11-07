@@ -100,6 +100,16 @@ def test_project_prompt_contains_brief_snapshot_and_commands():
     assert RULES in text
 
 
+def test_project_prompt__user_action_proposals__only_on_direct_request():
+    # act
+    text = project_prompt(_config(), {"tasks": [], "proposals": []}, CLI)
+
+    # assert
+    for kind in ("set_config", "set_status", "ship", "stage", "retry"):
+        assert "propose " + kind in text
+    assert "only when the user directly asks" in text and "never perform these actions yourself" in text
+
+
 def test_wake_message_merges_reasons_in_order_and_quotes_user_message_verbatim():
     # arrange
     reasons = [

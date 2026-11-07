@@ -277,3 +277,277 @@ def test_failed_apply_reopens_proposal(board, monkeypatch):
 
     # assert
     assert _proposal(board, "p1")["status"] == "open"
+
+
+# --- действия пользователя: set_config, set_status, ship, stage, retry ---
+
+def _ship_ready(board, *keys):
+    board.update_config({"ship": {"command": "git push {branch}", "timeout": 600}})
+    for key in keys:
+        board.add_task(mk(key), "user")
+        board.transition(key, Status.IN_REVIEW, "agent")
+        board.approve(key, "user")
+
+
+def _failed_turn(board, key):
+    board.set_stage("work", "user")
+    board.add_task(mk(key), "user")
+    board.update_task(key, "system", {"agent_state": "error", "turn_error": "boom"})
+
+
+def test_set_config__valid_fields__proposed_without_change_and_applied_by_user(board):
+    # arrange
+    board.propose("set_config", {"fields": {"max_agents": 2}}, "больше параллельности")
+    assert board.store.load_config().max_agents != 2
+
+    # act
+    ev = board.apply_proposal("p1")
+
+    # assert
+    assert board.store.load_config().max_agents == 2
+    assert dict(type="config_changed", fields=["max_agents"]) in flat(ev)
+    assert any("max_agents" in t for t in _texts(board, PROJECT_THREAD))
+
+
+@pytest.mark.parametrize("payload", [
+    {}, {"fields": {}}, {"fields": "x"}, {"fields": {"stage": "work"}}, {"fields": {"nope": 1}},
+    {"fields": {"max_agents": 0}}, {"fields": {"branch_template": "no-key"}},
+])
+def test_set_config__invalid_fields__rejected_on_propose(board, payload):
+    with pytest.raises(ValueError):
+        board.propose("set_config", payload, "")
+    assert board.snapshot()["proposals"] == []
+
+
+def test_set_config__same_value__rejected_on_propose(board):
+    current = board.store.load_config().max_agents
+    with pytest.raises(ValueError, match="ничего не меняет"):
+        board.propose("set_config", {"fields": {"max_agents": current}}, "")
+
+
+def test_set_config__field_changed_after_propose__stale(board):
+    # arrange
+    board.propose("set_config", {"fields": {"max_agents": 2}}, "")
+    board.set_config("user", {"max_agents": 5})
+
+    # act / assert
+    with pytest.raises(ValueError, match="устарело.*max_agents"):
+        board.apply_proposal("p1")
+    assert board.store.load_config().max_agents == 5
+    assert board.snapshot()["proposals"][0]["status"] == "open"
+
+
+def test_set_config__invalid_at_apply__rejected_with_save_checks(board, monkeypatch):
+    # arrange
+    board.propose("set_config", {"fields": {"max_agents": 2}}, "")
+    import agent_board.board as board_module
+
+    def broken(config, changed, repos):
+        raise ValueError("проверка сохранения не прошла")
+    monkeypatch.setattr(board_module, "validate_fields", broken)
+
+    # act / assert
+    with pytest.raises(ValueError, match="проверка сохранения"):
+        board.apply_proposal("p1")
+    assert board.store.load_config().max_agents != 2
+
+
+@pytest.mark.parametrize("to", ["done", "cancelled", "in_progress"])
+def test_set_status__user_transition__applied_as_user(board, to):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.propose("set_status", {"key": "A", "to": to}, "")
+
+    # act
+    ev = board.apply_proposal("p1")
+
+    # assert
+    assert board.store.load_tasks()["A"].status == Status(to)
+    assert dict(type="status_changed", key="A", actor="user", **{"from": "not_started", "to": to}) in flat(ev)
+    assert _texts(board, "A")
+
+
+def test_set_status__approved__goes_through_approve(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_REVIEW, "agent")
+    board.propose("set_status", {"key": "A", "to": "approved", "from": "in_review"}, "")
+
+    # act
+    board.apply_proposal("p1")
+
+    # assert
+    assert board.store.load_tasks()["A"].status == Status.APPROVED
+
+
+@pytest.mark.parametrize("payload, error", [
+    ({"key": "A", "to": "approved"}, ValueError),
+    ({"key": "A", "to": "blocked"}, ValueError),
+    ({"key": "A", "to": "not_started"}, ValueError),
+    ({"key": "A", "to": "nope"}, ValueError),
+    ({"key": "A"}, ValueError),
+    ({"key": "A", "to": "done", "from": "in_review"}, ValueError),
+    ({"key": "X", "to": "done"}, KeyError),
+])
+def test_set_status__not_allowed_now__rejected_on_propose(board, payload, error):
+    board.add_task(mk("A"), "user")
+    with pytest.raises(error):
+        board.propose("set_status", payload, "")
+    assert board.snapshot()["proposals"] == []
+
+
+def test_set_status__status_changed_after_propose__stale(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_PROGRESS, "agent")
+    board.propose("set_status", {"key": "A", "to": "done"}, "")
+    board.transition("A", Status.IN_REVIEW, "agent")
+    seq = board.snapshot()["last_seq"]
+
+    # act / assert
+    with pytest.raises(ValueError, match="устарело.*in_progress.*in_review"):
+        board.apply_proposal("p1")
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+    assert board.snapshot()["last_seq"] == seq
+
+
+def test_ship__approved_tasks__applied_as_ship_request(board):
+    # arrange
+    _ship_ready(board, "A", "B")
+    board.propose("ship", {"keys": ["B", "A"]}, "")
+
+    # act
+    ev = board.apply_proposal("p1")
+
+    # assert
+    assert dict(type="ship_requested", keys=["A", "B"]) in flat(ev)
+    assert board.store.load_tasks()["A"].ship["state"] == "queued"
+    assert _texts(board, "A") and _texts(board, "B")
+
+
+@pytest.mark.parametrize("payload", [{}, {"keys": []}, {"keys": "A"}, {"keys": ["A", "A"]}, {"keys": ["C"]}])
+def test_ship__invalid_keys__rejected_on_propose(board, payload):
+    _ship_ready(board, "A")
+    board.add_task(mk("C"), "user")
+    with pytest.raises(ValueError):
+        board.propose("ship", payload, "")
+
+
+def test_ship__task_returned_to_work_after_propose__rejected(board):
+    # arrange
+    _ship_ready(board, "A")
+    board.propose("ship", {"keys": ["A"]}, "")
+    board.transition("A", Status.IN_PROGRESS, "user")
+
+    # act / assert
+    with pytest.raises(ValueError, match="одобренную"):
+        board.apply_proposal("p1")
+    assert board.snapshot()["proposals"][0]["status"] == "open"
+
+
+def test_stage__next_stage__applied_by_user(board):
+    # arrange
+    board.propose("stage", {"stage": "work"}, "")
+
+    # act
+    ev = board.apply_proposal("p1")
+
+    # assert
+    assert dict(type="stage_changed", **{"from": "decomposition", "to": "work"}) in flat(ev)
+    assert board.store.load_config().stage == "work"
+
+
+@pytest.mark.parametrize("payload", [{}, {"stage": "done"}, {"stage": "decomposition"}, {"stage": 1}])
+def test_stage__not_allowed__rejected_on_propose(board, payload):
+    with pytest.raises(ValueError):
+        board.propose("stage", payload, "")
+
+
+def test_stage__stage_changed_after_propose__stale(board):
+    # arrange
+    board.propose("stage", {"stage": "work"}, "")
+    board.set_stage("tracker", "user")
+
+    # act / assert
+    with pytest.raises(ValueError, match="устарело.*decomposition.*tracker"):
+        board.apply_proposal("p1")
+    assert board.store.load_config().stage == "tracker"
+
+
+def test_retry__failed_turn__applied_as_user_retry(board):
+    # arrange
+    _failed_turn(board, "A")
+    board.propose("retry", {"key": "A"}, "")
+
+    # act
+    ev = board.apply_proposal("p1")
+
+    # assert
+    assert wake("A", "retry", error="boom") in flat(ev)
+
+
+def test_retry__agent_not_failed__rejected_on_propose(board):
+    board.set_stage("work", "user")
+    board.add_task(mk("A"), "user")
+    with pytest.raises(ValueError):
+        board.propose("retry", {"key": "A"}, "")
+
+
+def test_retry__agent_recovered_after_propose__rejected(board):
+    # arrange
+    _failed_turn(board, "A")
+    board.propose("retry", {"key": "A"}, "")
+    board.update_task("A", "system", {"agent_state": "idle"})
+
+    # act / assert
+    with pytest.raises(ValueError, match="упавший ход"):
+        board.apply_proposal("p1")
+
+
+def test_project_agent__cannot_do_proposed_actions_directly(board):
+    # arrange
+    _ship_ready(board, "A")
+    board.add_task(mk("B"), "user")
+
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.set_config("project_agent", {"max_agents": 2})
+    with pytest.raises(PermissionError):
+        board.transition("B", Status.DONE, "project_agent")
+    with pytest.raises(PermissionError):
+        board.approve("B", "project_agent")
+    with pytest.raises(PermissionError):
+        board.request_ship(["A"], "project_agent")
+    with pytest.raises(PermissionError):
+        board.set_stage("work", "project_agent")
+    with pytest.raises(PermissionError):
+        board.retry("B", "project_agent")
+
+
+def test_cancel__set_status_and_ship_proposals_for_task__obsolete(board):
+    # arrange
+    _ship_ready(board, "A")
+    board.add_task(mk("B"), "user")
+    board.propose("set_status", {"key": "B", "to": "done"}, "")
+    board.propose("set_config", {"fields": {"max_agents": 2}}, "")
+
+    # act
+    board.transition("B", Status.CANCELLED, "user")
+
+    # assert
+    assert (_proposal(board, "p1")["status"], _proposal(board, "p1")["obsolete_reason"]) == ("obsolete", "cancelled")
+    assert _proposal(board, "p2")["status"] == "open"
+
+
+def test_set_status__from_cancelled__not_obsolete_on_graph_change(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.CANCELLED, "user")
+    board.propose("set_status", {"key": "A", "to": "not_started"}, "")
+
+    # act
+    board.add_task(mk("C"), "user")
+    board.apply_proposal("p1")
+
+    # assert
+    assert board.store.load_tasks()["A"].status == Status.NOT_STARTED

@@ -95,6 +95,22 @@ def test_propose_and_events(srv, capsys, monkeypatch):
     assert any(e["type"] == "proposal_created" for e in events)
 
 
+def test_propose__user_actions__accepted_and_not_applied(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+
+    # act
+    out = run_json(capsys, "propose", "stage", "--json", '{"stage": "work"}', "--reason", "пользователь просит")
+    cfg = run_json(capsys, "propose", "set_config", "--json", '{"fields": {"max_agents": 4}}')
+
+    # assert
+    assert (out["proposal_id"], cfg["proposal_id"]) == ("p1", "p2")
+    state = run_json(capsys, "state")
+    assert state["config"]["stage"] == "decomposition" and state["config"]["max_agents"] != 4
+    code, _, _ = run(capsys, "stage", "work")
+    assert code == 1
+
+
 def test_no_server_exits_2(tmp_home, capsys):
     code, _, err = run(capsys, "state")
     assert code == 2 and "доска не запущена: python3 -m agent_board serve" in err

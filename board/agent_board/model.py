@@ -139,6 +139,8 @@ class Proposal(_Serializable):
     at: str = ""
     # почему предложение устарело: exists, cancelled или missing
     obsolete_reason: str = ""
+    # состояние доски, на котором предложение проверено; при применении оно должно совпасть
+    expect: Optional[dict] = None
 
 
 @dataclass
