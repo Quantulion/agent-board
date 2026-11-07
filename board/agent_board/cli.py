@@ -448,9 +448,9 @@ def build_parser() -> argparse.ArgumentParser:
     actions.add_parser("schema", help=msg("help.config_schema")).add_argument("--json", action="store_true",
                                                                      help=msg("help.as_json"))
     sp = add("propose", cmd_propose, help=msg("help.propose"))
-    sp.add_argument("kind")
-    sp.add_argument("--json", required=True)
-    sp.add_argument("--reason")
+    sp.add_argument("kind", help=msg("help.propose_kind"))
+    sp.add_argument("--json", required=True, help=msg("help.propose_json"))
+    sp.add_argument("--reason", help=msg("help.propose_reason"))
     sp = add("lock-run", cmd_lock_run, help=msg("help.lock_run"))
     sp.add_argument("resource")
     sp.add_argument("cmd", nargs=argparse.REMAINDER)

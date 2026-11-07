@@ -56,6 +56,9 @@ STAGE_TRANSITIONS = {
     "work": ("done",),
 }
 
+# виды предложений агента проекта; применяет их только пользователь
+PROPOSAL_KINDS = ("add_task", "set_deps", "cancel_task", "set_config", "set_status", "ship", "stage", "retry")
+
 # Словарь событий журнала: тип -> поля data. Клиенты (UI, оркестратор агентов) опираются на него.
 EVENT_TYPES: Dict[str, str] = {
     "task_added": "key",
@@ -479,19 +482,7 @@ class Board:
         """Пользователь просит отправить одобренные задачи в ревью; запросы выполняет раннер по порядку зависимостей."""
         with self._lock:
             self._require_user(actor, msg("board.ship_user_only"))
-            if not isinstance(keys, list) or not keys or not all(isinstance(k, str) for k in keys):
-                raise ValueError(msg("board.ship_keys"))
-            if len(set(keys)) != len(keys):
-                raise ValueError(msg("board.ship_duplicate"))
-            tasks = self.store.load_tasks()
-            for key in keys:
-                self._get(tasks, key)
-            ship_settings(self.store.load_config())
-            check_request(keys, tasks)
-            for key in keys:
-                if is_shipping(tasks[key]):
-                    raise ValueError(msg("board.ship_in_progress", key=key))
-            ordered = ship_order(keys, tasks)
+            ordered = self._check_ship(keys)
             for key in ordered:
                 self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
             return [self._emit("ship_requested", {"keys": ordered})]
@@ -505,6 +496,22 @@ class Board:
             check_auto(key, tasks)
             self.update_task(key, "system", {"ship": {"state": "queued", "at": self._clock()}})
             return [self._emit("ship_requested", {"keys": [key], "auto": True})]
+
+    def _check_ship(self, keys: Any) -> List[str]:
+        """Проверяет запрос отправки без изменений; возвращает ключи в порядке отправки."""
+        if not isinstance(keys, list) or not keys or not all(isinstance(k, str) for k in keys):
+            raise ValueError(msg("board.ship_keys"))
+        if len(set(keys)) != len(keys):
+            raise ValueError(msg("board.ship_duplicate"))
+        tasks = self.store.load_tasks()
+        for key in keys:
+            self._get(tasks, key)
+        ship_settings(self.store.load_config())
+        check_request(keys, tasks)
+        for key in keys:
+            if is_shipping(tasks[key]):
+                raise ValueError(msg("board.ship_in_progress", key=key))
+        return ship_order(keys, tasks)
 
     def approve(self, key: str, actor: str, note: Optional[str] = None) -> List[Event]:
         """Одобрение задачи на ревью; note — системное сообщение в тред (например, откуда одобрение)."""
@@ -534,19 +541,26 @@ class Board:
         """Пользователь повторяет упавший ход агента задачи или агента проекта; ход запускает раннер."""
         with self._lock:
             self._require_user(actor, msg("board.retry_user_only"))
-            if key == PROJECT_THREAD:
-                meta = self.store.load_meta()
-                state, error = meta.get("project_agent_state") or "idle", meta.get("project_turn_error") or ""
-            else:
-                task = self._get(self.store.load_tasks(), key)
-                if task.status in (Status.CANCELLED, Status.APPROVED, Status.SENT):
-                    raise ValueError(msg("board.retry_status", status=task.status.value))
-                if self.store.load_config().stage != "work":
-                    raise ValueError(msg("board.retry_stage"))
-                state, error = task.agent_state, task.turn_error
-            if state != "error":
-                raise ValueError(msg("board.retry_not_failed", key=key, state=state))
+            error = self._check_retry(key)
             return [self._emit("agent_wake", {"key": key, "reason": "retry", "error": error})]
+
+    def _check_retry(self, key: Any) -> str:
+        """Проверяет, что ход агента можно повторить; возвращает ошибку упавшего хода."""
+        if not isinstance(key, str):
+            raise ValueError(msg("board.proposal_key"))
+        if key == PROJECT_THREAD:
+            meta = self.store.load_meta()
+            state, error = meta.get("project_agent_state") or "idle", meta.get("project_turn_error") or ""
+        else:
+            task = self._get(self.store.load_tasks(), key)
+            if task.status in (Status.CANCELLED, Status.APPROVED, Status.SENT):
+                raise ValueError(msg("board.retry_status", status=task.status.value))
+            if self.store.load_config().stage != "work":
+                raise ValueError(msg("board.retry_stage"))
+            state, error = task.agent_state, task.turn_error
+        if state != "error":
+            raise ValueError(msg("board.retry_not_failed", key=key, state=state))
+        return error
 
     def request_rebase(self, key: str, actor: str) -> List[Event]:
         """Перенос ветки задачи на текущую базу с незакоммиченной работой; переносит раннер перед ходом агента,
@@ -766,38 +780,62 @@ class Board:
             return [self._emit("thread_read", {"thread": thread})]
 
     def propose(self, kind: str, payload: dict, reason: str) -> List[Event]:
+        """Предложение агента проекта; выполнит его только пользователь. Вместе с предложением запоминается состояние,
+        на котором оно проверено: если оно изменится, применение будет отклонено."""
+        if kind == "set_config" and isinstance(payload, dict) and isinstance(payload.get("fields"), dict) \
+                and payload["fields"]:
+            # полная проверка сохранения медленная (диск, git, трекер), поэтому идёт до блокировки доски
+            self.set_config("user", payload["fields"], dry_run=True)
         with self._lock:
-            self._check_proposal(kind, payload)
+            _, expect = self._check_proposal(kind, payload)
             proposals = self.store.load_proposals()
             pid = "p%d" % (len(proposals) + 1)
-            proposals.append(Proposal(id=pid, kind=kind, payload=payload, reason=reason, at=self._clock()))
+            proposals.append(Proposal(id=pid, kind=kind, payload=payload, reason=reason, at=self._clock(),
+                                      expect=expect))
             self.store.save_proposals(proposals)
             return [self._emit("proposal_created", {"id": pid})]
 
     def apply_proposal(self, pid: str) -> List[Event]:
+        """Пользователь применяет предложение: действие идёт от его имени через те же методы и проверки, что и прямое."""
         with self._lock:
             proposals = self.store.load_proposals()
             proposal = self._open_proposal(proposals, pid)
-            # граф мог измениться с момента создания предложения
-            affected = self._check_proposal(proposal.kind, proposal.payload)
+            # состояние могло измениться с момента создания предложения
+            affected, expect = self._check_proposal(proposal.kind, proposal.payload)
+            self._check_fresh(proposal, expect)
             # помечаем применённым заранее, чтобы само действие не сочло предложение устаревшим
             proposal.status = "applied"
             self.store.save_proposals(proposals)
             try:
-                if proposal.kind == "add_task":
-                    events = self.add_task(new_task_from_dict(proposal.payload["task"]), "user")
-                elif proposal.kind == "set_deps":
-                    events = self.set_deps(proposal.payload["key"], list(proposal.payload["deps"]), "user")
-                else:
-                    events = self.transition(proposal.payload["key"], Status.CANCELLED, "user")
+                events = self._apply_action(proposal)
             except Exception:
                 self._reopen_proposal(pid)
                 raise
             events.append(self._emit("proposal_applied", {"id": pid}))
             text = msg("board.applied_proposal", id=pid, change=self._describe_proposal(proposal))
-            for thread in (PROJECT_THREAD, affected):
+            for thread in [PROJECT_THREAD] + [k for k in affected if k != PROJECT_THREAD]:
                 events.extend(self.post_message(thread, "system", text))
             return events
+
+    def _apply_action(self, proposal: Proposal) -> List[Event]:
+        p = proposal.payload
+        if proposal.kind == "add_task":
+            return self.add_task(new_task_from_dict(p["task"]), "user")
+        if proposal.kind == "set_deps":
+            return self.set_deps(p["key"], list(p["deps"]), "user")
+        if proposal.kind == "cancel_task":
+            return self.transition(p["key"], Status.CANCELLED, "user")
+        if proposal.kind == "set_config":
+            return [Event.from_dict(e) for e in self.set_config("user", p["fields"])["events"]]
+        if proposal.kind == "set_status":
+            if Status(p["to"]) == Status.APPROVED:
+                return self.approve(p["key"], "user")
+            return self.transition(p["key"], Status(p["to"]), "user")
+        if proposal.kind == "ship":
+            return self.request_ship(list(p["keys"]), "user")
+        if proposal.kind == "stage":
+            return self.set_stage(p["stage"], "user")
+        return self.retry(p["key"], "user")
 
     def reject_proposal(self, pid: str) -> List[Event]:
         with self._lock:
@@ -845,19 +883,28 @@ class Board:
             if isinstance(key, str) and key.lower() in tasks_by_lower_key:
                 return "exists"
             return ""
-        key = payload.get("key")
-        if not isinstance(key, str):
+        if proposal.kind in ("set_config", "stage"):
             return ""
-        task = tasks_by_lower_key.get(key.lower())
-        if task is None or task.key != key:
-            return "missing"
-        if task.status == Status.CANCELLED:
-            return "cancelled"
+        if proposal.kind == "ship":
+            keys = payload.get("keys")
+            keys = [k for k in keys if isinstance(k, str)] if isinstance(keys, list) else []
+        else:
+            key = payload.get("key")
+            keys = [key] if isinstance(key, str) and key != PROJECT_THREAD else []
+        # перевод из отменённой задачи осмыслен: такое предложение отменой не устаревает
+        from_cancelled = proposal.kind == "set_status" and (proposal.expect or {}).get("status") == "cancelled"
+        for key in keys:
+            task = tasks_by_lower_key.get(key.lower())
+            if task is None or task.key != key:
+                return "missing"
+            if task.status == Status.CANCELLED and not from_cancelled:
+                return "cancelled"
         return ""
 
-    def _check_proposal(self, kind: str, payload: dict) -> str:
-        """Проверяет предложение на текущем состоянии графа, возвращает ключ затронутой задачи."""
-        if kind not in ("add_task", "set_deps", "cancel_task"):
+    def _check_proposal(self, kind: str, payload: dict):
+        """Проверяет предложение на текущем состоянии доски без изменений. Возвращает затронутые задачи (в их треды
+        придёт сообщение о применении) и состояние, на котором предложение имеет смысл."""
+        if kind not in PROPOSAL_KINDS:
             raise ValueError(msg("board.unknown_proposal_kind", kind=kind))
         if not isinstance(payload, dict):
             raise ValueError(msg("board.proposal_payload"))
@@ -870,18 +917,76 @@ class Board:
             self._check_new_key(task.key, tasks)
             self._check_repo(task.repo)
             validate_deps(task.key, task.deps, tasks)
-            return task.key
+            return [task.key], None
+        if kind == "set_config":
+            return [], self._check_config_proposal(payload.get("fields"))
+        if kind == "stage":
+            stage, current = payload.get("stage"), self.store.load_config().stage
+            if stage not in STAGE_TRANSITIONS.get(current, ()):
+                raise ValueError(msg("board.bad_stage", prev=current, stage=stage))
+            return [], {"stage": current}
+        if kind == "ship":
+            keys = payload.get("keys")
+            self._check_ship(keys)
+            return list(keys), None
         key = payload.get("key")
         if not isinstance(key, str):
             raise ValueError(msg("board.proposal_key"))
+        if kind == "retry":
+            self._check_retry(key)
+            return [key], None
         if kind == "set_deps":
             deps = payload.get("deps")
             if not isinstance(deps, list) or not all(isinstance(d, str) for d in deps):
                 raise ValueError(msg("board.proposal_deps"))
-            key = self._get(tasks, key).key
+        key = self._get(tasks, key).key
+        if kind == "set_deps":
             validate_deps(key, list(deps), tasks)
-            return key
-        return self._get(tasks, key).key
+            return [key], None
+        if kind == "set_status":
+            return [key], self._check_status_proposal(tasks[key], payload)
+        return [key], None
+
+    def _check_config_proposal(self, fields: Any) -> dict:
+        if not isinstance(fields, dict) or not fields:
+            raise ValueError(msg("board.proposal_fields"))
+        check_field_names(fields)
+        current = self.store.load_config().to_dict()
+        if all(current.get(name) == value for name, value in fields.items()):
+            raise ValueError(msg("board.proposal_no_change"))
+        return {"config": {name: current.get(name) for name in sorted(fields)}}
+
+    def _check_status_proposal(self, task: Task, payload: dict) -> dict:
+        to = payload.get("to")
+        if to not in {s.value for s in Status}:
+            raise ValueError(msg("board.proposal_status_to", to=to))
+        to = Status(to)
+        if task.status == to:
+            raise ValueError(msg("board.proposal_same_status", key=task.key, status=to.value))
+        expected = payload.get("from")
+        if expected is not None and expected != task.status.value:
+            raise ValueError(msg("board.proposal_status_from", key=task.key, status=task.status.value, expected=expected))
+        if to == Status.APPROVED and task.status != Status.IN_REVIEW:
+            raise ValueError(msg("board.approve_not_in_review", status=task.status.value))
+        self._check_transition(task.key, to, "user")
+        return {"status": task.status.value}
+
+    @staticmethod
+    def _check_fresh(proposal: Proposal, expect: Optional[dict]) -> None:
+        """Отклоняет предложение, если состояние, на котором его проверяли, с тех пор изменилось."""
+        before = proposal.expect
+        if before is None or before == expect:
+            return
+        now = expect or {}
+        if "status" in before:
+            what = msg("board.stale_status", key=proposal.payload.get("key"), was=before["status"],
+                       now=now.get("status"))
+        elif "stage" in before:
+            what = msg("board.stale_stage", was=before["stage"], now=now.get("stage"))
+        else:
+            old, new = before.get("config") or {}, now.get("config") or {}
+            what = msg("board.stale_config", names=", ".join(sorted(k for k in old if old.get(k) != new.get(k))))
+        raise ValueError(msg("board.proposal_stale", id=proposal.id, what=what))
 
     @staticmethod
     def _open_proposal(proposals: List[Proposal], pid: str) -> Proposal:
@@ -899,6 +1004,16 @@ class Board:
             return msg("board.applied_add_task", key=p["task"]["key"])
         if proposal.kind == "set_deps":
             return msg("board.applied_set_deps", key=p["key"], deps=", ".join(p["deps"]) or msg("board.applied_no_deps"))
+        if proposal.kind == "set_config":
+            return msg("board.applied_set_config", names=", ".join(sorted(p["fields"])))
+        if proposal.kind == "set_status":
+            return msg("board.applied_set_status", key=p["key"], to=p["to"])
+        if proposal.kind == "ship":
+            return msg("board.applied_ship", keys=", ".join(p["keys"]))
+        if proposal.kind == "stage":
+            return msg("board.applied_stage", stage=p["stage"])
+        if proposal.kind == "retry":
+            return msg("board.applied_retry", key=p["key"])
         return msg("board.applied_cancel_task", key=p["key"])
 
     @staticmethod

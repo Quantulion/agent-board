@@ -111,7 +111,7 @@ Limitations:
 | `tracker create\|check\|sync` | create tasks in the tracker (`tracker` stage), check tracker access, or sync statuses now (user only*; on errors — code 1) |
 | `add-task --json '{...}'` | add a task (fields: key, title, description, done_when, repo, kind, estimate, deps, priority; `repo` is a name from `repos` if they are set); user only*; task agents write to the project agent (`say _project`), and it proposes the task with `propose` |
 | `deps <KEY> --json '[...]'` | replace a task's dependencies with a list of keys (a cycle or an unknown task — code 1; user only*) |
-| `propose <add_task\|set_deps\|cancel_task> --json '{...}' [--reason R]` | a project agent proposal |
+| `propose <kind> --json '{...}' [--reason R]` | a project agent proposal; the user applies or rejects it (see "Proposals" below) |
 | `stage <stage>` | move the project to a stage (user only*) |
 | `config get [--json]` · `config set --json '{...}' [--dry-run]` · `config validate` | show project settings, change fields (with all save-time checks; `--dry-run` only checks), or validate the saved file (user only*) |
 | `config schema [--json]` | allowed settings fields: type, default value, description, enums and the shape of nested objects (tracker, review, ship, harness); built from the settings class and its checks, needs neither a board nor a project |
@@ -119,6 +119,21 @@ Limitations:
 | `lock-run <resource> -- <command...>` | run a command holding an exclusive project resource (queued per resource) |
 
 \* User commands (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`, `update`) act as the user only when `AGENT_BOARD_ACTOR` is not set; agents are started with it (an empty value also counts as an agent), so they are refused on user-only actions. This protects against mistakes and is not a trust boundary (see "Limitations").
+
+**Proposals.** The project agent cannot change the graph or perform user actions itself; it prepares a proposal, and the user applies it with one button (`POST /api/p/<slug>/proposals/<id>/apply`) or rejects it (`.../reject`, the project agent is woken). Kinds and their `--json`:
+
+| Kind | Payload | Applied as |
+|---|---|---|
+| `add_task` | `{"task": {...}}` (fields as in `add-task`) | `add-task` |
+| `set_deps` | `{"key", "deps": [...]}` | `deps` |
+| `cancel_task` | `{"key"}` | move to `cancelled` |
+| `set_config` | `{"fields": {...}}` (as in `config set`) | `config set` |
+| `set_status` | `{"key", "to", "from"?}` | a status change by the user; `approved` — like the approve button, only from `in_review` |
+| `ship` | `{"keys": [...]}` | `ship` |
+| `stage` | `{"stage"}` | `stage` |
+| `retry` | `{"key"}` (a task or `_project`) | `retry` |
+
+A proposal is checked when it is created with the same checks as the direct action (for `set_config` — a `dry_run` of the save) and is not saved if they fail (400/404). Applying goes on behalf of `user` through the same methods and checks. The board also remembers the state the proposal was checked on (task status for `set_status`, stage for `stage`, the values of the changed settings for `set_config`); if it has changed since, applying is refused with "proposal is stale" (400) and the proposal stays open — reject it and ask for a new one. Proposals about a task that is cancelled or no longer exists (and `add_task` with a key that already exists) are closed by the board automatically with status `obsolete`. On success a system message goes to the "Project" thread and to the threads of the affected tasks. The project agent uses the user-action kinds only at the user's direct request.
 
 All commands except `serve`, `init`, `stop`, `version`, `status` without arguments and `config schema` talk to the running board; if there is none — exit code 2. Request errors — code 1.
 

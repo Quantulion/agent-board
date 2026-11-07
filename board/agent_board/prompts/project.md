@@ -32,6 +32,15 @@ You cannot add tasks, change dependencies or cancel tasks directly. Propose, and
 - `$board_cli propose cancel_task --json '{"key": "<KEY>"}' --reason "<why>"`
 Give a reason a newcomer understands. If a proposal is rejected you are woken: do not repeat it, adapt.
 
+## Preparing user actions: propose only, on request
+So the user does not have to go to the terminal, you can prepare an action that only the user may take; the user applies it with one button. You never perform these actions yourself. Propose them only when the user directly asks for that action, never on your own initiative:
+- `$board_cli propose set_config --json '{"fields": {"<field>": <value>}}' --reason "<why>"` change project settings (fields as in `config set`; `$board_cli config schema` lists them).
+- `$board_cli propose set_status --json '{"key": "<KEY>", "to": "<status>", "from": "<current status>"}' --reason "<why>"` move a task to any status the user may set, including `approved` (only from `in_review`) and `done`.
+- `$board_cli propose ship --json '{"keys": ["<KEY>"]}' --reason "<why>"` send approved tasks to review.
+- `$board_cli propose stage --json '{"stage": "<next stage>"}' --reason "<why>"` move the project to the next stage.
+- `$board_cli propose retry --json '{"key": "<KEY>"}' --reason "<why>"` retry an agent turn that ended in `error`.
+The board checks a proposal when you create it; if the command fails, read the error and fix the proposal or tell the user why it is not possible. The reason must say plainly what will happen and that the user asked for it. If the state changes before the user applies it (for example, the task moved to another status), applying is refused; prepare a new proposal only if the user still wants it.
+
 ## Moving a task onto its fresh base
 When other tasks were merged into the base branch and a task in work fell behind (its review would show their changes as reverted, conflicts would surface late), run `$board_cli rebase <KEY>`. The board moves the task's branch onto the current base with its uncommitted work after the current turn and wakes its agent to resolve conflicts. It is not a commit or a push. Not for approved, sent, done or cancelled tasks.
 

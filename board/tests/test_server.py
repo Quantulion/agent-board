@@ -265,9 +265,42 @@ def test_proposals_apply_and_reject(server):
     {"kind": "cancel_task", "payload": {}},
     {"kind": "add_task", "payload": "str"},
     {"kind": "add_task"},
+    {"kind": "set_config", "payload": {"fields": {"max_agents": 0}}},
+    {"kind": "set_status", "payload": {"key": 5, "to": "done"}},
+    {"kind": "ship", "payload": {"keys": []}},
+    {"kind": "stage", "payload": {"stage": "done"}},
+    {"kind": "retry", "payload": {"key": "_project"}},
 ])
 def test_malformed_proposal_is_400(server, body):
     assert post(server, "/api/p/pay/proposals", body).status == 400
+
+
+def test_proposal_user_action__stale__apply_is_400_and_stays_open(server):
+    # arrange
+    r = post(server, "/api/p/pay/proposals", {"kind": "stage", "payload": {"stage": "work"}, "reason": "пора"})
+    assert r.status == 200, r.body
+    assert post(server, "/api/p/pay/stage", {"stage": "tracker", "actor": "user"}).status == 200
+
+    # act
+    ap = post(server, "/api/p/pay/proposals/%s/apply" % r.json()["proposal_id"])
+
+    # assert
+    assert ap.status == 400 and "устарело" in ap.json()["error"]
+    assert get(server, "/api/p/pay/state").json()["proposals"][0]["status"] == "open"
+
+
+def test_proposal_set_config__applied__config_changed(server):
+    # arrange
+    r = post(server, "/api/p/pay/proposals", {"kind": "set_config", "payload": {"fields": {"max_agents": 2}}})
+    assert r.status == 200, r.body
+
+    # act
+    ap = post(server, "/api/p/pay/proposals/%s/apply" % r.json()["proposal_id"])
+
+    # assert
+    assert ap.status == 200, ap.body
+    assert any(e["type"] == "config_changed" for e in ap.json()["events"])
+    assert get(server, "/api/p/pay/state").json()["config"]["max_agents"] == 2
 
 
 def test_negative_content_length_is_400(server):
