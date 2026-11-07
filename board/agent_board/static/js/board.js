@@ -72,7 +72,8 @@ export function columnsOf(snapshot, filters = {}) {
 function proposalKey(p) {
   const payload = p.payload || {};
   if (p.kind === 'add_task') return payload.task && typeof payload.task.key === 'string' ? payload.task.key : null;
-  return typeof payload.key === 'string' ? payload.key : null;
+  // повтор хода агента проекта ведёт в панель проекта, ключа задачи у него нет
+  return typeof payload.key === 'string' && payload.key !== PROJECT_THREAD ? payload.key : null;
 }
 
 // Всё, что требует действия пользователя; open — что открыть по клику.

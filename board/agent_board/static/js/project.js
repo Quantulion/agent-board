@@ -1,6 +1,6 @@
-// Панель «Проект»: тред с агентом проекта, его состояние и предложения по изменению графа задач.
+// Панель «Проект»: тред с агентом проекта, его состояние и предложения: изменения графа задач и действия пользователя.
 import { h, icon, patchList } from './dom.js';
-import { T } from './i18n.js';
+import { T, statusInfo } from './i18n.js';
 import { threadAgentModel } from './agent-status.js';
 import { createThread, draftsFor } from './thread.js';
 import { toast } from './ui.js';
@@ -30,6 +30,19 @@ function keyList(keys, byKey) {
 }
 
 const keyRef = (k, byKey) => ({ key: k || '?', exists: Boolean(k) && byKey.has(k) });
+
+const MAX_VALUE = 80;
+
+// Значение настройки одной строкой: длинные составные значения обрезаются
+function valueText(v) {
+  if (v === undefined || v === null || v === '') return T.proposal.unset;
+  const text = typeof v === 'string' ? '«' + v + '»' : JSON.stringify(v);
+  return text.length > MAX_VALUE ? text.slice(0, MAX_VALUE - 1) + '…' : text;
+}
+
+const titleOf = (key, byKey) => (byKey.has(key) ? ' «' + byKey.get(key).title + '»' : '');
+const stageLabel = id => T.stageLabels[id] || String(id || '?');
+const expectOf = p => (p.expect && typeof p.expect === 'object' ? p.expect : {});
 
 // Что изменится, если применить предложение: заголовок и строки изменений человеческим текстом.
 export function describeProposal(p, byKey) {
@@ -66,6 +79,49 @@ export function describeProposal(p, byKey) {
       changes: dependents.length ? [{ op: 'del', label: P.opCancel, parts: [P.dropsFrom, ...keyList(dependents, byKey)] }] : [],
     };
   }
+  if (p.kind === 'set_config') {
+    const fields = payload.fields && typeof payload.fields === 'object' ? payload.fields : {};
+    const before = expectOf(p).config || {};
+    return {
+      title: [P.config],
+      changes: Object.keys(fields).sort().map(name => ({
+        op: 'mod', label: P.opConfig,
+        parts: [(T.settings.labels[name] || name) + ' (' + name + '): ', valueText(before[name]), ' → ', valueText(fields[name])],
+      })),
+    };
+  }
+  if (p.kind === 'set_status') {
+    const key = str(payload.key);
+    const task = byKey.get(key);
+    const from = str(payload.from) || str(expectOf(p).status) || (task ? task.status : '');
+    return {
+      title: [P.status, keyRef(key, byKey), titleOf(key, byKey)],
+      changes: [{ op: 'mod', label: P.opStatus, parts: [from ? statusInfo(from).label : '?', ' → ', statusInfo(str(payload.to)).label] }],
+    };
+  }
+  if (p.kind === 'ship') {
+    const keys = strList(payload.keys);
+    return {
+      title: [P.ship, ...keyList(keys, byKey)],
+      changes: keys.map(k => ({ op: 'mod', label: P.opShip, parts: [keyRef(k, byKey), titleOf(k, byKey)] })),
+    };
+  }
+  if (p.kind === 'stage') {
+    return {
+      title: [P.stage + '«' + stageLabel(payload.stage) + '»'],
+      changes: [{ op: 'mod', label: P.opStage, parts: [stageLabel(expectOf(p).stage), ' → ', stageLabel(payload.stage)] }],
+    };
+  }
+  if (p.kind === 'retry') {
+    const key = str(payload.key);
+    if (key === PROJECT_THREAD) return { title: [P.retryProject], changes: [] };
+    const task = byKey.get(key);
+    const error = task ? str(task.turn_error) : '';
+    return {
+      title: [P.retry, keyRef(key, byKey), titleOf(key, byKey)],
+      changes: error ? [{ op: 'mod', label: P.opRetry, parts: [P.lastError + error] }] : [],
+    };
+  }
   return { title: [String(p.kind || '?')], changes: [] };
 }
 
@@ -78,6 +134,7 @@ export function proposalsTouching(proposals, key) {
       const t = payload.task || {};
       return t.key === key || strList(t.deps).includes(key);
     }
+    if (p.kind === 'ship') return strList(payload.keys).includes(key);
     return payload.key === key;
   });
 }
@@ -113,6 +170,8 @@ export function agentStateLine(pa) {
 // пока следующий снимок не уберёт предложение из открытых
 const pending = new Set();
 const settled = new Set();
+// последняя ошибка применения или отклонения: видна у предложения и после перерисовки, пока его не обработают
+const failures = new Map();
 // описания открытых предложений по проектам — для истории
 const described = new Map();
 
@@ -139,13 +198,14 @@ function changeRows(ctx, d) {
 }
 
 function actions(ctx, p, d) {
-  const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const id = actionKey(ctx, p);
+  const error = h('div', { class: 'ferr', role: 'alert', hidden: !failures.has(id) }, failures.get(id) || '');
   const act = action => {
     if (pending.has(id) || settled.has(id)) return;
     pending.add(id);
     buttons.forEach(b => { b.disabled = true; });
     error.hidden = true;
+    failures.delete(id);
     ctx.client.post('/proposals/' + encodeURIComponent(p.id) + '/' + action)
       .then(() => {
         settled.add(id);
@@ -153,7 +213,9 @@ function actions(ctx, p, d) {
       })
       .catch(err => {
         buttons.forEach(b => { b.disabled = false; });
-        error.textContent = (err && err.message) || String(err);
+        const text = T.proposal.failed(action, (err && err.message) || String(err));
+        failures.set(id, text);
+        error.textContent = text;
         error.hidden = false;
       })
       .finally(() => pending.delete(id));
@@ -166,11 +228,15 @@ function actions(ctx, p, d) {
   return [h('div', { class: 'pa-act' }, buttons), error];
 }
 
+// предложения, которые меняют граф задач; остальные — действия пользователя от его имени
+const GRAPH_KINDS = new Set(['add_task', 'set_deps', 'cancel_task']);
+
 // Итог обработанного предложения для истории; у открытого итога нет.
 export function proposalOutcome(p) {
   const P = T.proposal;
-  if (p.status === 'applied') return { status: 'applied', cls: 'ok', icon: 'check', text: P.applied };
-  if (p.status === 'rejected') return { status: 'rejected', cls: 'muted', icon: 'x', text: P.rejected };
+  const graph = GRAPH_KINDS.has(p.kind);
+  if (p.status === 'applied') return { status: 'applied', cls: 'ok', icon: 'check', text: graph ? P.applied : P.appliedAction };
+  if (p.status === 'rejected') return { status: 'rejected', cls: 'muted', icon: 'x', text: graph ? P.rejected : P.rejectedAction };
   if (p.status === 'obsolete') {
     const why = P.obsoleteWhy[p.obsolete_reason];
     return { status: 'obsolete', cls: 'muted', icon: 'x', text: why ? P.obsolete + ': ' + why : P.obsolete };

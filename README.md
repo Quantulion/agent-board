@@ -291,7 +291,7 @@ What is where:
 - **Board** (`#/p/<slug>`) — columns by status, filters (repository, kind, search), the project stage bar, progress, connection indicator. Next to the stage bar is the project's next step (with a confirmation): at the `tracker` stage the "Start work" button (`work`), and at the `work` stage, when all tasks are done or cancelled, "Finish project" (`done`). The "Planning" row in the header holds the project links (`links`) and the decomposition page. Resources are shown on task cards (holds the resource, or waits in the queue with its position) and in the task card. The status is changed by dragging a card or through the status menu; "Blocked" is not a drag target: instead there is an "External blocker…" item with a reason.
 - **Graph** — the same board as a dependency graph, toggled with "Board / Graph" in the header; the critical path is highlighted.
 - **Task card** (`#/p/<slug>?task=<KEY>`) — a panel on the right with the tabs "Overview", "Thread", "Review", "Changes" ("Review" shows the crit rounds): agent questions and answers to them, conversation, diff. The tabs change only the panel content.
-- **Project** — a header button (with the number of open proposals): a panel with the project agent state, the "Project" thread (conversation with the project agent) and its proposals (apply or reject).
+- **Project** — a header button (with the number of open proposals): a panel with the project agent state, the "Project" thread (conversation with the project agent) and its proposals (apply or reject): each shows what will change — new task and links, settings with old and new values, the task status transition, the tasks to send, the stage transition — and the agent's reason; an apply error (a stale proposal, a failed check) stays on the proposal.
 - **Decomposition** (`#/p/<slug>/decomposition`) — decomposition tasks with rule checks; at the `decomposition` stage the project agent reads comments on tasks.
 - **"Waiting for you"** — a strip above the board: open questions, project agent proposals, tasks in review, agent errors, agents stopped by the conversation limit, external blockers, decomposition rule violations. A click opens the relevant card or page.
 
@@ -332,7 +332,8 @@ Scripts one by one (`node ui-tests/<name>.mjs` from the root or `npm run <name>`
 - `card` — task card with the runner and the fake agent: answering a question, thread, diff, resizing; tab and mockup snapshots;
 - `graph` — graph, the "Project" panel, a new task;
 - `decomposition` — the decomposition page;
-- `retry` — an agent turn error and the "Retry" button in the card, the "Project" panel and "Waiting for you".
+- `retry` — an agent turn error and the "Retry" button in the card, the "Project" panel and "Waiting for you";
+- `proposals` — project agent proposals for user actions: the description of what changes, applying `set_config` and `set_status`, rejecting, the error of a stale proposal.
 
 The task card opens at `#/p/<slug>?task=<KEY>`; the panel width is stored in `localStorage`, message and answer drafts in `sessionStorage`. The board view (columns or graph) and whether the "Project" panel is collapsed are also stored in `localStorage`.
 
