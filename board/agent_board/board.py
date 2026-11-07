@@ -42,6 +42,7 @@ TASK_TEXT_FIELDS = {"title", "description", "done_when", "estimate"}
 RULE_VIOLATION_AUTHORS = {"user", "project_agent"}
 # приоритет меняют пользователь и агент проекта; агент задачи не может поднять себя в очереди
 PRIORITY_AUTHORS = {"user", "project_agent"}
+INTERRUPT_AUTHORS = {"user", "project_agent"}
 MAX_RULE_VIOLATIONS = 50
 MAX_RULE_CHARS = 200
 MAX_RULE_TEXT_CHARS = 2000
@@ -81,6 +82,8 @@ EVENT_TYPES: Dict[str, str] = {
     "turn_started": "key — раннер начал ход агента",
     "turn_finished": "key — ход агента завершён",
     "turn_failed": "key, error — ход агента завершился ошибкой",
+    "turn_interrupted": "key, message_id, by — сообщение с прерыванием остановило идущий ход, следующий ход начнётся "
+                        "с этого сообщения",
     "task_committed": "key — раннер закоммитил результат задачи",
     "lock_waiting": "key, resource — задача ждёт общий ресурс",
     "lock_acquired": "key, resource",
@@ -106,7 +109,8 @@ WAKE_REASONS: Dict[str, str] = {
     "returned": "from — пользователь вернул задачу в работу с этого статуса",
     "answer": "пользователь ответил на вопрос агента",
     "message": "message_id, by (автор: user или project_agent), task (у агента проекта: задача, к которой "
-               "пользователь оставил комментарий на стадии разбивки) — новое сообщение для агента",
+               "пользователь оставил комментарий на стадии разбивки), interrupt (true — сообщение прерывает идущий "
+               "ход) — новое сообщение для агента",
     "proposal_rejected": "агенту проекта отклонили предложение",
     "escalation": "from, by (agent) — агент задачи написал в тред проекта",
     "manual": "пользователь сам запустил задачу без сессии агента",
@@ -726,8 +730,12 @@ class Board:
                 events.extend(self.transition(key, Status.IN_PROGRESS, "system"))
             return events
 
-    def post_message(self, thread: str, author: str, text: str, from_task: Optional[str] = None) -> List[Event]:
-        """from_task — задача, из которой агент пишет в тред проекта; такое сообщение будит агента проекта."""
+    def post_message(self, thread: str, author: str, text: str, from_task: Optional[str] = None,
+                     interrupt: bool = False) -> List[Event]:
+        """from_task — задача, из которой агент пишет в тред проекта; такое сообщение будит агента проекта.
+        interrupt — сообщение прерывает идущий ход агента треда, чтобы тот ответил сразу."""
+        if interrupt and author not in INTERRUPT_AUTHORS:
+            raise ValueError(msg("api.interrupt_forbidden"))
         with self._lock:
             task = None
             if thread != PROJECT_THREAD:
@@ -745,8 +753,10 @@ class Board:
                 events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "message", "task": thread,
                                                         "message_id": message.id, "by": author}))
             elif wakes_agent:
-                events.append(self._emit("agent_wake", {"key": thread, "reason": "message", "message_id": message.id,
-                                                        "by": author}))
+                wake = {"key": thread, "reason": "message", "message_id": message.id, "by": author}
+                if interrupt:
+                    wake["interrupt"] = True
+                events.append(self._emit("agent_wake", wake))
             elif author == "agent" and from_task:
                 events.append(self._emit("agent_wake", {"key": PROJECT_THREAD, "reason": "escalation", "from": from_task,
                                                         "by": author}))

@@ -154,6 +154,33 @@ def test_say_from_task_env_escalates_to_project_agent(srv, capsys, monkeypatch):
     assert wakes == [{"key": "_project", "reason": "escalation", "from": "T-1", "by": "agent"}]
 
 
+def test_say_interrupt_from_user_marks_wake(srv, capsys, monkeypatch):
+    # arrange
+    monkeypatch.delenv("AGENT_BOARD_ACTOR", raising=False)
+    monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)
+
+    # act
+    out = run_json(capsys, "say", "_project", "--text", "срочно", "--interrupt")
+
+    # assert
+    wakes = [e["data"] for e in out["events"] if e["type"] == "agent_wake"]
+    assert wakes[0]["interrupt"] is True and wakes[0]["by"] == "user"
+
+
+def test_say_interrupt_from_task_agent_is_refused(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_TASK", "T-1")
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "agent")
+
+    # act
+    code, out, err = run(capsys, "say", "_project", "--text", "срочно", "--interrupt")
+
+    # assert
+    assert code == 1 and "Прервать ход агента могут только" in err
+    assert run_json(capsys, "thread", "_project")["messages"] == []
+
+
 def test_say_without_task_env_does_not_escalate(srv, capsys, monkeypatch):
     # arrange
     monkeypatch.delenv("AGENT_BOARD_TASK", raising=False)

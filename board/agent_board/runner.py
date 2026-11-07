@@ -119,6 +119,7 @@ class _Turn:
         self.fresh = fresh
         self.session_id = session_id
         self.stopped = False
+        self.interrupted = False
 
 
 class _Review:
@@ -670,6 +671,17 @@ class Runner:
             turn.stopped = True
             terminate(turn.proc, STOP_GRACE_SECONDS)
 
+    def _interrupt_for_message(self, k: Key, turn: _Turn, reason: dict) -> None:
+        """Сообщение с прерыванием: идущий ход останавливается, а следующий ход той же сессии получает сообщение,
+        пометку о прерывании и причины прерванного хода. Это не неудача хода."""
+        turn.stopped = True
+        turn.interrupted = True
+        note = {"key": k[1], "reason": "user_interrupt", "by": reason.get("by")}
+        self._pending[k] = [reason, note] + list(turn.reasons) + self._pending.get(k, [])
+        self._board(k[0]).record("turn_interrupted", {"key": k[1], "message_id": reason.get("message_id"),
+                                                      "by": reason.get("by")})
+        terminate(turn.proc, STOP_GRACE_SECONDS)
+
     def _stop(self, slug: str, key: str) -> None:
         k = (slug, key)
         self._pending.pop(k, None)
@@ -689,6 +701,9 @@ class Runner:
             if task is None or task.status == Status.CANCELLED:
                 return
         turn = self._turns.get(k)
+        if reason.get("interrupt") and turn is not None and not turn.stopped:
+            self._interrupt_for_message(k, turn, reason)
+            return
         # «начинай работу» во время стартового хода ничего не добавляет
         if turn is not None and turn.fresh and reason.get("reason") in ("ready", "unblocked", "manual"):
             return
@@ -923,12 +938,14 @@ class Runner:
         except _ForeignWorktree as e:
             raise _PrepareError(error_text(e))
         reasons = deliver
-        rebases = [r for r in deliver if r.get("reason") in REBASE_REASONS]
+        # перенос, уже выполненный в прерванном ходе, повторно доставляется только текстом
+        rebases = [r for r in deliver if r.get("reason") in REBASE_REASONS and "rebase_ok" not in r]
         if rebases:
             # несколько переносов подряд сводятся к одному — на актуальную базу; ошибки отправки агент получает все
             last = rebases[-1]
             moved = self._rebase(board, task, tasks, config, last)
-            reasons = [r for r in deliver if r.get("reason") != "rebase" and r is not last] + [moved]
+            reasons = [r for r in deliver if r is not last and not (
+                r.get("reason") == "rebase" and any(r is x for x in rebases))] + [moved]
         harness = self._harness(board, task)
         if hasattr(harness, "system_prompt"):
             harness.system_prompt = prompts.task_system(config, BOARD_CLI)
@@ -1054,7 +1071,10 @@ class Runner:
         board = self._board(k[0])
         project = k[1] == PROJECT_THREAD
         if turn.stopped:
-            state, error, event = "idle", "", ("turn_finished", {"key": k[1], "stopped": True})
+            data = {"key": k[1], "stopped": True}
+            if turn.interrupted:
+                data["interrupted"] = True
+            state, error, event = "idle", "", ("turn_finished", data)
             session_id = result.session_id or turn.session_id
         elif not result.ok and not turn.fresh and LOST_SESSION_MARK in (result.error or ""):
             # продолжить нечего: следующий ход начнётся новой сессией, это не считается сбоем агента

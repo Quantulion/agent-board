@@ -4,6 +4,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -52,6 +53,12 @@ def run(session_id: str, text: str, resumed: bool = False) -> int:
             target = Path(step["write"]["path"])
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(step["write"]["text"], encoding="utf-8")
+        elif "background" in step:
+            # фоновая команда хода (как запущенные агентом тесты): pid пишется в файл
+            proc = subprocess.Popen(step["background"]["argv"])
+            target = Path(step["background"]["pid_file"])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(str(proc.pid), encoding="utf-8")
         elif "sleep" in step:
             time.sleep(float(step["sleep"]))
         elif "fail-if-resumed" in step:
