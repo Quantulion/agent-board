@@ -14,7 +14,7 @@ import { reviewPane } from './review-pane.js';
 import { trackerChip, trackerLink } from './tracker.js';
 // действия шапки карточки регистрируются при загрузке модулей
 import './review.js';
-import './ship.js';
+import { shipHint, shipHintNode } from './ship.js';
 
 export { authorOf, createDrafts, formatTime } from './thread.js';
 
@@ -373,7 +373,8 @@ function createCard(ctx, key, returnFocus) {
 
   function bannerModel(t, snap) {
     const byKey = new Map(snap.tasks.map(x => [x.key, statusOf(x)]));
-    return [statusOf(t), t.locks, t.open_deps, (t.open_deps || []).map(k => byKey.get(k)), t.external_blocker, t.agent_parked];
+    return [statusOf(t), t.locks, t.open_deps, (t.open_deps || []).map(k => byKey.get(k)), t.external_blocker, t.agent_parked,
+      shipHint(t, snap)];
   }
 
   function bannerNodes(t, snap) {
@@ -395,6 +396,8 @@ function createCard(ctx, key, returnFocus) {
         h('span', null, h('b', null, T.card.whyBlocked), ' ', reasons.join('; ') || T.card.depsClosed)));
     }
     if (t.agent_parked) nodes.push(h('div', { class: 'banner parked' }, icon('chat'), h('span', null, T.card.parked)));
+    const hint = shipHint(t, snap);
+    if (hint) nodes.push(shipHintNode(ctx, hint));
     return nodes;
   }
 

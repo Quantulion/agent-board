@@ -5,6 +5,8 @@ import { h, icon, patchList } from './dom.js';
 import { T, statusInfo } from './i18n.js';
 import { isResearch } from './pane-kit.js';
 import { stateClass } from './review.js';
+import { openSettingsDialog } from './settings.js';
+import { requestMove } from './status.js';
 import { confirmDialog, openModal, toast } from './ui.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
@@ -198,6 +200,56 @@ registerCardAction({
   visible: (task, snap) => !isResearch(task) && statusOf(task) === 'approved' && Boolean(shipCommand(snap))
     && !isShipping(task) && Boolean(unsentDep(snap, task)),
   run: ctx => ctx.openShip(),
+});
+
+// Одобренная задача без команды отправки: подсказка, что делать с веткой дальше; null — подсказка не нужна.
+export function shipHint(task, snapshot) {
+  if (!task || isResearch(task) || statusOf(task) !== 'approved' || !snapshot || shipCommand(snapshot)) return null;
+  return { branch: task.branch || '' };
+}
+
+// Ссылка на настройки проекта с полем команды отправки; клик не открывает карточку под ней.
+const settingsLink = (ctx, text) => h('button', {
+  class: 'linkbtn', type: 'button', 'data-action': 'ship-settings',
+  onclick: e => { e.stopPropagation(); openShipSettings(ctx); },
+}, text);
+
+const branchNode = hint => (hint.branch ? h('code', { class: 'br' }, hint.branch) : T.ship.hint.noBranch);
+
+// Подсказка без команды отправки: полная — в открытой карточке, compact — на карточке доски.
+export function shipHintNode(ctx, hint, compact = false) {
+  const H = T.ship.hint;
+  const done = statusInfo('done').label;
+  if (compact) {
+    const title = H.noCommand + ' ' + H.lead + (hint.branch || H.noBranch) + '. ' + H.setup + H.settings + H.manual(done);
+    return h('div', { class: 'shiphint', title },
+      icon('branch'), h('span', null, H.short, branchNode(hint), ' · ', settingsLink(ctx, H.setupShort)));
+  }
+  return h('div', { class: 'banner shiphint' }, icon('send'),
+    h('span', null, h('b', null, H.noCommand), ' ', H.lead, branchNode(hint), '. ', H.setup, settingsLink(ctx, H.settings), H.manual(done)),
+    h('button', { class: 'btn sm primary', type: 'button', 'data-action': 'ship-setup-banner', onclick: () => openShipSettings(ctx) },
+      icon('gear'), H.setupButton));
+}
+
+// Настройки проекта, открытые на команде отправки.
+export const openShipSettings = ctx => openSettingsDialog(ctx, { focus: 'ship' });
+
+// Без команды отправки вместо кнопки отправки — переход к её настройке.
+registerCardAction({
+  id: 'ship-setup',
+  label: () => T.ship.hint.setupButton,
+  icon: 'gear',
+  visible: (task, snap) => Boolean(shipHint(task, snap)),
+  run: ctx => openShipSettings(ctx),
+});
+
+// Без команды отправки одобренную задачу вливают вручную и закрывают сами.
+registerCardAction({
+  id: 'mark-done',
+  label: () => T.ship.hint.markDone(statusInfo('done').label),
+  icon: 'check',
+  visible: (task, snap) => Boolean(shipHint(task, snap)),
+  run: (ctx, task) => requestMove(ctx, task, 'done'),
 });
 
 // Строка результата отправки: состояние, код выхода, причина и хвост вывода.
