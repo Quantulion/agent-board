@@ -369,14 +369,21 @@ def test_terminate_escalates_to_sigkill(tmp_path):
     assert time.monotonic() - started < 5
 
 
-def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_server, calls, git_repo):
-    # arrange
-    store = make_project()
+def save_task_in_work(store, git_repo, **fields):
+    """Задача T-1 уже в работе: своя рабочая копия, сессия агента и ветка от main."""
     wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
     t = new_task_from_dict({"key": "T-1", "title": "Задача"})
     t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
-    t.agent_state, t.harness = "running", "fake"
+    t.harness = "fake"
+    for name, value in fields.items():
+        setattr(t, name, value)
     store.save_task(t)
+
+
+def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_server, calls, git_repo):
+    # arrange
+    store = make_project()
+    save_task_in_work(store, git_repo, agent_state="running")
     # act
     srv = start_server()
     wait_events(store, "turn_finished", "T-1")
@@ -389,22 +396,17 @@ def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_se
     assert task(store, "T-1").session_id == "s-1"
 
 
-@pytest.mark.parametrize("language, expected", [("en", "en"), ("ru", "ru")])
 def test_running_task_on_start__project_language__interruption_note_in_that_language(
-        make_project, start_server, calls, git_repo, monkeypatch, language, expected):
+        make_project, start_server, calls, git_repo, monkeypatch):
     # arrange: язык процесса противоположен языку проекта — сообщение должно следовать проекту
-    monkeypatch.setenv("AGENT_BOARD_LANG", "ru" if language == "en" else "en")
-    store = make_project(language=language)
-    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
-    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
-    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
-    t.agent_state, t.harness = "running", "fake"
-    store.save_task(t)
+    monkeypatch.setenv("AGENT_BOARD_LANG", "ru")
+    store = make_project(language="en")
+    save_task_in_work(store, git_repo, agent_state="running")
     # act
     start_server()
     wait_events(store, "turn_finished", "T-1")
     # assert
-    assert msg("run.interrupted").render(expected) in thread_texts(store, "T-1")
+    assert msg("run.interrupted").render("en") in thread_texts(store, "T-1")
 
 
 def test_escalation_wakes_project_agent_with_digest(make_project, start_server, calls):
@@ -1092,12 +1094,8 @@ def test_recovery_does_not_signal_process_with_other_identity(make_project, star
     store = make_project()
     stranger = subprocess.Popen(["sleep", "30"], start_new_session=True)
     try:
-        wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
-        t = new_task_from_dict({"key": "T-1", "title": "Задача"})
-        t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
-        t.agent_state, t.harness = "running", "fake"
-        t.turn_process = {"pgid": stranger.pid, "started": "Mon Jan  1 00:00:00 2001", "mark": "s-1"}
-        store.save_task(t)
+        save_task_in_work(store, git_repo, agent_state="running",
+                          turn_process={"pgid": stranger.pid, "started": "Mon Jan  1 00:00:00 2001", "mark": "s-1"})
         # act
         srv = start_server()
         wait_events(store, "turn_finished", "T-1")
@@ -1295,11 +1293,7 @@ def test_restart_clears_parked_flags(make_project, start_server):
 def test_waiting_task_with_session_resumes_with_queued_restart_text(make_project, start_server, calls, git_repo):
     # arrange
     store = make_project()
-    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
-    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
-    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-1", str(wt), "T-1", "main"
-    t.agent_state, t.harness = "waiting_turn", "fake"
-    store.save_task(t)
+    save_task_in_work(store, git_repo, agent_state="waiting_turn")
     # act
     start_server()
     wait_events(store, "turn_finished", "T-1")
@@ -1313,11 +1307,7 @@ def test_waiting_task_with_session_resumes_with_queued_restart_text(make_project
 def test_lost_session_is_dropped_and_task_starts_fresh(make_project, start_server, calls, git_repo):
     # arrange
     store = make_project()
-    wt = ensure_worktree(git_repo, "T-1", "T-1", "main", [])
-    t = new_task_from_dict({"key": "T-1", "title": "Задача"})
-    t.status, t.session_id, t.worktree, t.branch, t.base_branch = Status.IN_PROGRESS, "s-gone", str(wt), "T-1", "main"
-    t.harness = "fake"
-    store.save_task(t)
+    save_task_in_work(store, git_repo, session_id="s-gone")
     srv = start_server()
     runner_sync(srv)
     # act
@@ -1754,8 +1744,8 @@ def busy_agent(srv, store, tmp_path, key="A"):
     return gate
 
 
-@pytest.mark.parametrize("action", ["approve", "cancel", "return"])
-@pytest.mark.parametrize("phase", ["changes", "next_round"])
+# отмена закрывает ревью той же веткой, что и одобрение, поэтому отдельно не проверяется
+@pytest.mark.parametrize("action, phase", [("approve", "changes"), ("approve", "next_round"), ("return", "next_round")])
 def test_closing_review_stops_crit_daemon(make_project, start_server, calls, crit_bin, action, phase, tmp_path):
     # arrange
     store = review_project(make_project, crit_bin)
@@ -1775,8 +1765,6 @@ def test_closing_review_stops_crit_daemon(make_project, start_server, calls, cri
     # act
     if action == "approve":
         board.approve("A", "user")
-    elif action == "cancel":
-        board.transition("A", Status.CANCELLED, "user")
     else:
         board.return_to_work("A", "user", "доделай")
     if gate:

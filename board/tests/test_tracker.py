@@ -414,15 +414,6 @@ def test_update_config__invalid_tracker__is_rejected(board, cfg, message):
         board.update_config({"tracker": cfg})
 
 
-def test_agent_cannot_forge_tracker_key(board):
-    # arrange
-    board.add_task(make_task("A"), "user")
-    # act / assert
-    for actor in ("agent", "project_agent", "tracker"):
-        with pytest.raises(PermissionError):
-            board.update_task("A", actor, {"tracker_key": "PROJ-9"})
-
-
 # --- проверка доступа и статусы ---
 
 def test_check__jira_ok(board, jira):
@@ -515,7 +506,6 @@ def test_create__multiline_cookie_file__is_joined(board, tmp_path):
         fake.stop()
     # assert
     assert result["errors"] == []
-
 
 
 # --- сетевые сбои ---

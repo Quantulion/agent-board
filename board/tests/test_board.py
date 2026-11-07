@@ -1457,3 +1457,337 @@ def test_new_task_from_dict__priority__validated():
     assert new_task_from_dict({"key": "A", "title": "a", "priority": "low"}).priority == "low"
     with pytest.raises(ValueError):
         new_task_from_dict({"key": "A", "title": "a", "priority": "urgent"})
+
+
+# --- текст задачи ---
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "tracker"])
+@pytest.mark.parametrize("fields", [{"title": "t"}, {"description": "d"}, {"done_when": "ничего"}, {"estimate": 9}])
+def test_update_task__task_text_by_non_user__rejected(board, actor, fields):
+    # arrange
+    board.add_task(mk("A"), "user")
+    before = board.store.last_seq()
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.update_task("A", actor, fields)
+    task = board.store.load_tasks()["A"]
+    assert (task.title, task.description, task.done_when, task.estimate) == ("A", "", "", None)
+    assert board.store.read_events(before) == []
+
+
+# --- ревью ---
+
+def _in_review(board, key="A", **extra):
+    board.add_task(mk(key, **extra), "user")
+    board.transition(key, Status.IN_REVIEW, "agent")
+
+
+def test_request_review__in_review_task__records_event(board):
+    # arrange
+    _in_review(board)
+    # act
+    events = board.request_review("A", "user")
+    # assert
+    assert flat(events) == [dict(type="review_requested", key="A")]
+
+
+def test_request_review__outside_in_review__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError, match="ревью"):
+        board.request_review("A", "user")
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
+def test_request_review__not_user__forbidden(board, actor):
+    # arrange
+    _in_review(board)
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.request_review("A", actor)
+
+
+def test_request_review__round_already_open__rejected(board):
+    # arrange
+    _in_review(board)
+    board.update_task("A", "system", {"review": {"round": 1, "state": "open"}})
+    # act / assert
+    with pytest.raises(ValueError):
+        board.request_review("A", "user")
+
+
+def test_request_review__no_review_tool__rejected(board):
+    # arrange
+    board.update_config({"review": {"tool": "none"}})
+    _in_review(board)
+    # act / assert
+    with pytest.raises(ValueError):
+        board.request_review("A", "user")
+
+
+def test_approve__by_user__moves_to_approved(board):
+    # arrange
+    _in_review(board)
+    # act
+    events = board.approve("A", "user")
+    # assert
+    assert [e.data for e in events if e.type == "status_changed"] == [
+        {"key": "A", "from": "in_review", "to": "approved", "actor": "user"}]
+    assert board.store.load_tasks()["A"].status == Status.APPROVED
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
+def test_approve__not_user__forbidden_and_status_kept(board, actor):
+    # arrange
+    _in_review(board)
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.approve("A", actor)
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+
+
+def test_approve__outside_in_review__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError):
+        board.approve("A", "user")
+
+
+def test_return_to_work__with_comment__posts_message_and_wakes_once_with_it(board):
+    # arrange
+    _in_review(board)
+    # act
+    events = board.return_to_work("A", "user", "поправь тесты")
+    # assert
+    assert [e.type for e in events] == ["message_posted", "status_changed", "agent_wake"]
+    wake_data = events[2].data
+    assert wake_data["reason"] == "returned" and wake_data["from"] == "in_review"
+    assert wake_data["message_id"] == events[0].data["message_id"]
+    assert board.store.load_tasks()["A"].status == Status.IN_PROGRESS
+    assert [(m.author, m.text) for m in board.store.read_thread("A")] == [("user", "поправь тесты")]
+
+
+@pytest.mark.parametrize("actor, text, error", [
+    ("user", "  ", ValueError),
+    ("user", None, ValueError),
+    ("agent", "x", PermissionError),
+])
+def test_return_to_work__invalid__rejected_and_status_kept(board, actor, text, error):
+    # arrange
+    _in_review(board)
+    # act / assert
+    with pytest.raises(error):
+        board.return_to_work("A", actor, text)
+    assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+    assert board.store.read_thread("A") == []
+
+
+def test_return_to_work__from_in_progress__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.transition("A", Status.IN_PROGRESS, "agent")
+    # act / assert
+    with pytest.raises(ValueError):
+        board.return_to_work("A", "user", "x")
+
+
+# --- отправка ---
+
+def _approved(board, key="A", **extra):
+    _in_review(board, key, **extra)
+    board.approve(key, "user")
+
+
+def _with_stored_ship(board, command):
+    config = board.store.load_config()
+    config.ship = {"command": command, "timeout": 5}
+    board.store.save_config(config)
+
+
+def test_request_ship__several_tasks__queued_in_dependency_order(board):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    _approved(board, "A")
+    _approved(board, "B", deps=["A"])
+    # act
+    events = board.request_ship(["B", "A"], "user")
+    # assert
+    assert flat(events) == [dict(type="ship_requested", keys=["A", "B"])]
+    assert board.store.load_tasks()["A"].ship["state"] == "queued"
+
+
+@pytest.mark.parametrize("command, message", [
+    (None, "команда отправки"),
+    ("echo {nope}", "{nope}"),
+    ('run "{title}"', "в кавычки"),
+])
+def test_request_ship__bad_command__rejected_and_not_queued(board, command, message):
+    # arrange
+    if command is not None:
+        _with_stored_ship(board, command)
+    _approved(board)
+    # act / assert
+    with pytest.raises(ValueError, match=re.escape(message)):
+        board.request_ship(["A"], "user")
+    assert board.store.load_tasks()["A"].ship is None
+
+
+def test_request_ship__task_not_approved__rejected(board):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    board.add_task(mk("A"), "user")
+    # act / assert
+    with pytest.raises(ValueError):
+        board.request_ship(["A"], "user")
+    assert board.store.load_tasks()["A"].ship is None
+
+
+def test_request_ship__unshipped_dependency_outside_request__rejected(board):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    _approved(board, "A")
+    _approved(board, "B", deps=["A"])
+    # act / assert
+    with pytest.raises(ValueError, match="сначала отправьте A"):
+        board.request_ship(["B"], "user")
+
+
+def test_request_ship__second_request_while_running__rejected(board):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    _approved(board)
+    board.request_ship(["A"], "user")
+    # act / assert
+    with pytest.raises(ValueError, match="уже отправляется"):
+        board.request_ship(["A"], "user")
+
+
+@pytest.mark.parametrize("actor", ["agent", "project_agent", "system"])
+def test_request_ship__not_user__forbidden(board, actor):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    _approved(board)
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.request_ship(["A"], actor)
+    assert board.store.load_tasks()["A"].ship is None
+
+
+@pytest.mark.parametrize("keys", [[], "A", ["A", "A"], [1]])
+def test_request_ship__bad_keys__rejected(board, keys):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    _approved(board)
+    # act / assert
+    with pytest.raises(ValueError):
+        board.request_ship(keys, "user")
+
+
+def test_request_ship__unknown_task__not_found(board):
+    # arrange
+    board.update_config({"ship": {"command": "true"}})
+    # act / assert
+    with pytest.raises(KeyError):
+        board.request_ship(["NOPE"], "user")
+
+
+# --- повтор упавшего хода и перенос на базу ---
+
+def _failed(board, key="A", error="обрыв соединения"):
+    board.add_task(mk(key), "user")
+    board.set_stage("work", "user")
+    board.update_task(key, "system", {"agent_state": "error", "turn_error": error})
+
+
+def test_retry__failed_task__records_retry_wake_with_error(board):
+    # arrange
+    _failed(board)
+    # act
+    events = board.retry("A", "user")
+    # assert
+    assert flat(events) == [wake("A", "retry", error="обрыв соединения")]
+
+
+def test_retry__idle_task__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.set_stage("work", "user")
+    # act / assert
+    with pytest.raises(ValueError, match="idle"):
+        board.retry("A", "user")
+
+
+@pytest.mark.parametrize("key, actor", [("A", "agent"), ("_project", "project_agent")])
+def test_retry__by_agent__forbidden(board, key, actor):
+    # arrange
+    _failed(board)
+    board.update_meta({"project_agent_state": "error", "project_turn_error": "упал CLI"})
+    # act / assert
+    with pytest.raises(PermissionError):
+        board.retry(key, actor)
+
+
+def test_retry__cancelled_task__rejected(board):
+    # arrange
+    _failed(board)
+    board.transition("A", Status.CANCELLED, "user")
+    # act / assert
+    with pytest.raises(ValueError, match="cancelled"):
+        board.retry("A", "user")
+
+
+def test_retry__project_agent__only_after_failed_turn(board):
+    # arrange
+    with pytest.raises(ValueError):
+        board.retry("_project", "user")
+    board.update_meta({"project_agent_state": "error", "project_turn_error": "упал CLI"})
+    # act
+    events = board.retry("_project", "user")
+    # assert
+    assert flat(events) == [wake("_project", "retry", error="упал CLI")]
+
+
+def _started(board, key="A"):
+    board.add_task(mk(key), "user")
+    board.set_stage("work", "user")
+    board.update_task(key, "system", {"session_id": "s-1", "worktree": "/tmp/wt"})
+
+
+@pytest.mark.parametrize("actor", ["user", "project_agent"])
+def test_request_rebase__by_user_or_project_agent__records_rebase_wake(board, actor):
+    # arrange
+    _started(board)
+    # act
+    events = board.request_rebase("A", actor)
+    # assert
+    assert flat(events) == [wake("A", "rebase", by=actor)]
+
+
+def test_request_rebase__by_task_agent__forbidden(board):
+    # arrange
+    _started(board)
+    # act / assert
+    with pytest.raises(PermissionError, match="агент проекта"):
+        board.request_rebase("A", "agent")
+
+
+@pytest.mark.parametrize("status", ["approved", "done", "cancelled"])
+def test_request_rebase__closed_task__rejected(board, status):
+    # arrange
+    _started(board)
+    for to in ("in_review", status) if status != "cancelled" else (status,):
+        board.transition("A", to, "user")
+    # act / assert
+    with pytest.raises(ValueError, match=status):
+        board.request_rebase("A", "user")
+
+
+def test_request_rebase__task_without_worktree__rejected(board):
+    # arrange
+    board.add_task(mk("A"), "user")
+    board.set_stage("work", "user")
+    # act / assert
+    with pytest.raises(ValueError, match="рабочей копии"):
+        board.request_rebase("A", "user")
