@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import List
 
 MARKER = "FAKE-SCRIPT:"
+# сколько шаг wait-file ждёт файл, прежде чем завершить ход ошибкой
+WAIT_FILE_TIMEOUT = 60.0
 
 
 def _emit(event: dict) -> None:
@@ -29,6 +31,15 @@ def _run_cli(argv: List[str]) -> str:
     with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
         code = cli.main(argv)
     return "" if code == 0 else (err.getvalue().strip() or "команда %s завершилась с кодом %d" % (argv[0], code))
+
+
+def _wait_file(path: Path) -> bool:
+    deadline = time.monotonic() + WAIT_FILE_TIMEOUT
+    while not path.exists():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.02)
+    return True
 
 
 def run(session_id: str, text: str, resumed: bool = False) -> int:
@@ -59,6 +70,10 @@ def run(session_id: str, text: str, resumed: bool = False) -> int:
             target = Path(step["background"]["pid_file"])
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(str(proc.pid), encoding="utf-8")
+        elif "wait-file" in step:
+            # ход держится, пока тест не создаст файл: так тест сам решает, когда агенту закончить
+            if not _wait_file(Path(step["wait-file"])):
+                return _fail(session_id, "не дождались файла %s" % step["wait-file"])
         elif "sleep" in step:
             time.sleep(float(step["sleep"]))
         elif "fail-if-resumed" in step:

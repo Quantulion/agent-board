@@ -315,6 +315,32 @@ def test_fake_resume_keeps_session_id(tmp_home, tmp_path):
     assert res.ok is True and res.session_id == "sess-9"
 
 
+def test_fake_wait_file_step__file_appears__turn_goes_on(tmp_path, capsys):
+    # arrange
+    import threading
+
+    from agent_board import fake_agent
+
+    gate = tmp_path / "go"
+    timer = threading.Timer(0.1, gate.touch)
+    # act
+    timer.start()
+    code = fake_agent.run("sid", script({"wait-file": str(gate)}, {"write": {"path": str(tmp_path / "after.txt"), "text": "x"}}))
+    # assert
+    assert code == 0 and (tmp_path / "after.txt").exists()
+
+
+def test_fake_wait_file_step__no_file__fails_turn(tmp_path, capsys, monkeypatch):
+    # arrange
+    from agent_board import fake_agent
+
+    monkeypatch.setattr(fake_agent, "WAIT_FILE_TIMEOUT", 0.05)
+    # act
+    code = fake_agent.run("sid", script({"wait-file": str(tmp_path / "never")}))
+    # assert
+    assert code == 1 and "не дождались файла" in capsys.readouterr().out
+
+
 def test_fake_fail_step(tmp_home, tmp_path):
     h = FakeHarness()
     log = tmp_path / "l"
