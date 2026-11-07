@@ -405,6 +405,8 @@ def test_create__emits_tracker_created_event(board, jira):
     ({"type": "github", "repo": "o/n", "auth": {"type": "token_env", "env": "T"}, "title_template": "{oops}"}, "oops"),
     ({"type": "jira", "url": "http://x", "project": "PROJ", "issue_type": "Task",
       "auth": {"type": "token_env", "env": "T"}, "statuses": {"Done": "finished"}}, "finished"),
+    ({"type": "jira", "url": "http://x", "project": "PROJ", "issue_type": "Task",
+      "auth": {"type": "token_env", "env": "T"}, "statuses": {"Review": "approved"}}, "approved"),
 ])
 def test_update_config__invalid_tracker__is_rejected(board, cfg, message):
     # act / assert

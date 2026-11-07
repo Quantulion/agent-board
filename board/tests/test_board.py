@@ -5,7 +5,7 @@ import re
 import pytest
 from conftest import NOW, flat, make_board, make_task as mk, wake
 
-from agent_board.board import Board
+from agent_board.board import RUNNER_FIELDS, Board
 from agent_board.config import ProjectConfig
 from agent_board.model import Question, Status
 from agent_board.store import ProjectStore
@@ -185,9 +185,8 @@ def test_update_task_whitelisted_fields(board):
     assert t["summary"] == "s" and t["report"] == "r.md"
 
 
-@pytest.mark.parametrize("actor", ["agent", "user", "tracker", "project_agent"])
-@pytest.mark.parametrize("field", ["worktree", "branch", "base_branch", "session_id", "agent_state",
-                                   "turn_error", "last_turn_at", "harness", "turn_process"])
+@pytest.mark.parametrize("actor, field", [("agent", f) for f in sorted(RUNNER_FIELDS)]
+                         + [(a, "worktree") for a in ("user", "tracker", "project_agent")])
 def test_update_task_runner_fields_only_by_system(board, actor, field):
     # arrange
     board.add_task(mk("A"), "user")
@@ -1019,6 +1018,54 @@ def test_return_to_work__transition_rejected__should_not_leave_message(board, mo
     # assert
     assert board.store.read_thread("A") == []
     assert board.store.load_tasks()["A"].status == Status.IN_REVIEW
+
+
+# --- настройки проекта: проверка значений ---
+
+@pytest.mark.parametrize("fields, message", [
+    ({"ship": {"command": 'git push "{branch}"'}}, "кавычки"),
+    ({"ship": {"command": "run $'x' {key}"}}, "$'"),
+    ({"ship": {"command": "cat <<EOF\n{title}\nEOF"}}, "<<"),
+    ({"ship": {"command": "run {secret}"}}, "плейсхолдер"),
+    ({"ship": {"command": "true", "timeout": 0}}, "timeout"),
+    ({"ship": {"command": None, "on_approve": True}}, "ship.command"),
+    ({"ship": {"command": "  ", "on_approve": True}}, "ship.command"),
+    ({"ship": {"command": "true", "on_approve": "yes"}}, "on_approve"),
+    ({"ship": {"command": "true", "on_failure": "retry"}}, "on_failure"),
+    ({"tracker": dict(JIRA_TRACKER, auth={"type": "token_env", "env": "X", "token": "s3cret"})}, "auth"),
+    ({"tracker": dict(JIRA_TRACKER, password="x")}, "Недопустимые ключи"),
+    ({"tracker": dict(JIRA_TRACKER, statuses={"Review": "approved"})}, "approved"),
+    ({"links": [{"title": "x", "href": "javascript:alert(1)"}]}, "ссылк"),
+    ({"links": "https://x"}, "links"),
+    ({"repos": [{"name": "app", "path": "/nonexistent/repo/path"}]}, "не найден"),
+    ({"repos": [{"name": "app", "path": "relative/path"}]}, "абсолютн"),
+    ({"harness": {"type": "gpt"}}, "харнесс"),
+    ({"review": {"tool": "gerrit"}}, "ревью"),
+    ({"max_agents": 0}, "max_agents"),
+    ({"global_max_agents": "6"}, "global_max_agents"),
+    ({"chains": "yes"}, "chains"),
+    ({"auto_approve": "yes"}, "auto_approve"),
+    ({"branch_template": "feature/x"}, "{key}"),
+    ({"branch_template": "{key}-{title}"}, "branch_template"),
+    ({"resources": [{"name": "db"}, {"name": "db"}]}, "db"),
+    ({"title": ""}, "title"),
+    ({"unknown": 1}, "unknown"),
+    ({"stage": "work"}, "stage"),
+    ({"slug": "other"}, "slug"),
+    ({"project_session_id": "x"}, "project_session_id"),
+])
+def test_set_config__invalid__is_rejected_and_not_saved(board, fields, message):
+    # arrange
+    project_file = board.store.root / "project.json"
+    before = project_file.read_bytes()
+    last = board.store.last_seq()
+    # act / assert
+    with pytest.raises(ValueError, match=re.escape(message)):
+        board.set_config("user", fields)
+    with pytest.raises(ValueError, match=re.escape(message)):
+        board.set_config("user", fields, dry_run=True)
+    assert project_file.read_bytes() == before
+    assert board.store.last_seq() == last
 
 
 # --- настройки проекта: проверки вне блокировки ---
