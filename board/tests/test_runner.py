@@ -2637,3 +2637,98 @@ def test_queue__priority_raised_while_waiting__moves_ahead(make_project, start_s
     assert started_order(store, {"B", "C"}) == ["C", "B"]
     assert events(store, "turn_finished", "A"), "идущий ход не прерывается"
     assert not events(store, "turn_failed", "A")
+
+
+# --- сообщение с прерыванием хода ---
+
+INTERRUPT_NOTE = "Your previous turn was interrupted by the user"
+
+
+def pid_alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def test_interrupt_message_during_turn_stops_turn_and_its_processes_and_resumes_with_message(
+        make_project, start_server, calls, tmp_path):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    pid_file = tmp_path / "bg.pid"
+    add(srv, "T-1", script({"background": {"argv": ["sleep", "60"], "pid_file": str(pid_file)}}, {"sleep": 30}))
+    wait_for(lambda: pid_file.exists() and pid_file.read_text(), what="фоновый процесс хода")
+    background = int(pid_file.read_text())
+    first = calls[0]["proc"]
+    # act
+    srv.board_for("pay").post_message("T-1", "user", "ответь сейчас", interrupt=True)
+    wait_events(store, "turn_started", "T-1", count=2)
+    wait_events(store, "turn_finished", "T-1", count=2)
+    # assert
+    assert first.poll() is not None
+    wait_for(lambda: not pid_alive(background), what="фоновый процесс остановлен")
+    interrupted = events(store, "turn_interrupted", "T-1")
+    assert len(interrupted) == 1 and interrupted[0].data["by"] == "user"
+    finished = events(store, "turn_finished", "T-1")[0].data
+    assert finished.get("stopped") is True and finished.get("interrupted") is True
+    assert not events(store, "turn_failed", "T-1")
+    assert [c["kind"] for c in calls] == ["start", "resume"]
+    resume = calls[1]
+    assert resume["session"] == calls[0]["session"] == task(store, "T-1").session_id
+    text = resume["text"]
+    assert text.index("ответь сейчас") < text.index(INTERRUPT_NOTE) < text.index("Start working on the task.")
+    t = task(store, "T-1")
+    assert (t.agent_state, t.turn_error) == ("idle", "")
+    assert not srv.runner._failures
+
+
+def test_interrupt_message_without_running_turn_is_plain_message(make_project, start_server, calls):
+    # arrange
+    store = make_project()
+    srv = start_server()
+    add(srv, "T-1")
+    wait_events(store, "turn_finished", "T-1")
+    # act
+    srv.board_for("pay").post_message("T-1", "user", "просто вопрос", interrupt=True)
+    wait_events(store, "turn_finished", "T-1", count=2)
+    # assert
+    assert not events(store, "turn_interrupted")
+    assert all(not e.data.get("stopped") for e in events(store, "turn_finished", "T-1"))
+    assert "просто вопрос" in calls[1]["text"] and INTERRUPT_NOTE not in calls[1]["text"]
+
+
+def test_interrupt_message_to_queued_agent_waits_for_its_turn(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 30}))
+    wait_events(store, "turn_started", "A")
+    add(srv, "B")
+    wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
+    # act
+    srv.board_for("pay").post_message("B", "user", "срочно", interrupt=True)
+    runner_sync(srv)
+    # assert
+    assert not events(store, "turn_interrupted")
+    assert task(store, "A").agent_state == "running" and calls[0]["proc"].poll() is None
+    assert task(store, "B").agent_state == "waiting_turn"
+
+
+def test_interrupt_message_to_project_agent_restarts_its_turn_in_same_session(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    board = srv.board_for("pay")
+    board.post_message("_project", "user", script({"sleep": 30}))
+    wait_events(store, "turn_started", "_project")
+    # act
+    board.post_message("_project", "user", "остановись", interrupt=True)
+    wait_events(store, "turn_started", "_project", count=2)
+    # assert
+    assert calls[0]["proc"].poll() is not None
+    assert events(store, "turn_interrupted", "_project")
+    assert not events(store, "turn_failed", "_project")
+    assert [(c["kind"], c["session"]) for c in calls] == [("resume", "p-1"), ("resume", "p-1")]
+    assert calls[1]["text"].index("остановись") < calls[1]["text"].index(INTERRUPT_NOTE)

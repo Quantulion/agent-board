@@ -476,7 +476,11 @@ class _Handler(BaseHTTPRequestHandler):
             from_task = body.get("from_task")
             if from_task is not None and not isinstance(from_task, str):
                 raise ValueError(msg("api.bad_from_task"))
-            events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None)
+            interrupt = body.get("interrupt", False)
+            if not isinstance(interrupt, bool):
+                raise ValueError(msg("api.bad_interrupt"))
+            events = board.post_message(rest[1], author, str(_need(body, "text")), from_task=from_task or None,
+                                        interrupt=interrupt)
         elif rest == ["stage"]:
             events = board.set_stage(_need(body, "stage"), _need(body, "actor"))
         elif rest == ["tasks"]:

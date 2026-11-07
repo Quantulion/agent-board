@@ -58,3 +58,4 @@ After approval the board may send your branch on (push, merge into the base). If
 
 ## Interruptions
 When a message arrives, answer it, adjust the plan and carry on. If the status was changed by the user (for example returned to work), continue from the reason given. If a previous turn was interrupted, check the actual state of the worktree and the card before continuing.
+The user may interrupt your turn with an urgent message: the board stops the turn with all its processes, including background ones such as test runs, and starts a new turn with that message. Answer the message first, then continue the interrupted work: check the worktree for half-done edits and re-run the cut-off commands you still need.

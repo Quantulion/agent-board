@@ -401,6 +401,33 @@ def test_message_with_non_string_from_task_is_400(server):
     assert r.status == 400
 
 
+@pytest.mark.parametrize("author,thread", [("user", "_project"), ("project_agent", "T-1")])
+def test_message_with_interrupt__allowed_author__wake_carries_interrupt(server, author, thread):
+    # arrange
+    add_task(server)
+
+    # act
+    r = post(server, "/api/p/pay/threads/%s/messages" % thread, {"author": author, "text": "стоп", "interrupt": True})
+
+    # assert
+    assert r.status == 200
+    wakes = [e["data"] for e in r.json()["events"] if e["type"] == "agent_wake"]
+    assert len(wakes) == 1 and wakes[0]["interrupt"] is True and wakes[0]["by"] == author
+
+
+@pytest.mark.parametrize("body", [{"author": "agent", "interrupt": True}, {"author": "user", "interrupt": "yes"}])
+def test_message_with_interrupt__agent_or_bad_flag__is_400_and_not_posted(server, body):
+    # arrange
+    add_task(server)
+
+    # act
+    r = post(server, "/api/p/pay/threads/T-1/messages", dict(body, text="стоп"))
+
+    # assert
+    assert r.status == 400
+    assert get(server, "/api/p/pay/threads/T-1").json()["messages"] == []
+
+
 def test_sse_uses_larger_of_since_and_last_event_id(server):
     # arrange
     add_task(server, "T-1")   # seq 1, 2

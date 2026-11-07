@@ -57,6 +57,10 @@ CATALOG: Dict[str, tuple] = {
     "help.update": ("update task card fields", "обновить поля карточки задачи"),
     "help.ask": ("ask the user a question", "задать вопрос пользователю"),
     "help.say": ("post a message to a thread", "написать сообщение в тред"),
+    "help.say_interrupt": ("stop the agent's running turn and start a new one with this message (user and project "
+                           "agent only)",
+                           "остановить идущий ход агента и сразу начать новый с этим сообщением (только пользователь "
+                           "и агент проекта)"),
     "help.thread": ("show a thread", "показать тред"),
     "help.add_task": ("add a task (user only)", "добавить задачу (только пользователь)"),
     "help.deps": ("replace task dependencies with a list of keys (user only)",
@@ -163,6 +167,9 @@ CATALOG: Dict[str, tuple] = {
     "api.bad_dry_run": ("dry_run must be true or false", "dry_run должен быть true или false"),
     "api.bad_author": ("Invalid author: {author!r}", "Недопустимый автор: {author!r}"),
     "api.bad_from_task": ("from_task must be a string", "from_task должен быть строкой"),
+    "api.bad_interrupt": ("interrupt must be true or false", "interrupt должен быть true или false"),
+    "api.interrupt_forbidden": ("Only the user and the project agent can interrupt an agent's turn",
+                                "Прервать ход агента могут только пользователь и агент проекта"),
     "api.bad_deps": ("deps must be a list", "deps должен быть списком"),
     "api.bad_choice": ("choice must be a string or null", "choice должен быть строкой или null"),
     "api.bad_comment": ("comment must be a string", "comment должен быть строкой"),

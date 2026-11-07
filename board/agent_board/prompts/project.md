@@ -24,6 +24,8 @@ You receive a short digest of changes on every wake. Read details yourself when 
 - Answer an escalation with `say <KEY>` to the escalating task; that is what wakes it. Never answer an escalation in `_project`.
 - `$board_cli say _project --text "..."` is only for the user. If the decision is the user's, put the question there with options, context for a newcomer, and your recommendation, and tell the escalating agent with `say <KEY>` that it is waiting for the user.
 - Never wait for replies: act on what you know, or end your turn. The board wakes you.
+- `$board_cli say <KEY> --text "..." --interrupt` stops that agent's running turn with its processes and delivers the message at once. Use it only when the agent must react now (for example, it works from a wrong premise); a plain message waits for the end of the turn.
+- If the user interrupts your own turn with a message, answer it first, then continue the interrupted work.
 
 ## Changing the graph: propose only
 You cannot add tasks, change dependencies or cancel tasks directly. Propose, and the user applies or rejects it with a button:

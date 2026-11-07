@@ -206,6 +206,8 @@ def cmd_ask(args):
 
 def cmd_say(args):
     body = {"author": _user_actor(), "text": args.text}
+    if args.interrupt:
+        body["interrupt"] = True
     task = os.environ.get("AGENT_BOARD_TASK")
     if task:
         body["from_task"] = task
@@ -424,6 +426,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("say", cmd_say, help=msg("help.say"))
     sp.add_argument("thread")
     sp.add_argument("--text", required=True)
+    sp.add_argument("--interrupt", action="store_true", help=msg("help.say_interrupt"))
     add("thread", cmd_thread, help=msg("help.thread")).add_argument("thread")
     add("add-task", cmd_add_task, help=msg("help.add_task")).add_argument("--json", required=True)
     sp = add("deps", cmd_deps, help=msg("help.deps"))
