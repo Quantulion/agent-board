@@ -3,7 +3,11 @@ from __future__ import annotations
 import json
 import threading
 
+import pytest
+
 from conftest import make_task as mk
+
+pytestmark = pytest.mark.slow
 
 THREADS = 20
 ITERATIONS = 25

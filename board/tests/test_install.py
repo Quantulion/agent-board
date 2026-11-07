@@ -9,6 +9,8 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = pytest.mark.slow
+
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = ROOT / "scripts" / "install.py"
 SKILL_WRAPPER = ROOT / "skills" / "agent-board" / "scripts" / "agent-board"

@@ -78,6 +78,7 @@ def test_setup__length__within_limit():
     assert len(lines) <= MAX_LINES
 
 
+@pytest.mark.slow
 def test_setup__commands__exist_with_their_options(tmp_path):
     # arrange
     commands = _commands()

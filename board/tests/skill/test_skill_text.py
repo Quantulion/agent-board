@@ -92,6 +92,7 @@ def test_skill__references__all_linked_from_skill_md():
     assert not unlinked, unlinked
 
 
+@pytest.mark.slow
 def test_skill__commands__exist_with_their_options(tmp_path):
     # arrange
     commands = _commands()
