@@ -92,3 +92,46 @@ test('errorField: ошибка сервера попадает под поле �
   assert.equal(errorField('Каталог репозитория app не найден: /x', ['title']), null);
   assert.equal(errorField('Настройки одновременно меняются из другого места', names), null);
 });
+
+const SHIP_SCHEMA = {
+  fields: [
+    { name: 'title', type: 'string', default: null, description: 'Title' },
+    { name: 'repos', type: 'array', default: [], description: 'Repos' },
+    { name: 'ship', type: 'object', default: { command: null, timeout: 600 }, description: 'Ship',
+      shape: { placeholders: ['key', 'branch'], example: 'git push origin {branch}' } },
+  ],
+};
+
+test('settingsFields: отправка в ревью — свой редактор между простыми и составными полями', () => {
+  // act
+  const fields = settingsFields(SHIP_SCHEMA);
+  // assert
+  assert.deepEqual(fields.map(f => [f.name, f.kind]), [['title', 'text'], ['ship', 'ship'], ['repos', 'json']]);
+  assert.deepEqual(fields[1].placeholders, ['key', 'branch']);
+});
+
+test('редактор отправки: пустая команда выключает отправку, таймаут проверяется', () => {
+  // arrange
+  setLanguage('ru');
+  const ship = settingsFields(SHIP_SCHEMA).find(f => f.name === 'ship');
+  // act + assert
+  assert.deepEqual(formValue(ship, undefined), { command: '', timeout: '600' });
+  assert.deepEqual(formValue(ship, { command: 'git push', timeout: 60 }), { command: 'git push', timeout: '60' });
+  assert.deepEqual(parseField(ship, { command: '  git push origin {branch} ', timeout: ' 120 ' }),
+    { value: { command: 'git push origin {branch}', timeout: 120 } });
+  assert.deepEqual(parseField(ship, { command: '   ', timeout: '600' }), { value: { command: null, timeout: 600 } });
+  assert.deepEqual(parseField(ship, { command: 'x', timeout: '0' }), { error: 'Таймаут — целое число секунд не меньше 1' });
+});
+
+test('collectChanges: команда отправки уходит объектом, без изменений — ничего', () => {
+  // arrange
+  const fields = settingsFields(SHIP_SCHEMA);
+  const config = { title: 'P', repos: [], ship: { command: null, timeout: 600 } };
+  const raws = Object.fromEntries(fields.map(f => [f.name, formValue(f, config[f.name])]));
+  // act
+  const same = collectChanges(fields, raws, config);
+  const set = collectChanges(fields, { ...raws, ship: { command: 'git push origin {branch}', timeout: '600' } }, config);
+  // assert
+  assert.deepEqual(same.changes, {});
+  assert.deepEqual(set.changes, { ship: { command: 'git push origin {branch}', timeout: 600 } });
+});

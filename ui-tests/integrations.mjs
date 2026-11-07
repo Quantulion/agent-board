@@ -1,7 +1,7 @@
 // Интеграции в интерфейсе: заведение задач в поддельной Jira на стадии «Трекер», ревью задачи через поддельный crit
 // в два раунда до одобрения, одобрение второй задачи кнопкой, массовая отправка цепочки командой проекта
 // (команда пишет файл-маркер), смена статуса в поддельной Jira → карточка в «Готово», индикатор синхронизации,
-// фильтр волны. Скриншоты светлой и тёмной темы: вкладка ревью, окно отправки, плашка трекера и индикатор.
+// фильтр волны, подсказка одобренной задаче без команды отправки. Скриншоты светлой и тёмной темы: вкладка ревью, окно отправки, плашка трекера и индикатор.
 // Запуск: cd ui-tests && node integrations.mjs
 import { execFileSync, spawn } from 'node:child_process';
 import fs from 'node:fs';
@@ -196,6 +196,8 @@ async function main(browser) {
     check('PAY-2 одобрена кнопкой', await inColumn(page, 'PAY-2', 'approved', 20000));
     const shipActions = await page.$$eval('.drawer .acts [data-action]', els => els.map(e => e.dataset.action));
     check('у одобренной — «Отправить в ревью» и «Вернуть в работу…»', shipActions.includes('ship') && shipActions.includes('review-return'), shipActions);
+    check('с командой отправки подсказки нет', !(await page.$('.drawer .shiphint')) && !(await page.$('.card .shiphint'))
+      && !shipActions.includes('mark-done'), shipActions);
     await page.keyboard.press('Escape');
 
     // --- массовая отправка цепочки ---
@@ -359,6 +361,124 @@ async function noReviewTool(browser) {
   }
 }
 
+// Проект без команды отправки: одобренная задача подсказывает ветку и ссылку на настройки на доске и в карточке,
+// вместо отправки — «Перевести в «Готово»».
+async function noShipCommand(browser) {
+  const env = createEnv({ prefix: 'ab-int3-', slug: 'pay', title: 'Без команды отправки', language: 'ru' });
+  const errors = [];
+  const page = await browser.newPage();
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  try {
+    const gitRepo = path.join(env.home, 'payments-api');
+    const git = (...args) => execFileSync('git', args, { cwd: gitRepo, encoding: 'utf-8', timeout: 20000 });
+    fs.mkdirSync(gitRepo);
+    git('init', '-q', '-b', 'master');
+    git('config', 'user.email', 'ui@test');
+    git('config', 'user.name', 'ui');
+    fs.writeFileSync(path.join(gitRepo, 'README.md'), '# payments\n');
+    git('add', '.');
+    git('commit', '-q', '-m', 'init');
+    const cfgPath = path.join(env.home, 'projects', 'pay', 'project.json');
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf-8'));
+    fs.writeFileSync(cfgPath, JSON.stringify({
+      ...cfg,
+      repos: [{ name: 'payments-api', path: gitRepo, base: 'master' }],
+      review: { tool: 'none' },
+      ship: { command: null, timeout: 60 },
+    }, null, 2));
+    await env.start();
+    env.cli('add-task', '--json', JSON.stringify({ key: 'PAY-1', title: 'Без отправки', repo: 'payments-api',
+      description: script([{ write: { path: 'a.txt', text: 'a' } }, { cli: ['status', 'PAY-1', 'in_review'] }]) }));
+    env.cli('stage', 'tracker');
+    env.cli('stage', 'work');
+    await until(async () => { const t = await env.task('PAY-1'); return t.status === 'in_review' && t.agent_state === 'idle'; }, 30000, 'PAY-1 на ревью');
+
+    await page.setViewport(VIEW);
+    await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
+    await page.goto(env.url + '#/p/pay?task=PAY-1', { waitUntil: 'domcontentloaded' });
+    await page.waitForSelector('.drawer[data-key="PAY-1"]', { timeout: 10000 });
+    check('на ревью подсказки об отправке нет', !(await page.$('.drawer .shiphint')));
+    await page.click('.tabs [data-tab="review"]');
+    await page.waitForFunction(() => [...document.querySelectorAll('.drawer .rvnone button')].some(b => b.textContent === 'Одобрить'), { timeout: 10000 });
+    await page.evaluate(() => [...document.querySelectorAll('.drawer .rvnone button')].find(b => b.textContent === 'Одобрить').click());
+    await page.waitForSelector('.modal [data-ok]', { timeout: 5000 });
+    await page.click('.modal [data-ok]');
+    await until(async () => (await env.task('PAY-1')).status === 'approved', 20000, 'PAY-1 одобрена');
+    const branch = (await env.task('PAY-1')).branch;
+
+    // подсказка в карточке и на доске
+    await page.waitForSelector('.drawer .banner.shiphint', { timeout: 10000 });
+    const banner = await page.$eval('.drawer .banner.shiphint', el => ({ text: el.textContent, br: el.querySelector('code.br')?.textContent,
+      link: el.querySelector('[data-action="ship-settings"]')?.textContent, button: el.querySelector('[data-action="ship-setup-banner"]')?.textContent }));
+    check('карточка: команда не задана, ветка, ссылка и кнопка настройки, ручное влитие', banner.br === branch
+      && banner.text.includes('Команда отправки не задана') && banner.link === 'настройках проекта' && banner.button === 'Настроить отправку'
+      && banner.text.includes('влейте ветку вручную') && banner.text.includes('«Готово»'), banner);
+    const acts = await page.$$eval('.drawer .acts [data-action]', els => els.map(e => e.dataset.action));
+    check('карточка: «Настроить отправку» и «Перевести в «Готово»» вместо отправки',
+      acts.includes('ship-setup') && acts.includes('mark-done') && !acts.includes('ship'), acts);
+    const onBoard = await page.$eval('.card[data-key="PAY-1"] .shiphint', el => ({ br: el.querySelector('code.br')?.textContent,
+      link: Boolean(el.querySelector('[data-action="ship-settings"]')) })).catch(() => null);
+    check('доска: подсказка с веткой и ссылкой на настройки', onBoard && onBoard.br === branch && onBoard.link, onBoard);
+    await shotThemes(page, 'no-ship-hint');
+
+    const cancelSettings = async () => {
+      await page.evaluate(() => [...document.querySelectorAll('.settingsmodal .btn')].find(b => b.textContent === 'Отмена').click());
+      await page.waitForFunction(() => !document.querySelector('.settingsmodal'), { timeout: 5000 });
+    };
+    const shipFocused = () => waits(page, () => document.activeElement && document.activeElement.id === 'st-ship', 10000);
+
+    // ссылка в баннере открывает настройки на команде отправки
+    await page.click('.drawer .banner.shiphint [data-action="ship-settings"]');
+    check('ссылка открывает настройки с курсором в поле команды отправки', await shipFocused());
+    const editor = await page.$eval('.settings [data-field="ship"]', el => ({ text: el.textContent, timeout: el.querySelector('#st-ship-timeout')?.value,
+      json: Boolean(el.querySelector('textarea.json')) }));
+    check('отправка в настройках — своё поле команды с плейсхолдерами и таймаутом, не JSON',
+      editor.text.includes('{branch}') && editor.timeout === '60' && !editor.json, editor);
+    await shotThemes(page, 'ship-settings');
+    await cancelSettings();
+    check('карточка осталась открытой', Boolean(await page.$('.drawer[data-key="PAY-1"]')));
+
+    // ссылка на карточке доски не открывает карточку под собой
+    await page.keyboard.press('Escape');
+    await page.waitForFunction(() => !document.querySelector('.drawer'), { timeout: 5000 });
+    await shotThemes(page, 'no-ship-board', () => page.evaluate(() => document.querySelector('.card[data-key="PAY-1"]').scrollIntoView({ inline: 'start' })));
+    await page.click('.card[data-key="PAY-1"] .shiphint [data-action="ship-settings"]');
+    await page.waitForSelector('.settingsmodal', { timeout: 5000 });
+    check('ссылка на доске открывает настройки, а не карточку', !(await page.$('.drawer')));
+    await cancelSettings();
+
+    // команда задаётся через интерфейс: подсказка уходит, появляется отправка
+    await page.click('.card[data-key="PAY-1"] .ttl');
+    await page.waitForSelector('.drawer [data-action="ship-setup"]', { timeout: 10000 });
+    await page.click('.drawer [data-action="ship-setup"]');
+    check('«Настроить отправку» ведёт в поле команды отправки', await shipFocused());
+    await page.type('#st-ship', 'echo {key}');
+    await page.evaluate(() => [...document.querySelectorAll('.settingsmodal .btn')].find(b => b.textContent === 'Сохранить').click());
+    await page.waitForFunction(() => !document.querySelector('.settingsmodal'), { timeout: 10000 });
+    const saved = JSON.parse(env.cli('config', 'get', '--json')).ship;
+    check('команда отправки сохранена, таймаут не тронут', saved.command === 'echo {key}' && saved.timeout === 60, saved);
+    check('с командой подсказки нет, есть «Отправить в ревью»',
+      await waits(page, () => !document.querySelector('.shiphint') && document.querySelector('.drawer [data-action="ship"]')
+        && !document.querySelector('.drawer [data-action="mark-done"]'), 10000));
+
+    // очищенная команда возвращает подсказку; задачу закрывают вручную
+    await page.$eval('.ptl [data-action="settings"]', el => el.click());
+    await page.waitForSelector('#st-ship', { timeout: 10000 });
+    await page.$eval('#st-ship', el => { el.value = ''; });
+    await page.evaluate(() => [...document.querySelectorAll('.settingsmodal .btn')].find(b => b.textContent === 'Сохранить').click());
+    await page.waitForFunction(() => !document.querySelector('.settingsmodal'), { timeout: 10000 });
+    check('пустая команда выключает отправку', JSON.parse(env.cli('config', 'get', '--json')).ship.command === null);
+    await page.waitForSelector('.drawer [data-action="mark-done"]', { timeout: 10000 });
+    await page.click('.drawer [data-action="mark-done"]');
+    await until(async () => (await env.task('PAY-1')).status === 'done', 20000, 'PAY-1 в «Готово»');
+    check('после перевода в «Готово» подсказки нет', await waits(page, () => !document.querySelector('.shiphint'), 10000));
+    check('нет ошибок страницы (без отправки)', errors.length === 0, errors);
+  } finally {
+    await page.close().catch(() => {});
+  }
+}
+
 // Пользователь нажал «Finish Review» в поддельном crit, оставив comments.
 function finish(env, session, comments, approved = null) {
   const dir = path.join(env.home, 'projects', 'pay', 'crit', 'fake-crit');
@@ -382,6 +502,7 @@ try {
   browser = await puppeteer.launch({ headless: true, args: ['--no-sandbox'] });
   await main(browser);
   await noReviewTool(browser);
+  await noShipCommand(browser);
 } catch (e) {
   failed = true;
   console.error(e);

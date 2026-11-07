@@ -10,7 +10,7 @@ import { PROJECT_THREAD, mountProjectPanel, proposalsTouching } from './project.
 import { retryControl } from './retry.js';
 import { reviewChip, reviewOf } from './review.js';
 import { raiseCommand, slotWait } from './slot.js';
-import { openShipDialog, shipChip, shippable } from './ship.js';
+import { openShipDialog, shipChip, shipHint, shipHintNode, shippable } from './ship.js';
 import { mountTrackerStage, mountTrackerSync, syncModel, trackerChip, trackerLink } from './tracker.js';
 import { settingsButton } from './settings.js';
 import { toast } from './ui.js';
@@ -174,6 +174,7 @@ export function cardModel(task, ctx) {
     review: reviewChip(task),
     ship: shipChip(task),
     unmerged: SHIPPED.has(status) && task.kind !== 'research' ? base : null,
+    shipHint: shipHint(task, ctx.snapshot),
     tracker: trackerLink(task),
   };
 }
@@ -448,6 +449,7 @@ export function mountBoard(root, store, ctx) {
       parts.push(h('div', { class: 'qline turnwait', title: cmd ? T.slot.raise(m.slot.field) + cmd : null },
         icon('clock'), m.slot.reason ? T.slot.chip[m.slot.reason] : T.slot.chipUnknown));
     }
+    if (m.shipHint) parts.push(shipHintNode(ctx, m.shipHint, true));
     if (m.agent) {
       parts.push(h('div', { class: 'ag' }, m.agent.live ? h('span', { class: 'live' }) : null, h('span', null, m.agent.text)));
     }
@@ -498,6 +500,7 @@ export function mountBoard(root, store, ctx) {
     const byKey = new Map(snap.tasks.map(t => [t.key, t]));
     const modelCtx = {
       byKey,
+      snapshot: snap,
       proposalKeys: new Set(snap.tasks.filter(t => proposalsTouching(snap.proposals, t.key).length).map(t => t.key)),
       repoBase: new Map((snap.config.repos || []).map(r => [r.name, r.base || DEFAULT_BASE])),
       config: snap.config,

@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { cardActions } from '../../agent_board/static/js/actions.js';
 import { reviewChip, reviewOf, reviewTool } from '../../agent_board/static/js/review.js';
-import { commandParts, selectShip, shipChip, shipCommand, shipPlan, shippable } from '../../agent_board/static/js/ship.js';
+import { commandParts, selectShip, shipChip, shipCommand, shipHint, shipPlan, shippable } from '../../agent_board/static/js/ship.js';
 import { relTime, syncModel, toCreate, trackerInfo, trackerLink } from '../../agent_board/static/js/tracker.js';
 import { cardModel, taskFilter, waitingForYou, wavesOf } from '../../agent_board/static/js/board.js';
 import { T } from '../../agent_board/static/js/i18n.js';
@@ -92,6 +92,35 @@ test('действие отправки: только одобренная, ес
   assert.ok(!actionIds(task('A', { status: 'in_review' }), s).includes('ship'));
   const running = cardActions(task('A', { status: 'approved', ship: { state: 'running' } }), s).find(a => a.id === 'ship');
   assert.equal(running.enabled, false);
+});
+
+test('shipHint: подсказка только у одобренной кодовой задачи без команды отправки', () => {
+  // arrange
+  const noShip = snap([], { ship: { command: null } });
+  const approved = task('A', { status: 'approved', branch: 'A-branch' });
+  // act / assert
+  assert.deepEqual(shipHint(approved, noShip), { branch: 'A-branch' });
+  assert.equal(shipHint(approved, snap([])), null, 'с командой отправки подсказка не нужна');
+  assert.equal(shipHint(task('A', { status: 'in_review' }), noShip), null);
+  assert.equal(shipHint(task('A', { status: 'approved', kind: 'research' }), noShip), null);
+  assert.deepEqual(shipHint(task('A', { status: 'approved' }), noShip), { branch: '' });
+});
+
+test('без команды отправки вместо кнопки отправки — «Настроить отправку» и «Перевести в Готово»', () => {
+  // arrange
+  const approved = task('A', { status: 'approved' });
+  const noShip = snap([], { ship: { command: '' } });
+  // act
+  const without = actionIds(approved, noShip);
+  const withShip = actionIds(approved, snap([]));
+  // assert
+  assert.ok(without.includes('mark-done'));
+  assert.ok(without.includes('ship-setup'));
+  assert.ok(!withShip.includes('ship-setup'));
+  assert.ok(!without.includes('ship'));
+  assert.ok(!withShip.includes('mark-done'));
+  assert.ok(withShip.includes('ship'));
+  assert.ok(!actionIds(task('A', { status: 'in_review' }), noShip).includes('mark-done'));
 });
 
 test('shipCommand: пустая команда — нет отправки', () => {
