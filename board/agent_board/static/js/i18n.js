@@ -98,6 +98,12 @@ const RU = {
   collapse: 'Свернуть',
   current: 'текущий',
   colHint: { blocked: 'вычисляется', queued: 'общие ресурсы', approved: 'можно отправить', sent: 'в трекере' },
+  agentRetry: {
+    label: 'Повторить',
+    busy: 'Запуск…',
+    title: 'Повторить упавший ход агента',
+    started: key => key ? 'Агент ' + key + ' снова работает' : 'Агент проекта снова работает',
+  },
   attn: {
     question: n => n > 1 ? 'вопросы агента · ' + n : 'вопрос агента',
     proposal: { add_task: 'Агент проекта предлагает новую задачу', set_deps: 'агент проекта предлагает изменить зависимости', cancel_task: 'агент проекта предлагает отменить' },
@@ -621,6 +627,12 @@ const EN = {
   collapse: 'Collapse',
   current: 'current',
   colHint: { blocked: 'computed', queued: 'shared resources', approved: 'ready to ship', sent: 'in the tracker' },
+  agentRetry: {
+    label: 'Retry',
+    busy: 'Starting…',
+    title: 'Retry the failed agent turn',
+    started: key => key ? 'Agent ' + key + ' is working again' : 'The project agent is working again',
+  },
   attn: {
     question: n => n > 1 ? 'agent questions · ' + n : 'agent question',
     proposal: { add_task: 'The project agent proposes a new task', set_deps: 'the project agent proposes changing dependencies', cancel_task: 'the project agent proposes cancelling' },

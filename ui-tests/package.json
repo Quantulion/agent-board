@@ -12,9 +12,10 @@
     "smoke": "node smoke.mjs",
     "integrations": "node integrations.mjs",
     "english": "node english.mjs",
+    "retry": "node retry.mjs",
     "settings": "node settings.mjs",
-    "slot": "node slot.mjs",
-    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs"
+    "slot": "node slot.mjs && node retry.mjs",
+    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs && node retry.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"

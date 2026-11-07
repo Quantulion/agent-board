@@ -6,12 +6,14 @@ import { connectionIndicator, paintStageAction, paintStepper } from './header.js
 import { STATUSES, T, statusInfo } from './i18n.js';
 import { openNewTaskDialog } from './newtask.js';
 import { requestMove, statusMenu } from './status.js';
-import { mountProjectPanel, proposalsTouching } from './project.js';
+import { PROJECT_THREAD, mountProjectPanel, proposalsTouching } from './project.js';
+import { retryControl } from './retry.js';
 import { reviewChip, reviewOf } from './review.js';
 import { raiseCommand, slotWait } from './slot.js';
 import { openShipDialog, shipChip, shippable } from './ship.js';
 import { mountTrackerStage, mountTrackerSync, syncModel, trackerChip, trackerLink } from './tracker.js';
 import { settingsButton } from './settings.js';
+import { toast } from './ui.js';
 
 const KEYS = new Intl.Collator('ru', { numeric: true });
 const byKeyOrder = (a, b) => KEYS.compare(a.key, b.key);
@@ -677,17 +679,27 @@ export function mountBoard(root, store, ctx) {
     attn.hidden = !items.length;
     attnLabel.replaceChildren(icon('warn'), T.waitingForYou + ' · ' + items.length);
     patchList(attnList, items, item => item.kind + ':' + (item.key || item.id || ''), item => {
-      const node = h('button', { type: 'button', onclick: () => {
-        const it = node._item;
-        if (it.open.type === 'card') ctx.openCard(it.open.key);
-        else if (it.open.type === 'decomposition') ctx.openDecomposition(it.open.key);
-        else if (it.open.type === 'ship') ctx.openShip();
-        else if (it.open.type === 'sync') ctx.openSync();
-        else ctx.openProject();
-      } });
-      paintAttnItem(node, item);
-      return node;
-    }, paintAttnItem);
+      const node = attnButton(item);
+      if (item.kind !== 'error') return node;
+      // у ошибки хода рядом с пунктом — кнопка повтора; пункт перерисовывается внутри обёртки
+      const retry = retryControl(ctx.client, item.key || PROJECT_THREAD, () => toast(T.agentRetry.started(item.key || '')));
+      const wrap = h('span', { class: 'attn-retry' }, node, retry.el);
+      wrap._button = node;
+      return wrap;
+    }, (node, item) => paintAttnItem(node._button || node, item));
+  }
+
+  function attnButton(item) {
+    const node = h('button', { type: 'button', onclick: () => {
+      const it = node._item;
+      if (it.open.type === 'card') ctx.openCard(it.open.key);
+      else if (it.open.type === 'decomposition') ctx.openDecomposition(it.open.key);
+      else if (it.open.type === 'ship') ctx.openShip();
+      else if (it.open.type === 'sync') ctx.openSync();
+      else ctx.openProject();
+    } });
+    paintAttnItem(node, item);
+    return node;
   }
 
   function paintConnection(state) {
