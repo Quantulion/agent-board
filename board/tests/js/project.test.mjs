@@ -152,3 +152,81 @@ test('proposalsTouching: устаревшее предложение задач�
   // act / assert
   assert.deepEqual(proposalsTouching(proposals, 'PAY-104'), []);
 });
+
+test('describeProposal: настройки — каждое поле со старым и новым значением', () => {
+  // arrange
+  const p = { kind: 'set_config', payload: { fields: { max_agents: 3, branch_template: 'feature/{key}' } },
+    expect: { config: { max_agents: 2, branch_template: null } } };
+  // act
+  const d = describeProposal(p, tasks);
+  // assert
+  assert.deepEqual(text(d), [
+    'Изменить настройки проекта',
+    '~ настройка Шаблон ветки (branch_template): не задано → «feature/{key}»',
+    '~ настройка Агентов в проекте (max_agents): 2 → 3',
+  ]);
+});
+
+test('describeProposal: длинное составное значение настройки обрезается', () => {
+  // arrange
+  const p = { kind: 'set_config', payload: { fields: { links: [{ name: 'x'.repeat(200) }] } }, expect: { config: { links: [] } } };
+  // act
+  const [, row] = text(describeProposal(p, tasks));
+  // assert
+  assert.ok(row.startsWith('~ настройка Ссылки (links): [] → [{"name":"xxx'));
+  assert.ok(row.endsWith('…'));
+});
+
+test('describeProposal: статус — задача и переход статуса', () => {
+  // arrange
+  const p = { kind: 'set_status', payload: { key: 'PAY-104', to: 'approved', from: 'in_review' } };
+  const noFrom = { kind: 'set_status', payload: { key: 'PAY-104', to: 'done' }, expect: { status: 'sent' } };
+  // act / assert
+  assert.deepEqual(text(describeProposal(p, tasks)), ['Сменить статус задачи PAY-104 «Переливка истории»', '~ статус На ревью → Одобрена']);
+  assert.equal(text(describeProposal(noFrom, tasks))[1], '~ статус Отправлена → Готово');
+});
+
+test('describeProposal: отправка в ревью — список задач', () => {
+  // arrange
+  const p = { kind: 'ship', payload: { keys: ['PAY-107', 'PAY-109'] } };
+  // act / assert
+  assert.deepEqual(text(describeProposal(p, tasks)), [
+    'Отправить в ревью: PAY-107, PAY-109',
+    '→ ревью PAY-107 «Метрики PG»',
+    '→ ревью PAY-109 «Выгрузка для бухгалтерии»',
+  ]);
+});
+
+test('describeProposal: стадия — переход стадии проекта', () => {
+  // arrange
+  const p = { kind: 'stage', payload: { stage: 'work' }, expect: { stage: 'tracker' } };
+  // act / assert
+  assert.deepEqual(text(describeProposal(p, tasks)), ['Перевести проект на стадию «Работа»', '~ стадия Трекер → Работа']);
+});
+
+test('describeProposal: повтор хода — задача и ошибка упавшего хода, у агента проекта — без задачи', () => {
+  // arrange
+  const failed = new Map(tasks).set('PAY-109', { ...tasks.get('PAY-109'), turn_error: 'boom' });
+  // act / assert
+  assert.deepEqual(text(describeProposal({ kind: 'retry', payload: { key: 'PAY-109' } }, failed)), [
+    'Повторить ход агента задачи PAY-109 «Выгрузка для бухгалтерии»', '↻ повтор ход упал: boom',
+  ]);
+  assert.deepEqual(text(describeProposal({ kind: 'retry', payload: { key: '_project' } }, failed)), ['Повторить ход агента проекта']);
+});
+
+test('proposalsTouching: отправка в ревью затрагивает каждую задачу из списка', () => {
+  // arrange
+  const proposals = [{ id: 'p1', kind: 'ship', status: 'open', payload: { keys: ['PAY-107', 'PAY-109'] } }];
+  // act / assert
+  assert.equal(proposalsTouching(proposals, 'PAY-109').length, 1);
+  assert.deepEqual(proposalsTouching(proposals, 'PAY-104'), []);
+});
+
+test('proposalOutcome: итог действия пользователя не говорит о графе', () => {
+  // arrange
+  const p = { id: 'p4', kind: 'set_config', payload: { fields: { max_agents: 3 } } };
+  // act / assert
+  assert.equal(proposalOutcome({ ...p, status: 'applied' }).text, 'Применено');
+  assert.equal(proposalOutcome({ ...p, status: 'rejected' }).text, 'Отклонено — ничего не изменилось');
+  assert.equal(proposalOutcome({ ...p, kind: 'add_task', status: 'applied' }).text, 'Применено — граф обновлён');
+});
