@@ -28,7 +28,7 @@ from .harness import (
     turn_process_record,
 )
 from .messages import LANG_ENV, Msg, msg, normalize, reason as error_text
-from .model import Event, Status, Task
+from .model import DEFAULT_PRIORITY, PRIORITIES, Event, Status, Task
 from .review import RoundResult, kill_group, kill_round, make_review, port_of, prune_review_data, trim_log
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
@@ -540,6 +540,9 @@ class Runner:
         elif event.type == "stage_changed":
             if d.get("to") == "work":
                 self._start_work(slug)
+        elif event.type == "priority_changed":
+            # идущие ходы не прерываются: новый приоритет действует на очередь
+            self._drain()
         elif event.type == "agent_stop":
             self._stop(slug, str(d.get("key")))
         elif event.type == "config_changed":
@@ -751,6 +754,7 @@ class Runner:
         return None if task_turns.count(k[0]) < config.max_agents else "project"
 
     def _drain(self) -> None:
+        self._sort_waiting()
         for k in list(self._waiting):
             if k in self._parked:
                 self._waiting.remove(k)
@@ -769,6 +773,19 @@ class Runner:
             return board.store.load_meta().get("project_wait_reason") or ""
         task = board.store.load_tasks().get(k[1])
         return task.wait_reason if task is not None else ""
+
+    def _sort_waiting(self) -> None:
+        """Очередь на свободный слот: сначала по приоритету задачи, внутри приоритета — по порядку пробуждения."""
+        tasks_by_slug: Dict[str, Dict[str, Task]] = {}
+
+        def rank(k: Key) -> int:
+            if k[0] not in tasks_by_slug:
+                tasks_by_slug[k[0]] = self._board(k[0]).store.load_tasks()
+            task = tasks_by_slug[k[0]].get(k[1])
+            priority = task.priority if task is not None else DEFAULT_PRIORITY
+            return PRIORITIES.index(priority) if priority in PRIORITIES else PRIORITIES.index(DEFAULT_PRIORITY)
+
+        self._waiting = deque(sorted(self._waiting, key=rank))
 
     def _retry_later(self, k: Key) -> None:
         delays = RETRY_DELAYS or (0.0,)

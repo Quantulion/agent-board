@@ -2568,3 +2568,43 @@ def test_auto_approve__commit_fails__task_back_in_review_with_message(make_proje
     assert task(store, "A").status == Status.IN_REVIEW
     assert not events(store, "task_committed", "A")
     assert len([e for e in events(store, "status_changed", "A") if e.data["to"] == "approved"]) == 1
+
+
+# --- приоритет в очереди ---
+
+def started_order(store, keys):
+    started = [e.data["key"] for e in events(store, "turn_started") if e.data.get("key") in keys]
+    return started
+
+
+def test_queue__full_slots__high_starts_before_normal_and_low_after(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 1}))
+    wait_events(store, "turn_started", "A")
+    # act
+    for key, priority in (("L", "low"), ("N1", "normal"), ("H", "high"), ("N2", "normal")):
+        add(srv, key, priority=priority)
+        wait_for(lambda: task(store, key).agent_state == "waiting_turn", what="%s в очереди" % key)
+    wait_events(store, "turn_finished", "L")
+    # assert
+    assert started_order(store, {"L", "N1", "H", "N2"}) == ["H", "N1", "N2", "L"]
+
+
+def test_queue__priority_raised_while_waiting__moves_ahead(make_project, start_server, calls):
+    # arrange
+    store = make_project(max_agents=1)
+    srv = start_server()
+    add(srv, "A", script({"sleep": 1}))
+    wait_events(store, "turn_started", "A")
+    for key in ("B", "C"):
+        add(srv, key)
+        wait_for(lambda: task(store, key).agent_state == "waiting_turn", what="%s в очереди" % key)
+    # act
+    srv.board_for("pay").update_task("C", "project_agent", {"priority": "high"})
+    wait_events(store, "turn_finished", "B")
+    # assert
+    assert started_order(store, {"B", "C"}) == ["C", "B"]
+    assert events(store, "turn_finished", "A"), "идущий ход не прерывается"
+    assert not events(store, "turn_failed", "A")

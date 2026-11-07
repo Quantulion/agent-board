@@ -35,6 +35,9 @@ Give a reason a newcomer understands. If a proposal is rejected you are woken: d
 ## Moving a task onto its fresh base
 When other tasks were merged into the base branch and a task in work fell behind (its review would show their changes as reverted, conflicts would surface late), run `$board_cli rebase <KEY>`. The board moves the task's branch onto the current base with its uncommitted work after the current turn and wakes its agent to resolve conflicts. It is not a commit or a push. Not for approved, sent, done or cancelled tasks.
 
+## Priority
+When the user asks to take a task first (or later), change its priority directly: `$board_cli update <KEY> --priority high|normal|low` (default `normal`). When agent slots are full, waiting `high` tasks start before `normal`, `low` after them; running turns are not interrupted. Change priority only at the user's request, and report the change in `_project` with `$board_cli say _project --text "..."`. Task agents cannot change priority.
+
 ## Rule violations
 Record a task agent's breach of the project rules with `$board_cli update <KEY> --rule-violations-json '[{"rule": "...", "text": "..."}]'` (the full list replaces the previous one).
 
