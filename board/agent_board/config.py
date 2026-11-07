@@ -33,6 +33,7 @@ class ProjectConfig(_Serializable):
     decomposition_rules: str = ""
     project_session_id: Optional[str] = None
     links: List[dict] = field(default_factory=list)
+    project_agent_status: bool = False
 
     def __post_init__(self):
         self.links = clean_links(self.links)
@@ -239,11 +240,17 @@ def _check_auto_approve(config: ProjectConfig) -> None:
         raise ValueError(msg("config.auto_approve"))
 
 
+def _check_project_agent_status(config: ProjectConfig) -> None:
+    if not isinstance(config.project_agent_status, bool):
+        raise ValueError(msg("config.project_agent_status"))
+
+
 # полные проверки каждого поля, которое задаёт пользователь (repos проверяются отдельно — с учётом прежних)
 FIELD_CHECKS = {
     "title": lambda c: _text(c.title, "title", required=True),
     "chains": _check_chains,
     "auto_approve": _check_auto_approve,
+    "project_agent_status": _check_project_agent_status,
     "max_agents": lambda c: _positive_int(c.max_agents, "max_agents"),
     "global_max_agents": lambda c: _positive_int(c.global_max_agents, "global_max_agents"),
     "language": lambda c: _text(c.language, "language", required=True),
@@ -288,6 +295,7 @@ def validate_structure(config: ProjectConfig) -> None:
         raise ValueError(msg("config.string", name="title"))
     _check_chains(config)
     _check_auto_approve(config)
+    _check_project_agent_status(config)
     _positive_int(config.max_agents, "max_agents")
     _positive_int(config.global_max_agents, "global_max_agents")
     for name in ("language", "agent_rules", "project_brief", "decomposition_rules", "branch_template"):

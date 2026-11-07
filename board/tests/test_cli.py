@@ -969,6 +969,35 @@ def test_update__empty_tracker_link_by_agent__rejected(srv, capsys, monkeypatch,
     assert run_json(capsys, "show", "T-1")["tracker_key"] == "PRJ-1"
 
 
+def test_status__project_agent_with_setting__closes_task_and_sets_blocker(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    run_json(capsys, "add-task", "--json", '{"key": "T-2", "title": "y"}')
+    run_json(capsys, "config", "set", "--json", '{"project_agent_status": true}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    # act
+    run_json(capsys, "status", "T-1", "done")
+    run_json(capsys, "update", "T-2", "--external-blocker", "ждём доступ")
+    blocked = run_json(capsys, "show", "T-2")["external_blocker"]
+    run_json(capsys, "update", "T-2", "--external-blocker", "")
+    code, _, err = run(capsys, "status", "T-2", "approved")
+    # assert
+    assert run_json(capsys, "show", "T-1")["status"] == "done"
+    assert blocked == "ждём доступ" and run_json(capsys, "show", "T-2")["external_blocker"] is None
+    assert code == 1 and err.strip()
+
+
+def test_status__project_agent_without_setting__rejected(srv, capsys, monkeypatch):
+    # arrange
+    run_json(capsys, "add-task", "--json", '{"key": "T-1", "title": "x"}')
+    monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
+    # act
+    code, _, err = run(capsys, "status", "T-1", "done")
+    # assert
+    assert code == 1 and err.strip()
+    assert run_json(capsys, "show", "T-1")["status"] == "not_started"
+
+
 @pytest.mark.parametrize("actor", ["agent", "", "project_agent"])
 def test_update__tracker_link_by_agent__rejected(srv, capsys, monkeypatch, actor):
     # arrange

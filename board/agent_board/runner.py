@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 from . import prompts, ship, tracker
-from .board import RETURNED_FROM, Board
+from .board import RETURNED_FROM, USER_SIDE, Board
 from .graph import base_for, open_deps, ready_tasks
 from .harness import (
     Harness,
@@ -517,7 +517,9 @@ class Runner:
             k = (slug, str(d.get("key")))
             if d.get("actor") == "user":
                 self._reset_failures(k)
+                # остановку переписки агентов снимает только сам пользователь
                 self._unpark(k)
+            if d.get("actor") in USER_SIDE:
                 if d.get("to") == Status.CANCELLED.value:
                     self._cancel_ship(k)
             if d.get("to") == Status.APPROVED.value and (d.get("actor") == "user" or d.get("auto") is True):
@@ -526,9 +528,9 @@ class Runner:
                 self._commit(slug, k[1])
             # одобренная задача копила причины без ходов: после возврата из одобрения они доставляются;
             # при возврате в работу следом придёт пробуждение returned, и всё уйдёт одним ходом
-            returned = d.get("actor") in ("user", "tracker") and d.get("to") == Status.IN_PROGRESS.value \
+            returned = d.get("actor") in USER_SIDE | {"tracker"} and d.get("to") == Status.IN_PROGRESS.value \
                 and d.get("from") in {st.value for st in RETURNED_FROM}
-            resumes = d.get("actor") == "user" or d.get("from") == Status.APPROVED.value
+            resumes = d.get("actor") in USER_SIDE or d.get("from") == Status.APPROVED.value
             if resumes and not returned and self._pending.get(k) and k not in self._turns and k not in self._waiting \
                     and k not in self._backoff:
                 self._schedule(k)
@@ -1246,7 +1248,7 @@ class Runner:
         """Задача ушла с ревью (одобрена, отменена или возвращена пользователем): раунд закрывается."""
         to = d.get("to")
         ended = to in (Status.APPROVED.value, Status.CANCELLED.value) or (
-            d.get("actor") in ("user", "tracker") and to != Status.IN_REVIEW.value)
+            d.get("actor") in USER_SIDE | {"tracker"} and to != Status.IN_REVIEW.value)
         if not ended:
             return
         k = (slug, str(d.get("key")))

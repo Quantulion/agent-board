@@ -101,8 +101,8 @@ Limitations:
 | `init <slug> --title T` | create a project |
 | `state` | full project snapshot |
 | `show <key>` | a single task |
-| `status <key> <status>` | change a task's status |
-| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--priority high|normal|low] [--tracker-key K] [--tracker-url U]` | update task fields; without `AGENT_BOARD_ACTOR` the command acts as the user; the wording (`title`, `description`, `done_when`, `estimate`) and the link to an already existing tracker issue (`tracker_key` — in the project's tracker format: Jira `PROJ-123`, GitHub `#123`; `tracker_url` — an http(s) link; an empty value, `null` in the API, removes the link) can be changed and removed only by the user, rule violations and the priority — by the user or the project agent |
+| `status <key> <status>` | change a task's status; a task agent sets only `in_progress` and `in_review`, the project agent — only with `project_agent_status` (see "Project agent statuses" below) |
+| `update <key> [--summary ...] [--todo-json ...] [--changed-files-json ...] [--report ...] [--rule-violations-json ...] [--title ...] [--description ...] [--done-when ...] [--estimate N] [--priority high|normal|low] [--tracker-key K] [--tracker-url U] [--external-blocker R]` | update task fields; without `AGENT_BOARD_ACTOR` the command acts as the user; the wording (`title`, `description`, `done_when`, `estimate`) and the link to an already existing tracker issue (`tracker_key` — in the project's tracker format: Jira `PROJ-123`, GitHub `#123`; `tracker_url` — an http(s) link; an empty value, `null` in the API, removes the link) can be changed and removed only by the user, rule violations and the priority — by the user or the project agent; the external blocker (an empty value removes it) — by the user, and by the project agent with `project_agent_status` |
 | `ask <key> --text T [--option O ...] [--context C] [--recommended O]` | ask the user a question |
 | `say <thread> --text T [--interrupt]` | post to a task thread or to `_project`; `--interrupt` stops the agent's running turn so it answers at once (user and project agent only) |
 | `thread <thread>` | read a thread |
@@ -120,7 +120,9 @@ Limitations:
 
 \* User commands (`stage`, `ship`, `tracker`, `config`, `add-task`, `deps`, `update`) act as the user only when `AGENT_BOARD_ACTOR` is not set; agents are started with it (an empty value also counts as an agent), so they are refused on user-only actions. This protects against mistakes and is not a trust boundary (see "Limitations").
 
-**Proposals.** The project agent cannot change the graph or perform user actions itself; it prepares a proposal, and the user applies it with one button (`POST /api/p/<slug>/proposals/<id>/apply`) or rejects it (`.../reject`, the project agent is woken). Kinds and their `--json`:
+**Project agent statuses.** With `project_agent_status: true` the project agent changes task statuses itself at the user's direct request: `done` (also from `approved` and `sent`), `in_progress` (back to work; the task agent is woken as usual), `not_started`, `cancelled`, and it sets or removes the external blocker. `approved`, `sent` and `in_review` stay with the user: approval commits the work and may start shipping. Each such change goes to the journal with `actor: project_agent` and a system message in the task thread, and the project agent reports what it did in `_project`. By default (`false`) the board refuses, as before, and the agent only proposes.
+
+**Proposals.** The project agent cannot change the graph or perform user actions itself (except the statuses above when they are allowed); it prepares a proposal, and the user applies it with one button (`POST /api/p/<slug>/proposals/<id>/apply`) or rejects it (`.../reject`, the project agent is woken). Kinds and their `--json`:
 
 | Kind | Payload | Applied as |
 |---|---|---|
@@ -180,6 +182,7 @@ Settings are changed with `agent-board config set`, the "Project settings" windo
 | `agent_rules` | extra project rules: they go into the starting prompt of tasks and of the project agent, not into the system prompt |
 | `project_brief` | project description for the project agent |
 | `decomposition_rules` | decomposition rules (text up to 4000 characters): they go into the project agent's prompt, and it checks the task graph against them |
+| `project_agent_status` | `false` by default; `true` lets the project agent change task statuses itself at the user's request (everything except approval, see "Project agent statuses") |
 
 Codex support has not been tested against a live `codex`.
 

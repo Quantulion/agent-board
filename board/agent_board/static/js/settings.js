@@ -4,8 +4,8 @@ import { STAGES, T } from './i18n.js';
 import { openModal, toast } from './ui.js';
 
 // порядок простых полей в форме; поля, которых здесь нет, идут следом в порядке схемы
-const ORDER = ['title', 'language', 'max_agents', 'global_max_agents', 'chains', 'auto_approve', 'branch_template',
-  'project_brief', 'agent_rules', 'decomposition_rules'];
+const ORDER = ['title', 'language', 'max_agents', 'global_max_agents', 'chains', 'auto_approve', 'project_agent_status',
+  'branch_template', 'project_brief', 'agent_rules', 'decomposition_rules'];
 const LONG_TEXT = new Set(['project_brief', 'agent_rules', 'decomposition_rules']);
 const KINDS = { boolean: 'bool', integer: 'int', object: 'json', array: 'json' };
 // поля со своим редактором вместо JSON

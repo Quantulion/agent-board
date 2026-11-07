@@ -16,6 +16,9 @@ DESCRIPTIONS = {
                     "not auto-approved.",
     "max_agents": "Max concurrent task agent turns in this project; the project agent is not counted.",
     "global_max_agents": "Max concurrent task agent turns on the whole server; project agents run on top of it, one turn per project.",
+    "project_agent_status": "Let the project agent change task statuses itself at the user's direct request "
+                            "(done, in_progress, not_started, cancelled, external blocker); approval stays with the "
+                            "user. false: it only proposes, the user applies with a button.",
     "language": "Language of the UI and agent messages (e.g. ru, en).",
     "repos": "Project repositories: name, absolute path to a git work tree, base branch.",
     "tracker": "Issue tracker for creating issues and reading their statuses; secrets only by env var name or "
