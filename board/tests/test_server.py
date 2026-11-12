@@ -1533,3 +1533,45 @@ def test_add_task__no_key__key_assigned_by_board(server):
 
     # assert
     assert r.status == 200 and r.json()["key"] == "PAY-1"
+
+
+def test_fs_complete__folders_with_git_flag__token_required(server, tmp_path_factory):
+    # arrange
+    import subprocess
+
+    tmp_path = tmp_path_factory.mktemp("code")
+
+    (tmp_path / "api").mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path / "api", check=True)
+    (tmp_path / "docs").mkdir()
+    query = "/api/fs/complete?path=" + urllib.parse.quote(str(tmp_path) + "/")
+
+    # act
+    r = get(server, query)
+
+    # assert
+    assert get(server, query, token=None).status == 401
+    assert r.status == 200 and r.json() == {"items": [
+        {"path": str(tmp_path) + "/api", "abs": str(tmp_path / "api"), "git": True, "branch": "main"},
+        {"path": str(tmp_path) + "/docs", "abs": str(tmp_path / "docs"), "git": False, "branch": None},
+    ]}
+
+
+def test_add_task__repo_path_in_free_project__repo_added(server, tmp_path):
+    # arrange
+    import subprocess
+
+    repo = tmp_path / "api"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=repo, check=True)
+    assert post(server, "/api/projects", {"actor": "user", "title": "Fix", "key": "FIX", "kind": "free"}).status == 200
+
+    # act
+    r = post(server, "/api/p/fix/tasks", {"task": {"title": "t", "repo_path": str(repo)}, "actor": "user"})
+    bad = post(server, "/api/p/pay/tasks", {"task": {"title": "t", "repo_path": str(repo)}, "actor": "user"})
+
+    # assert
+    assert r.status == 200 and (r.json()["key"], r.json()["repo"]) == ("FIX-1", "api")
+    assert get(server, "/api/p/fix/state").json()["config"]["repos"] == [
+        {"name": "api", "path": str(repo.resolve()), "base": "main"}]
+    assert bad.status == 400

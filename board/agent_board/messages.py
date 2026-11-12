@@ -284,6 +284,17 @@ CATALOG: Dict[str, tuple] = {
     "board.task_exists": ("The task already exists: {key}", "Задача уже существует: {key}"),
     "board.unknown_repo": ("Repository {repo} is not in the project settings: {names}",
                            "Репозиторий {repo} не из настроек проекта: {names}"),
+    "board.repo_and_repo_path": ("Specify either repo or repo_path for a task, not both",
+                                 "У задачи указывается либо repo, либо repo_path, но не оба"),
+    "board.repo_path_free_only": ("repo_path is available only in projects without a plan; add the repository "
+                                  "to the project settings and pass its name in repo",
+                                  "repo_path доступен только в проекте без плана; добавьте репозиторий в настройки "
+                                  "проекта и укажите его имя в repo"),
+    "board.repo_path_relative": ("Repository path must be absolute or start with ~: {path}",
+                                 "Путь к репозиторию должен быть абсолютным или начинаться с ~: {path}"),
+    "board.repo_path_missing": ("Repository folder not found: {path}", "Папка репозитория не найдена: {path}"),
+    "board.repo_path_not_git": ("The folder is not a git repository: {path}",
+                                "Папка не является git-репозиторием: {path}"),
     "board.graph_via_proposals": ("The project agent changes the graph only through proposals",
                                   "Агент проекта меняет граф только через предложения"),
     "board.project_agent_status": ("The project agent cannot set status {status}: prepare a set_status proposal for "

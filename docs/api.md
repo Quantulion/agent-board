@@ -25,12 +25,13 @@ tools. The port and token of the running board are in `<home>/server.json`.
 | `GET /api/p/<slug>/file?path=P` | a local file from a project link, see [Links](configuration.md#links) |
 | `GET /api/p/<slug>/config?actor=user` | `{config}` — the settings (no secrets: only variable names and paths) |
 | `GET /api/p/<slug>/config/schema` | `{fields: [{name, type, default, description, shape?}], not_settable}` |
+| `GET /api/fs/complete?path=P` | `{items: [{path, abs, git, branch}]}` — up to 20 folders on this machine matching the typed path, see [Repository by path](#repository-by-path) |
 
 ## Tasks
 
 | Request | Body | Who |
 |---|---|---|
-| `POST /api/p/<slug>/tasks` | `{task, actor}` → also `{key}`; without `task.key` (or with `""`) the board picks the next key: the most common prefix of the project's tasks with the next number, `<SLUG>-1` in an empty project | user |
+| `POST /api/p/<slug>/tasks` | `{task, actor}` → also `{key}`; without `task.key` (or with `""`) the board picks the next key: the most common prefix of the project's tasks with the next number, `<SLUG>-1` in an empty project; in a project without a plan `task.repo_path` may replace `task.repo` (see [Repository by path](#repository-by-path)), and the answer also carries `{repo}` | user |
 | `POST .../tasks/<KEY>/transition` | `{to, actor}` | by status rules, see [Workflow](workflow.md#tasks-and-statuses) |
 | `POST .../tasks/<KEY>/update` | `{fields, actor}` | per field, see [`update`](cli.md#tasks-and-threads) |
 | `POST .../tasks/<KEY>/deps` | `{deps, actor}` | user |
@@ -72,6 +73,22 @@ has `AB-1`), the board adds a number: `FIX` → `FIX2`, `FIX3`…; the answer ca
 project starts at the `work` stage with no repositories, and `global_max_agents` is copied from the existing projects
 (the largest one). `harness_type` is `claude` or `codex`; the other options are the settings of the same name.
 Nothing is started: agents run only after user actions.
+
+### Repository by path
+
+In a project without a plan (`kind: "free"`) a new task may point to any git repository on the disk with
+`"repo_path": "<path>"` instead of `"repo": "<name>"` — in `POST .../tasks`, `agent-board add-task --json` and an
+`add_task` proposal. The path may start with `~`, may be a symlink, end with `/` or point inside the repository: the
+board uses the real path of the repository root. If the project already has a repository there, the task gets its
+name; otherwise the repository is added to `repos` (a `config_changed` event) with the folder name as `name` (`api`,
+then `api-2`, `api-3`… when the name is taken), the real path as `path` and the default branch as `base` (the one
+`origin/HEAD` points to, otherwise the current branch). A missing folder, a relative path, a folder outside git,
+`repo` together with `repo_path`, or `repo_path` in a project by plan — 400.
+
+`GET /api/fs/complete?path=P` suggests folders for such a path: everything up to the last `/` is the parent folder,
+the rest is the beginning of the name (case-insensitive). `P` must start with `/` or `~`; hidden folders are listed
+only when the name starts with `.`. Each item: `path` as typed (with `~`), `abs` — the absolute path, `git` — the
+folder is a repository root, `branch` — its default branch (`null` outside git). A missing folder gives an empty list.
 
 ## Events
 

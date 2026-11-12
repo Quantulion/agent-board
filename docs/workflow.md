@@ -46,6 +46,12 @@ dependency's branch, along the chain; with `chains: false` only `done` counts.
 Each code task gets a worktree `<repo>/.agent-board-worktrees/<KEY>` (the directory is added to
 `.git/info/exclude`) and a branch from `branch_template`.
 
+In a project by plan a task names one of the project's repositories. In a project without a plan a new task may
+instead give a path to any git repository on the disk (`repo_path`): a repository the project does not have yet is
+added to its settings automatically — named after its folder (`api-2` if `api` is taken), with its default branch
+as the base. The same repository given by another path (a symlink, `~`, a trailing `/`) is not added twice. Details:
+[API](api.md#repository-by-path).
+
 ## Agents and turns
 
 The board runs two kinds of agents through the [harness](configuration.md#harness) CLI:

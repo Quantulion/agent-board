@@ -1821,3 +1821,137 @@ def test_next_task_key__existing_keys__most_common_prefix_next_number(board, key
 
     # act, assert
     assert board.next_task_key() == expected
+
+
+def free_board(repos=None):
+    store = ProjectStore("fix")
+    store.create(ProjectConfig(slug="fix", title="Fix", kind="free", stage="work", repos=list(repos or [])))
+    return Board(store, clock=lambda: NOW)
+
+
+def git_init(path, branch="main"):
+    import subprocess
+
+    path.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", "-b", branch], cwd=path, check=True, capture_output=True)
+    return path
+
+
+def test_add_task__repo_path_in_free_project__repo_added_and_task_linked(tmp_home, tmp_path):
+    # arrange
+    repo = git_init(tmp_path / "code" / "api", branch="trunk")
+    board = free_board()
+
+    # act
+    ev = board.add_task(mk(""), "user", repo_path=str(repo))
+
+    # assert
+    assert flat(ev)[:2] == [dict(type="config_changed", fields=["repos"]), dict(type="task_added", key="FIX-1")]
+    assert board.store.load_config().repos == [{"name": "api", "path": str(repo.resolve()), "base": "trunk"}]
+    assert board.store.load_tasks()["FIX-1"].repo == "api"
+
+
+def test_add_task__same_repo_path_again__repo_not_duplicated(tmp_home, tmp_path, monkeypatch):
+    # arrange: тот же репозиторий через ~, через симлинк, с / на конце и через подпапку
+    monkeypatch.setenv("HOME", str(tmp_path))
+    repo = git_init(tmp_path / "code" / "api")
+    (repo / "src").mkdir()
+    (tmp_path / "link").symlink_to(repo)
+    board = free_board()
+    board.add_task(mk(""), "user", repo_path="~/code/api")
+
+    # act
+    for path in (str(tmp_path / "link"), str(repo) + "/", str(repo / "src")):
+        ev = board.add_task(mk(""), "user", repo_path=path)
+        assert "config_changed" not in [e.type for e in ev]
+
+    # assert
+    assert [r["name"] for r in board.store.load_config().repos] == ["api"]
+    assert {t.repo for t in board.store.load_tasks().values()} == {"api"}
+
+
+def test_add_task__repo_already_in_settings__its_name_used(tmp_home, tmp_path):
+    repo = git_init(tmp_path / "api")
+    board = free_board([{"name": "backend", "path": str(repo), "base": "main"}])
+    board.add_task(mk(""), "user", repo_path=str(repo))
+    assert board.store.load_tasks()["FIX-1"].repo == "backend"
+    assert len(board.store.load_config().repos) == 1
+
+
+def test_add_task__two_folders_with_same_name__second_numbered(tmp_home, tmp_path):
+    # arrange
+    first = git_init(tmp_path / "a" / "api")
+    second = git_init(tmp_path / "b" / "api")
+    board = free_board()
+
+    # act
+    board.add_task(mk(""), "user", repo_path=str(first))
+    board.add_task(mk(""), "user", repo_path=str(second))
+
+    # assert
+    repos = board.store.load_config().repos
+    assert [(r["name"], r["path"]) for r in repos] == [("api", str(first.resolve())), ("api-2", str(second.resolve()))]
+    tasks = board.store.load_tasks()
+    assert (tasks["FIX-1"].repo, tasks["FIX-2"].repo) == ("api", "api-2")
+
+
+@pytest.mark.parametrize("make_path, text", [
+    (lambda tmp: tmp / "missing", "Папка репозитория не найдена"),
+    (lambda tmp: tmp / "plain", "Папка не является git-репозиторием"),
+    (lambda tmp: "relative/api", "Путь к репозиторию должен быть абсолютным"),
+])
+def test_add_task__bad_repo_path__rejected_and_nothing_changed(tmp_home, tmp_path, make_path, text):
+    # arrange
+    (tmp_path / "plain").mkdir()
+    board = free_board()
+
+    # act
+    with pytest.raises(ValueError, match=text):
+        board.add_task(mk(""), "user", repo_path=str(make_path(tmp_path)))
+
+    # assert
+    assert board.store.load_tasks() == {}
+    assert board.store.load_config().repos == []
+
+
+def test_add_task__repo_path_in_plan_project__rejected(board, tmp_path):
+    repo = git_init(tmp_path / "api")
+    with pytest.raises(ValueError, match="только в проекте без плана"):
+        board.add_task(mk("A"), "user", repo_path=str(repo))
+    assert board.store.load_tasks() == {}
+
+
+def test_add_task__repo_and_repo_path__rejected(tmp_home, tmp_path):
+    repo = git_init(tmp_path / "api")
+    with pytest.raises(ValueError, match="либо repo, либо repo_path"):
+        free_board().add_task(mk("", repo="api"), "user", repo_path=str(repo))
+
+
+def test_add_task__repo_path_with_bad_deps__repo_not_added(tmp_home, tmp_path):
+    repo = git_init(tmp_path / "api")
+    board = free_board()
+    with pytest.raises(ValueError):
+        board.add_task(mk("", deps=["NOPE-1"]), "user", repo_path=str(repo))
+    assert board.store.load_config().repos == []
+
+
+def test_proposal_add_task__repo_path__applied_with_repo(tmp_home, tmp_path):
+    # arrange
+    repo = git_init(tmp_path / "api")
+    board = free_board()
+    ev = board.propose("add_task", {"task": {"key": "FIX-1", "title": "t", "repo_path": str(repo)}}, "")
+    pid = next(e.data["id"] for e in ev if e.type == "proposal_created")
+
+    # act
+    board.apply_proposal(pid)
+
+    # assert
+    assert board.store.load_tasks()["FIX-1"].repo == "api"
+    assert [r["name"] for r in board.store.load_config().repos] == ["api"]
+
+
+def test_proposal_add_task__repo_path_not_git__rejected(tmp_home, tmp_path):
+    (tmp_path / "plain").mkdir()
+    with pytest.raises(ValueError, match="не является git-репозиторием"):
+        free_board().propose("add_task", {"task": {"key": "FIX-1", "title": "t", "repo_path": str(tmp_path / "plain")}},
+                             "")

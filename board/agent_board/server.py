@@ -17,8 +17,8 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import __version__, projects, tracker
-from .board import Board, ConfigConflict, new_task_from_dict
+from . import __version__, fspaths, projects, tracker
+from .board import Board, ConfigConflict, new_task_from_dict, task_repo_path
 from .messages import LANG_HEADER, localize, msg, normalize, reason
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
@@ -356,6 +356,8 @@ class _Handler(BaseHTTPRequestHandler):
             return self._create_project()
         if method == "GET" and parts == ["stream"]:
             return self._common_stream()
+        if method == "GET" and parts == ["fs", "complete"]:
+            return self._send_json(200, {"items": fspaths.complete((query.get("path") or [""])[0])})
         if len(parts) < 3 or parts[0] != "p":
             raise KeyError(msg("api.unknown_route"))
         board = self.app.hub.board(parts[1])
@@ -513,9 +515,11 @@ class _Handler(BaseHTTPRequestHandler):
         elif rest == ["stage"]:
             events = board.set_stage(_need(body, "stage"), _need(body, "actor"))
         elif rest == ["tasks"]:
-            task = self._task(_need(body, "task"))
-            events = board.add_task(task, _need(body, "actor"))
+            raw = _need(body, "task")
+            task = self._task(raw)
+            events = board.add_task(task, _need(body, "actor"), task_repo_path(raw))
             extra["key"] = task.key
+            extra["repo"] = task.repo
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "transition":
             events = board.transition(rest[1], Status(_need(body, "to")), _need(body, "actor"))
         elif len(rest) == 3 and rest[0] == "tasks" and rest[2] == "review":
