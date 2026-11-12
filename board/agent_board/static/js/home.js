@@ -5,7 +5,7 @@ import { color, sdot, statusOf } from './chips.js';
 import { h, icon, patchList } from './dom.js';
 import { STAGES, T, statusInfo } from './i18n.js';
 import { suggestKey } from './newtask.js';
-import { openNewProjectDialog } from './newproject.js';
+import { openNewProjectDialog, takenProjectKeys } from './newproject.js';
 import { boardHref, decompositionHref, withTask } from './router.js';
 import { nextBackoff } from './store.js';
 import { toast } from './ui.js';
@@ -141,7 +141,9 @@ export function mountHome(root, ctx) {
   let slugs = [];
   let alive = true;
   let loaded = false;
-  const newProject = () => openNewProjectDialog(ctx);
+  const newProject = () => openNewProjectDialog({
+    takenKeys: () => takenProjectKeys(slugs.map(slug => ({ slug, snapshot: snapshots.get(slug) || null }))),
+  });
 
   const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
   const syncText = h('span');
