@@ -25,7 +25,7 @@ const QUIET = new Set(['approved', 'sent', 'done']);
 // свой тип данных при переносе: чужой перетаскиваемый текст не примется за ключ задачи
 export const DRAG_MIME = 'application/x-ab-task';
 // порядок отрезков полосы прогресса: от готового к ещё не начатому
-const BAR_ORDER = ['done', 'sent', 'approved', 'in_review', 'queued', 'waiting_answer', 'in_progress', 'blocked', 'not_started'];
+export const BAR_ORDER = ['done', 'sent', 'approved', 'in_review', 'queued', 'waiting_answer', 'in_progress', 'blocked', 'not_started'];
 const MAX_SLOTS = 5;
 // критический путь на графе — по работе, которая ещё осталась
 const FINISHED = ['cancelled', 'done', 'sent', 'approved'];
@@ -92,6 +92,7 @@ export function waitingForYou(snapshot) {
     const key = proposalKey(p);
     items.push({ kind: 'proposal', id: p.id, proposal: p.kind, ...(key ? { key } : {}), open: project });
   }
+  if (snapshot.project_unread > 0) items.push({ kind: 'pa_reply', count: snapshot.project_unread, open: project });
   // пока агент отвечает на комментарии ревью, задача ждёт не пользователя
   for (const t of tasks) {
     const r = reviewOf(t);
@@ -126,6 +127,28 @@ export function waitingForYou(snapshot) {
     items.push({ kind: 'sync', name: sync.name, error: (snapshot.tracker_sync && snapshot.tracker_sync.error) || '', open: { type: 'sync' } });
   }
   return items;
+}
+
+// Вид пункта «Ждут вас»: класс цвета и значок.
+export const ATTN_LOOK = {
+  question: ['q', 'chat'], proposal: ['pa', 'spark'], review: ['rv', 'eye'],
+  error: ['er', 'warn'], loop: ['er', 'chat'], violation: ['er', 'warn'], blocker: ['er', 'lock'],
+  ship_error: ['er', 'send'], ship: ['ok', 'send'], sync: ['er', 'sync'], pa_reply: ['pa', 'chat'],
+};
+
+// Подпись пункта «Ждут вас».
+export function attnText(item) {
+  if (item.kind === 'question') return T.attn.question(item.count);
+  if (item.kind === 'proposal') return T.attn.proposal[item.proposal] || T.attn.proposal.add_task;
+  if (item.kind === 'error') return item.key ? T.attn.error : T.attn.projectError;
+  if (item.kind === 'loop') return item.key ? T.attn.loop : T.attn.projectLoop;
+  if (item.kind === 'violation') return T.attn.violation(item.count);
+  if (item.kind === 'review' && item.round) return T.attn.reviewRound(item.round);
+  if (item.kind === 'ship_error') return item.state === 'interrupted' ? T.attn.shipInterrupted : T.attn.shipError;
+  if (item.kind === 'ship') return T.attn.ship(item.count);
+  if (item.kind === 'sync') return T.attn.sync(item.name);
+  if (item.kind === 'pa_reply') return T.attn.paReply(item.count);
+  return T.attn[item.kind];
 }
 
 // Почему задача стоит: незакрытые зависимости с их статусами и внешний блокер.
@@ -658,25 +681,6 @@ export function mountBoard(root, store, ctx) {
     node.dataset.sig = sig;
     node.className = n ? 'pill' : 'pill zero';
     node.replaceChildren(sdot(s.id), s.label + ' ', h('b', null, String(n)));
-  }
-
-  const ATTN_LOOK = {
-    question: ['q', 'chat'], proposal: ['pa', 'spark'], review: ['rv', 'eye'],
-    error: ['er', 'warn'], loop: ['er', 'chat'], violation: ['er', 'warn'], blocker: ['er', 'lock'],
-    ship_error: ['er', 'send'], ship: ['ok', 'send'], sync: ['er', 'sync'],
-  };
-
-  function attnText(item) {
-    if (item.kind === 'question') return T.attn.question(item.count);
-    if (item.kind === 'proposal') return T.attn.proposal[item.proposal] || T.attn.proposal.add_task;
-    if (item.kind === 'error') return item.key ? T.attn.error : T.attn.projectError;
-    if (item.kind === 'loop') return item.key ? T.attn.loop : T.attn.projectLoop;
-    if (item.kind === 'violation') return T.attn.violation(item.count);
-    if (item.kind === 'review' && item.round) return T.attn.reviewRound(item.round);
-    if (item.kind === 'ship_error') return item.state === 'interrupted' ? T.attn.shipInterrupted : T.attn.shipError;
-    if (item.kind === 'ship') return T.attn.ship(item.count);
-    if (item.kind === 'sync') return T.attn.sync(item.name);
-    return T.attn[item.kind];
   }
 
   const attnLabel = h('span', { class: 'lbl' });

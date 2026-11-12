@@ -133,17 +133,17 @@ try {
     return found;
   });
 
-  // список проектов
+  // главный экран: доска проектов
   await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: 'light' }]);
   await page.goto(url.replace(/\?.*$/, '') + '#/', { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('.scr[data-key="pay"]', { timeout: 10000 });
+  await page.waitForSelector('.pcard[data-slug="pay"]', { timeout: 10000 });
   const projFile = path.join(out, 'skeleton-projects-light.png');
   await page.screenshot({ path: projFile });
   results.projects_light = projFile;
 
   // переключатель темы перекрывает системную
-  await page.click('.hd .btn.icon');
-  await page.click('.hd .btn.icon');
+  await page.click('.app.home .row1 > .btn.icon');
+  await page.click('.app.home .row1 > .btn.icon');
   results.themeAfterToggle = await page.evaluate(() => document.documentElement.dataset.theme);
   const projDark = path.join(out, 'skeleton-projects-dark.png');
   await page.screenshot({ path: projDark });

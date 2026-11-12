@@ -2,9 +2,10 @@ import { api } from './api.js';
 import { mountBoard } from './board.js';
 import { closeCard, openCard } from './card.js';
 import { mountDecomposition } from './decomposition.js';
-import { h, icon, patchList } from './dom.js';
-import { STAGES, T, currentLanguage, setLanguage, tasksCount, uiLanguage } from './i18n.js';
-import { boardHref, decompositionHref, parseRoute, withTask } from './router.js';
+import { h, icon } from './dom.js';
+import { mountHome } from './home.js';
+import { T, currentLanguage, setLanguage, uiLanguage } from './i18n.js';
+import { decompositionHref, parseRoute, withTask } from './router.js';
 import { createStore } from './store.js';
 
 const THEME_KEY = 'ab-theme';
@@ -105,45 +106,21 @@ function errorNotice(err) {
   return notice(T.loadError, err && err.message, true);
 }
 
-// --- Список проектов ---
+// --- Главный экран: доска проектов ---
 
 function projectsView() {
-  let alive = true;
-  const list = h('div', { class: 'screens' });
-  const page = h('div', { class: 'wrap' },
-    h('div', { class: 'hd' }, brand(), themeButton()),
-    h('div', null, h('h1', null, T.projects), h('p', { class: 'lead' }, T.projectsLead)),
-    list);
-  root.replaceChildren(page);
-  list.append(h('span', { class: 'muted' }, T.loading));
-  api(null).get('/projects').then(async ({ projects }) => {
-    if (!alive) return;
-    if (!projects.length) {
-      list.replaceChildren(h('span', { class: 'muted' }, T.noProjects));
-      return;
-    }
-    const states = await Promise.all(projects.map(slug => api(slug).get('/state').catch(() => null)));
-    if (!alive) return;
-    // общий язык всех проектов становится языком списка
-    const langs = new Set(states.filter(Boolean).map(st => uiLanguage(st.config.language)));
-    if (langs.size === 1) applyLanguage([...langs][0], self);
-    patchList(list, projects.map((slug, i) => ({ slug, state: states[i] })), 'slug', projectCard);
-  }).catch(err => {
-    if (alive) page.replaceChildren(errorNotice(err));
+  const self = { slug: null, setMode() {}, setTask() {}, setFocus() {}, destroy() { destroyHome(); } };
+  const destroyHome = mountHome(root, {
+    brand,
+    themeButton,
+    errorNotice,
+    // общий язык всех проектов становится языком главного экрана
+    onStates: states => {
+      const langs = new Set(states.filter(s => s.snapshot).map(s => uiLanguage(s.snapshot.config.language)));
+      if (langs.size === 1) applyLanguage([...langs][0], self);
+    },
   });
-  const self = { slug: null, setMode() {}, setTask() {}, setFocus() {}, destroy() { alive = false; } };
   return self;
-}
-
-function projectCard({ slug, state }) {
-  const title = state ? state.config.title : slug;
-  const stage = state ? STAGES.find(s => s.id === state.config.stage) : null;
-  const sub = state ? [tasksCount(state.tasks.length), stage && stage.label].filter(Boolean).join(' · ') : '';
-  return h('a', { class: 'scr', href: boardHref(slug) },
-    h('span', { class: 'ic' }, icon('board')),
-    h('b', null, title),
-    sub ? h('span', null, sub) : null,
-    h('code', null, slug));
 }
 
 // --- Проект: доска и согласование разбивки на одном живом состоянии ---
