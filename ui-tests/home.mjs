@@ -1,11 +1,12 @@
 // Главный экран — доска проектов: проект с вопросом агента в «Ждут вас», пункт общей полосы ведёт на карточку
 // задачи, проект переезжает между колонками по живым событиям, «В архив» переносит его в свёрнутый «Архив»,
-// а пункты архивного проекта остаются в общей полосе с меткой на колонке. Тёмная тема — без ошибок консоли.
+// а пункты архивного проекта остаются в общей полосе с меткой на колонке. Окно «Новый проект» создаёт проект без
+// плана и открывает его доску, агенты при этом не стартуют. Тёмная тема — без ошибок консоли.
 // Запуск из корня репозитория: node ui-tests/home.mjs
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
-import { cleanupAll, createEnv, out, until } from './lib.mjs';
+import { cleanupAll, createEnv, out, sleep, until } from './lib.mjs';
 
 const VIEW = { width: 1440, height: 900 };
 
@@ -100,15 +101,46 @@ try {
   await page.click('.stmenu [data-action="unarchive"]');
   results.unarchive = await waitColumn(page, 'fix', 'quiet', 'fix вернулся').then(() => 'ok', e => String(e));
 
+  // «Новый проект»: ключ из названия, подсказка про занятый ключ, создание открывает доску проекта
+  await page.click('[data-action="new-project"]');
+  await page.waitForSelector('.modal.newproject #np-title', { timeout: 5000 });
+  await page.type('#np-title', 'Мелкие доработки биллинга');
+  const fromTitle = await page.$eval('#np-key', el => el.value);
+  await page.$eval('#np-key', el => { el.focus(); el.select(); });
+  await page.type('#np-key', 'fix');
+  const hint = await page.$eval('#np-key-hint', el => el.textContent);
+  const planDisabled = await page.$eval('.ptype[data-kind="plan"]', el => el.disabled);
+  await page.click('.np-adv summary');
+  await sleep(300);
+  await page.screenshot({ path: path.join(out, 'home-newproject.png') });
+  await page.click('[data-action="create-project"]');
+  await page.waitForFunction(() => window.location.hash === '#/p/fix2', { timeout: 10000 }).catch(() => {});
+  await page.waitForFunction(() => (document.querySelector('.top h1') || {}).textContent === 'Мелкие доработки биллинга',
+    { timeout: 10000 }).catch(() => {});
+  const created = await page.evaluate(() => ({ hash: window.location.hash, h1: (document.querySelector('.top h1') || {}).textContent }));
+  const state = await (await fetch(`${env.origin}/api/p/fix2/state`, { headers: { 'X-Board-Token': env.token } })).json();
+  const pa = state.project_agent || {};
+  results.newProject = fromTitle === 'MDB' && hint === 'FIX уже занят, проект получит FIX2.' && planDisabled
+    && created.hash === '#/p/fix2' && created.h1 === 'Мелкие доработки биллинга'
+    && state.config.kind === 'free' && state.config.stage === 'work' && state.config.auto_approve === false
+    && state.tasks.length === 0 && pa.state === 'idle' && !pa.session_id
+    ? 'ok' : { fromTitle, hint, planDisabled, created, state: state.config ? state.config.kind : state, pa };
+
   // тёмная тема
+  await page.goto(env.url.replace(/[?#].*$/, '') + '#/', { waitUntil: 'domcontentloaded' });
   await page.evaluate(() => localStorage.setItem('ab-theme', 'dark'));
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.pcard[data-slug="pay"]', { timeout: 10000 });
   results.dark = await page.evaluate(() => document.documentElement.dataset.theme) === 'dark' ? 'ok' : 'no theme';
   await page.screenshot({ path: path.join(out, 'home-dark.png') });
+  await page.click('[data-action="new-project"]');
+  await page.waitForSelector('.modal.newproject', { timeout: 5000 });
+  await sleep(300);
+  await page.screenshot({ path: path.join(out, 'home-newproject-dark.png') });
+  await page.keyboard.press('Escape');
 
   results.errors = errors;
-  ok = ['layout', 'live', 'attnLink', 'archive', 'archivedAttention', 'unarchive', 'dark'].every(k => results[k] === 'ok') && !errors.length;
+  ok = ['layout', 'live', 'attnLink', 'archive', 'archivedAttention', 'unarchive', 'newProject', 'dark'].every(k => results[k] === 'ok') && !errors.length;
 } catch (e) {
   results.exception = String(e && e.stack || e);
   results.errors = errors;

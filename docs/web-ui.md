@@ -8,7 +8,7 @@ automatic themes. It is plain ES modules served by the board, with no build step
 
 - **Projects** (`#/`) — the home screen, a board of projects. The header shows "N active · M agents working of
   the limit · K waiting for a slot" (the limit is the largest `global_max_agents` among projects), the connection
-  indicator and "New project" (for now it shows the `agent-board init <key> --kind free` command). A common
+  indicator and "New project" (see below). A common
   "Waiting for you" strip collects items from all projects, each marked with the project key; a click opens the card
   or the project board. Projects move between columns by themselves:
   - "Waiting for you" — something in the project waits for you (see "Waiting for you" below);
@@ -24,6 +24,17 @@ automatic themes. It is plain ES modules served by the board, with no build step
   working agents, task counts, a progress bar and "X of Y done" for planned projects, chips for questions, review,
   errors and proposals, and up to two repositories with "+N". A click opens the project board. Any column collapses
   and expands; the state is stored in `localStorage` (`ab-home`).
+
+  **New project** dialog (the header button or the dashed "＋ New project" in "Quiet"): title; task key — filled
+  from the title (first letters of the words, Cyrillic transliterated, `PRJ` if nothing fits), editable, Latin
+  letters and digits starting with a letter, up to 10 characters. If the key is already taken by another project or
+  by the task-key prefix of another project, the hint says "FIX is taken, the project will get FIX2" — the server
+  numbers the key itself (`FIX2`, `FIX3`…). Type: "No plan" only; "Planned" is shown disabled (for now it is
+  created with the skill in the agent CLI). Agents: Claude Code or Codex. "More" (collapsed): language (the current
+  interface language by default), agents in the project (3), review before commit (on; off means `auto_approve`),
+  project agent creates tasks on request (`project_agent_tasks`, on). Repositories are not asked for. "Create and
+  open" sends `POST /api/projects` and opens the new project's board at the `work` stage; no agent starts. Server
+  errors are shown under their field.
 - **Board** (`#/p/<slug>`) — columns by status, filters (repository, kind, search), the project stage bar with the
   next step ("Start work" at the `tracker` stage, "Finish project" when all tasks are done), progress and the
   connection indicator. The "Planning" row holds the project links and the decomposition page. Change a status by
