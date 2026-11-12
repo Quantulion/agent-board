@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import copy
+import os
 import re
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, Iterable, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
+from . import fspaths
 from .config import (
     LEGACY_SHIP_COMMAND, ProjectConfig, check_field_names, clean_links, validate_config as validate_project_config,
     validate_fields, validate_structure,
@@ -57,6 +59,8 @@ MAX_RULE_TEXT_CHARS = 2000
 LAST_MESSAGE_CHARS = 200
 REBASE_CLOSED = {Status.DONE, Status.SENT, Status.CANCELLED}
 CREATABLE_FIELDS = ("key", "title", "description", "done_when", "repo", "kind", "estimate", "deps", "priority")
+# поля ввода новой задачи, которые не хранятся в ней самой
+INPUT_ONLY_FIELDS = ("repo_path",)
 TASK_KINDS = ("code", "research")
 # стадии проекта: разбивка, заведение задач в трекере (необязательно), работа агентов, завершение
 STAGE_TRANSITIONS = {
@@ -136,11 +140,11 @@ def new_task_from_dict(d: Any) -> Task:
     """Новая задача из пользовательского ввода: только поля, которые задаются при создании."""
     if not isinstance(d, dict):
         raise ValueError(msg("board.task_not_object"))
-    extra = set(d) - set(CREATABLE_FIELDS)
+    extra = set(d) - set(CREATABLE_FIELDS) - set(INPUT_ONLY_FIELDS)
     if extra:
         raise ValueError(msg("board.task_extra_fields", names=", ".join(sorted(map(str, extra)))))
     # без ключа задача получает следующий ключ проекта
-    d = dict({"key": ""}, **d)
+    d = {name: value for name, value in dict({"key": ""}, **d).items() if name not in INPUT_ONLY_FIELDS}
     for name in ("key", "title"):
         if not isinstance(d.get(name), str):
             raise ValueError(msg("board.task_field_str", name=name))
@@ -158,6 +162,18 @@ def new_task_from_dict(d: Any) -> Task:
     if "priority" in d:
         _check_priority(d["priority"])
     return Task(**dict(d, deps=list(deps)))
+
+
+def task_repo_path(d: Any) -> Optional[str]:
+    """Путь к репозиторию из ввода новой задачи, если он задан вместо имени репозитория проекта."""
+    if not isinstance(d, dict) or d.get("repo_path") is None:
+        return None
+    path = d["repo_path"]
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError(msg("board.task_field_str", name="repo_path"))
+    if d.get("repo"):
+        raise ValueError(msg("board.repo_and_repo_path"))
+    return path.strip()
 
 
 _NUMBERED = re.compile(r"^(.*?)(\d+)$")
@@ -413,22 +429,38 @@ class Board:
             print("locks_for(%s) failed: %r" % (key, exc), file=sys.stderr)
             return []
 
-    def add_task(self, task: Task, actor: str) -> List[Event]:
-        """Новую задачу добавляет только пользователь; агенты предлагают её через агента проекта (propose)."""
+    def add_task(self, task: Task, actor: str, repo_path: Optional[str] = None) -> List[Event]:
+        """Новую задачу добавляет только пользователь; агенты предлагают её через агента проекта (propose).
+
+        repo_path — папка репозитория на диске в проекте без плана: репозитория ещё нет в проекте — он добавляется."""
+        self._reject_project_agent(actor)
+        self._require_user(actor, msg("board.add_task_user_only"))
+        if repo_path is not None and task.repo:
+            raise ValueError(msg("board.repo_and_repo_path"))
+        # git и диск проверяются до блокировки доски
+        located = self._locate_repo(repo_path) if repo_path is not None else None
         with self._lock:
-            self._reject_project_agent(actor)
-            self._require_user(actor, msg("board.add_task_user_only"))
             tasks = self.store.load_tasks()
             if task.key == "":
                 task.key = next_key(tasks, self.store.slug)
             self._check_new_key(task.key, tasks)
-            self._check_repo(task.repo)
+            config = self.store.load_config()
+            new_repo = None
+            if located is not None:
+                task.repo, new_repo = self._project_repo(config, *located)
+            else:
+                self._check_repo(task.repo)
             _check_priority(task.priority)
             validate_deps(task.key, task.deps, tasks)
+            events: List[Event] = []
+            if new_repo is not None:
+                config.repos.append(new_repo)
+                self.store.save_config(config)
+                events.append(self._emit("config_changed", {"fields": ["repos"]}))
             task.status = Status.NOT_STARTED
             task.updated_at = self._clock()
             self.store.save_task(task)
-            events: List[Event] = [self._emit("task_added", {"key": task.key})]
+            events.append(self._emit("task_added", {"key": task.key}))
             if task.key in ready_tasks(self.store.load_tasks(), self._chains()):
                 events.append(self._emit("agent_wake", {"key": task.key, "reason": "ready"}))
             events.extend(self._retire_proposals())
@@ -892,7 +924,7 @@ class Board:
     def _apply_action(self, proposal: Proposal) -> List[Event]:
         p = proposal.payload
         if proposal.kind == "add_task":
-            return self.add_task(new_task_from_dict(p["task"]), "user")
+            return self.add_task(new_task_from_dict(p["task"]), "user", task_repo_path(p["task"]))
         if proposal.kind == "set_deps":
             return self.set_deps(p["key"], list(p["deps"]), "user")
         if proposal.kind == "cancel_task":
@@ -987,7 +1019,11 @@ class Board:
                 raise ValueError(msg("board.proposal_task"))
             task = new_task_from_dict(raw)
             self._check_new_key(task.key, tasks)
-            self._check_repo(task.repo)
+            repo_path = task_repo_path(raw)
+            if repo_path is not None:
+                self._locate_repo(repo_path)
+            else:
+                self._check_repo(task.repo)
             validate_deps(task.key, task.deps, tasks)
             return [task.key], None
         if kind == "set_config":
@@ -1099,6 +1135,35 @@ class Board:
         clash = next((k for k in tasks if k.lower() == key.lower()), None)
         if clash is not None:
             raise ValueError(msg("board.task_exists", key=clash))
+
+    def _locate_repo(self, repo_path: str) -> Tuple[str, str]:
+        """Корень git-репозитория по пути задачи и его ветка по умолчанию; путь задают только в проекте без плана."""
+        if self.store.load_config().kind != "free":
+            raise ValueError(msg("board.repo_path_free_only"))
+        path = os.path.expanduser(repo_path)
+        if not os.path.isabs(path):
+            raise ValueError(msg("board.repo_path_relative", path=repo_path))
+        if not os.path.isdir(path):
+            raise ValueError(msg("board.repo_path_missing", path=repo_path))
+        root = fspaths.work_tree_root(path)
+        if root is None:
+            raise ValueError(msg("board.repo_path_not_git", path=repo_path))
+        return root, fspaths.default_branch(root)
+
+    @staticmethod
+    def _project_repo(config: ProjectConfig, root: str, branch: str) -> Tuple[str, Optional[dict]]:
+        """Имя репозитория проекта в этой папке; если его ещё нет — и новая запись с уникальным именем папки."""
+        repos = [r for r in config.repos if isinstance(r, dict)]
+        for repo in repos:
+            path = repo.get("path")
+            if isinstance(path, str) and os.path.realpath(os.path.expanduser(path)) == root:
+                return repo["name"], None
+        names = {r.get("name") for r in repos}
+        folder = os.path.basename(root)
+        name, n = folder, 2
+        while name in names:
+            name, n = "%s-%d" % (folder, n), n + 1
+        return name, {"name": name, "path": root, "base": branch or None}
 
     def _check_repo(self, repo: Optional[str]) -> None:
         """Задача ссылается только на репозиторий проекта, если репозитории заданы."""
