@@ -1,8 +1,10 @@
 // Доска проекта «Без плана»: в шапке «← Проекты» и чип типа без шкалы стадий, нет прогресса по плану,
 // «Планирования», графа и волн; пустые «Не начата» и «Заблокирована» скрыты, «Отправлена» и «Готово» свёрнуты;
 // панель «Проект» открыта с подсказкой про создание задач; задача агента проекта подписана. Проект «По плану»
-// на той же доске выглядит как раньше. Скриншоты в светлой и тёмной теме — без ошибок консоли.
+// на той же доске выглядит как раньше. Новая задача в проекте «Без плана» создаётся по пути к папке: подсказка
+// отличает git-папку от обычной, репозиторий добавляется в проект и появляется в фильтре. Скриншоты в светлой и тёмной теме — без ошибок консоли.
 // Запуск из корня репозитория: node ui-tests/free.mjs
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import puppeteer from 'puppeteer';
@@ -133,8 +135,42 @@ try {
   results.dark = await page.evaluate(() => document.documentElement.dataset.theme) === 'dark' ? 'ok' : 'no theme';
   await page.screenshot({ path: path.join(out, 'free-dark.png') });
 
+  // новая задача по пути к папке: git-папка выбирается, обычная — нет
+  const code = path.join(env.home, 'code');
+  fs.mkdirSync(path.join(code, 'offers'), { recursive: true });
+  fs.mkdirSync(path.join(code, 'off-tools'));
+  execFileSync('git', ['init', '-q', '-b', 'main', path.join(code, 'offers')]);
+  await page.evaluate(() => [...document.querySelectorAll('button.btn.primary')].find(b => b.textContent.trim() === 'Новая задача').click());
+  await page.waitForSelector('.modal.newtask #nt-repo', { timeout: 10000 });
+  const dialog = await page.evaluate(() => ({
+    key: Boolean(document.querySelector('.modal.newtask #nt-key')),
+    advanced: !document.querySelector('.modal.newtask .nt-adv').open,
+    create: document.querySelector('.modal.newtask [data-action="create-task"]').textContent,
+  }));
+  await page.type('#nt-title', 'Убрать устаревший эндпоинт');
+  await page.type('#nt-repo', path.join(code, 'off'));
+  await page.waitForFunction(() => document.querySelectorAll('.repo-dd .o').length === 2, { timeout: 10000 });
+  const options = await page.$$eval('.repo-dd .o', els => els.map(e => [e.querySelector('.p').textContent, e.querySelector('.tag').textContent]));
+  await page.screenshot({ path: path.join(out, 'free-newtask-dark.png') });
+  // «не git» не выбирается: клик ничего не подставляет
+  await page.click('.repo-dd .o[aria-disabled="true"]');
+  const afterDisabled = await page.$eval('#nt-repo', el => el.value);
+  await page.click('.repo-dd .o:not([aria-disabled])');
+  const picked = await page.$eval('#nt-repo', el => el.value);
+  await page.click('[data-action="create-task"]');
+  await page.waitForFunction(() => document.querySelectorAll('.card').length === 5, { timeout: 10000 });
+  await page.waitForFunction(() => [...document.querySelectorAll('select[aria-label="Репозиторий"] option')].some(o => o.value === 'offers'), { timeout: 10000 });
+  const cfg = JSON.parse(fs.readFileSync(path.join(env.home, 'projects', 'fix', 'project.json'), 'utf-8'));
+  const created = JSON.parse(fs.readFileSync(path.join(env.home, 'projects', 'fix', 'tasks', 'FIX-5.json'), 'utf-8'));
+  results.newTask = !dialog.key && dialog.advanced && dialog.create === 'Создать и запустить'
+    && options.some(([p, tag]) => p.endsWith('/offers') && tag === 'git · main')
+    && options.some(([p, tag]) => p.endsWith('/off-tools') && tag === 'не git')
+    && afterDisabled === path.join(code, 'off') && picked === path.join(code, 'offers')
+    && created.repo === 'offers' && (cfg.repos || []).some(r => r.name === 'offers' && r.base === 'main')
+    ? 'ok' : { dialog, options, afterDisabled, picked, repo: created.repo, repos: cfg.repos };
+
   results.errors = errors;
-  ok = ['free', 'drawer', 'dockRemembered', 'plan', 'dark'].every(k => results[k] === 'ok') && !errors.length;
+  ok = ['free', 'drawer', 'dockRemembered', 'plan', 'dark', 'newTask'].every(k => results[k] === 'ok') && !errors.length;
 } catch (e) {
   results.exception = String(e && e.stack || e);
   results.errors = errors;

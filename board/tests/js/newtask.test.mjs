@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { errorField, suggestKey, taskPayload, validateNewTask } from '../../agent_board/static/js/newtask.js';
+import { errorField, pickRepo, repoSuggestions, suggestKey, taskPayload, validateNewTask } from '../../agent_board/static/js/newtask.js';
 
 test('suggestKey: самый частый префикс проекта и следующий номер', () => {
   // act + assert
@@ -106,4 +106,73 @@ test('applyBlocks: снимок не прочитался — ошибка у к
   const failed = await applyBlocks(client, 'N', ['B', 'A']);
   // assert
   assert.deepEqual(failed, [{ key: 'A', error: 'нет связи' }, { key: 'B', error: 'нет связи' }]);
+});
+
+test('taskPayload: в проекте без плана папка уходит как repo_path, ключ не передаётся', () => {
+  // arrange
+  const form = { key: 'FIX-9', title: ' Убрать эндпоинт ', description: 'd', kind: 'code', repo: ' ~/code/offers ', estimate: '', deps: [] };
+  // act
+  const p = taskPayload(form, { free: true, repos: ['billing-api'] });
+  // assert
+  assert.deepEqual(p, { title: 'Убрать эндпоинт', description: 'd', done_when: '', kind: 'code', repo_path: '~/code/offers', deps: [] });
+});
+
+test('taskPayload: в проекте без плана репозиторий проекта уходит как repo, приоритет передаётся', () => {
+  // arrange
+  const form = { title: 'x', kind: 'code', repo: 'billing-api', priority: 'high', deps: [] };
+  // act
+  const p = taskPayload(form, { free: true, repos: ['billing-api'] });
+  const none = taskPayload({ ...form, repo: ' ', priority: '' }, { free: true, repos: ['billing-api'] });
+  // assert
+  assert.equal(p.repo, 'billing-api');
+  assert.equal('repo_path' in p, false);
+  assert.equal('key' in p, false);
+  assert.equal(p.priority, 'high');
+  assert.equal(none.repo, '');
+  assert.equal('priority' in none, false);
+});
+
+test('validateNewTask: в проекте без плана ключ не проверяется, репозиторий — имя из проекта или путь', () => {
+  // arrange
+  const opts = { free: true, repos: ['billing-api'] };
+  // act + assert
+  assert.deepEqual(validateNewTask({ title: 'x', repo: '~/code/offers' }, [], opts), {});
+  assert.deepEqual(validateNewTask({ title: 'x', repo: 'billing-api' }, [], opts), {});
+  assert.deepEqual(validateNewTask({ title: 'x', repo: '' }, [], opts), {});
+  assert.deepEqual(validateNewTask({ title: 'x', repo: 'offers' }, [], opts), { repo: 'Выберите репозиторий проекта или укажите путь к папке (/… или ~/…)' });
+});
+
+test('repoSuggestions: сначала репозитории проекта, затем папки; папка не git недоступна для выбора', () => {
+  // arrange
+  const repos = [{ name: 'billing-api', path: '/w/billing-api' }, { name: 'offers-old', path: '/w/old' }];
+  const folders = [
+    { path: '~/w/offers', abs: '/h/w/offers', git: true, branch: 'main' },
+    { path: '~/w/off-tools', abs: '/h/w/off-tools', git: false, branch: null },
+  ];
+  // act
+  const list = repoSuggestions(repos, folders, 'off');
+  // assert
+  assert.deepEqual(list.map(o => [o.type, o.value, Boolean(o.disabled)]), [
+    ['repo', 'offers-old', false],
+    ['folder', '~/w/offers', false],
+    ['folder', '~/w/off-tools', true],
+  ]);
+  assert.equal(pickRepo(list[1]), '~/w/offers');
+  assert.equal(pickRepo(list[2]), null, '«не git» не выбирается');
+  assert.equal(pickRepo(list[0]), 'offers-old');
+});
+
+test('repoSuggestions: пустой ввод — все репозитории проекта; путь ищется и по папке репозитория', () => {
+  // arrange
+  const repos = [{ name: 'api', path: '/w/billing' }, { name: 'web', path: '/w/site' }];
+  // act + assert
+  assert.deepEqual(repoSuggestions(repos, [], '').map(o => o.value), ['api', 'web']);
+  assert.deepEqual(repoSuggestions(repos, [], '/w/bil').map(o => o.value), ['api']);
+});
+
+test('errorField: ошибки пути к репозиторию — под полем репозитория', () => {
+  // act + assert
+  assert.equal(errorField('Папка не является git-репозиторием: ~/x'), 'repo');
+  assert.equal(errorField('Папка репозитория не найдена: ~/x'), 'repo');
+  assert.equal(errorField('Репозиторий x не из настроек проекта: a, b'), 'repo');
 });
