@@ -295,6 +295,10 @@ CATALOG: Dict[str, tuple] = {
     "board.repo_path_missing": ("Repository folder not found: {path}", "Папка репозитория не найдена: {path}"),
     "board.repo_path_not_git": ("The folder is not a git repository: {path}",
                                 "Папка не является git-репозиторием: {path}"),
+    "board.project_agent_add_task": ("The project agent creates tasks only at the user's direct request; without it — "
+                                     "propose add_task",
+                                     "Агент проекта создаёт задачи только по прямой просьбе пользователя; без неё — "
+                                     "propose add_task"),
     "board.graph_via_proposals": ("The project agent changes the graph only through proposals",
                                   "Агент проекта меняет граф только через предложения"),
     "board.project_agent_status": ("The project agent cannot set status {status}: prepare a set_status proposal for "

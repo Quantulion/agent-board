@@ -437,9 +437,43 @@ def test_prompts__english_project__should_contain_no_cyrillic():
         task_system(config, CLI),
         task_prompt(task, config, Path("/repo/wt"), "main", CLI),
         project_prompt(config, snapshot, CLI),
+        project_prompt(ProjectConfig(slug="fix", title="Fixes", language="en", kind="free"), snapshot, CLI),
         wake_message(reasons, digest(events, limit=2), CLI),
     ]
 
     # assert
     for text in texts:
         assert not re.search("[А-Яа-яЁё]", text), text
+
+
+def test_project_prompt__free_project__own_template_without_plan():
+    # act
+    text = project_prompt(_config(kind="free", decomposition_rules="Одна задача — один репозиторий"),
+                          {"tasks": [], "proposals": []}, CLI)
+
+    # assert
+    assert "## Decomposition rules" not in text and "Одна задача — один репозиторий" not in text
+    assert "no plan" in text and "repo_path" in text
+    for section in ("## Reading the board", "## Talking", "## Preparing user actions", "## Priority",
+                    "## Rule violations", "## Project rules"):
+        assert section in text
+    assert RULES in text
+
+
+def test_project_prompt__project_agent_tasks_on__create_section_in_both_templates():
+    for kind in ("plan", "free"):
+        # act
+        text = project_prompt(_config(kind=kind), {"tasks": [], "proposals": []}, CLI)
+
+        # assert
+        assert "## Creating tasks: only on the user's direct request" in text
+        assert CLI + " add-task --json" in text and "propose add_task" in text
+
+
+def test_project_prompt__project_agent_tasks_off__no_create_section():
+    for kind in ("plan", "free"):
+        # act
+        text = project_prompt(_config(kind=kind, project_agent_tasks=False), {"tasks": [], "proposals": []}, CLI)
+
+        # assert
+        assert "## Creating tasks" not in text and "add-task --json" not in text

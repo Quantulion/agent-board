@@ -492,13 +492,13 @@ def test_ship_sends_request_as_user_without_actor_env(srv, capsys):
     assert [e["type"] for e in result["events"]] == ["ship_requested"]
 
 
-def test_add_task_by_project_agent_is_rejected(srv, capsys, monkeypatch):
+def test_add_task_by_project_agent_outside_user_turn_is_rejected(srv, capsys, monkeypatch):
     # arrange
     monkeypatch.setenv("AGENT_BOARD_ACTOR", "project_agent")
     # act
     code, _, err = run(capsys, "add-task", "--json", '{"key": "T-1", "title": "Первая"}')
     # assert
-    assert code == 1 and "предложения" in err
+    assert code == 1 and "по прямой просьбе пользователя" in err and "propose add_task" in err
     assert srv.board_for("pay").store.load_tasks() == {}
 
 

@@ -1955,3 +1955,61 @@ def test_proposal_add_task__repo_path_not_git__rejected(tmp_home, tmp_path):
     with pytest.raises(ValueError, match="не является git-репозиторием"):
         free_board().propose("add_task", {"task": {"key": "FIX-1", "title": "t", "repo_path": str(tmp_path / "plain")}},
                              "")
+
+
+# --- агент проекта создаёт задачи по прямой просьбе пользователя ---
+
+def user_turn_board(turn_by_user=True, project_agent_tasks=True):
+    store = ProjectStore("fix")
+    store.create(ProjectConfig(slug="fix", title="Fix", kind="free", stage="work",
+                               project_agent_tasks=project_agent_tasks))
+    board = Board(store, clock=lambda: NOW)
+    board.update_meta({"project_turn_by_user": turn_by_user})
+    return board
+
+
+def test_add_task__project_agent_in_user_turn__created_and_started(tmp_home):
+    # arrange
+    board = user_turn_board()
+
+    # act
+    ev = board.add_task(mk(""), "project_agent")
+
+    # assert
+    assert flat(ev) == [dict(type="task_added", key="FIX-1"), wake("FIX-1", "ready")]
+    assert board.store.load_tasks()["FIX-1"].created_by == "project_agent"
+
+
+def test_add_task__project_agent_outside_user_turn__forbidden_with_propose_hint(tmp_home):
+    # arrange
+    board = user_turn_board(turn_by_user=False)
+
+    # act / assert
+    with pytest.raises(PermissionError, match="propose add_task"):
+        board.add_task(mk(""), "project_agent")
+    assert board.store.load_tasks() == {}
+
+
+def test_add_task__project_agent_tasks_disabled__forbidden_even_in_user_turn(tmp_home):
+    # arrange
+    board = user_turn_board(project_agent_tasks=False)
+
+    # act / assert
+    with pytest.raises(PermissionError, match="propose add_task"):
+        board.add_task(mk(""), "project_agent")
+    assert board.store.load_tasks() == {}
+
+
+def test_add_task__by_user_or_applied_proposal__created_by_user(tmp_home):
+    # arrange
+    board = user_turn_board()
+    ev = board.propose("add_task", {"task": {"key": "FIX-2", "title": "t"}}, "")
+    pid = next(e.data["id"] for e in ev if e.type == "proposal_created")
+
+    # act
+    board.add_task(mk("FIX-1"), "user")
+    board.apply_proposal(pid)
+
+    # assert
+    tasks = board.store.load_tasks()
+    assert (tasks["FIX-1"].created_by, tasks["FIX-2"].created_by) == ("user", "user")

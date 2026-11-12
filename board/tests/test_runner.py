@@ -526,6 +526,50 @@ def test_work_stage_starts_project_agent_on_runner_start(make_project, start_ser
     assert store.load_config().project_session_id == calls[0]["session"]
 
 
+def test_free_project_without_session_not_woken_on_runner_start(make_project, start_server, calls):
+    # arrange
+    make_project(stage="work", kind="free")
+    # act
+    srv = start_server()
+    runner_sync(srv)
+    # assert
+    assert calls == []
+
+
+def test_project_turn_woken_by_user__may_create_task_flag_cleared_after(make_project, start_server, calls, tmp_path):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    gate = tmp_path / "gate"
+    task_json = json.dumps({"title": "по просьбе", "repo": "app"}, ensure_ascii=False)
+    # act
+    srv.board_for("pay").post_message("_project", "user", script({"cli": ["add-task", "--json", task_json]}, hold(gate)))
+    wait_events(store, "task_added")
+    during = store.load_meta().get("project_turn_by_user")
+    gate.write_text("go")
+    wait_events(store, "turn_finished", "_project")
+    runner_sync(srv)
+    # assert
+    assert during is True
+    assert store.load_meta().get("project_turn_by_user") is False
+    assert [t.created_by for t in store.load_tasks().values()] == ["project_agent"]
+
+
+def test_project_turn_woken_by_escalation__task_creation_refused(make_project, start_server, calls):
+    # arrange
+    store = make_project(project_session_id="p-1")
+    srv = start_server()
+    task_json = json.dumps({"title": "сам решил", "repo": "app"}, ensure_ascii=False)
+    request = script({"cli": ["add-task", "--json", task_json]})
+    # act
+    add(srv, "T-1", script({"cli": ["say", "_project", "--text", request]}))
+    failed = wait_events(store, "turn_failed", "_project")
+    # assert
+    assert "propose add_task" in failed[0].data["error"]
+    assert not store.load_meta().get("project_turn_by_user")
+    assert list(store.load_tasks()) == ["T-1"]
+
+
 def test_stage_work_wakes_project_agent_without_session(make_project, start_server, calls):
     # arrange
     store = make_project(stage="decomposition")

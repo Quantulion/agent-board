@@ -413,11 +413,13 @@ class Runner:
                 self._update_project_meta(board, {"project_agent_state": "idle", "project_wait_reason": ""})
             if meta.get("project_agent_state") == "running":
                 self._kill_leftover(board, PROJECT_THREAD, meta.get("project_turn_process"))
-                self._update_project_meta(board, {"project_agent_state": "idle", "project_turn_process": None})
+                self._update_project_meta(board, {"project_agent_state": "idle", "project_turn_process": None,
+                                                  "project_turn_by_user": False})
                 board.post_message(PROJECT_THREAD, "system", msg("run.interrupted"))
                 board.record("agent_wake", {"key": PROJECT_THREAD, "reason": "interrupted"})
                 woken.add(PROJECT_THREAD)
-            elif config.stage == "work" and not config.project_session_id:
+            elif config.stage == "work" and not config.project_session_id and config.kind != "free":
+                # агента проекта без плана будит только сообщение пользователя
                 self._wake(slug, PROJECT_THREAD, {"key": PROJECT_THREAD, "reason": "ready"})
                 woken.add(PROJECT_THREAD)
             for key, task in sorted(tasks.items()):
@@ -997,6 +999,10 @@ class Runner:
             harness.system_prompt = PROJECT_SYSTEM_PROMPT
         log, env = self._log(board, PROJECT_THREAD), self._env(board, PROJECT_THREAD)
         last_seq = board.store.last_seq()
+        # создавать задачи сам агент проекта может только в ходе, который разбудил пользователь;
+        # признак ставится до запуска агента, чтобы его первая же команда видела верное значение
+        by_user = any(r.get("reason") == "message" and r.get("by") == "user" for r in reasons)
+        board.update_meta({"project_turn_by_user": by_user})
         if config.project_session_id:
             since = int(board.store.load_meta().get("project_last_seen") or 0)
             message = prompts.wake_message(reasons, prompts.digest(board.store.read_events(since)), BOARD_CLI)
@@ -1103,7 +1109,7 @@ class Runner:
         if project:
             board.update_config({"project_session_id": session_id})
             self._update_project_meta(board, {"project_agent_state": state, "project_turn_error": error,
-                                              "project_turn_process": None})
+                                              "project_turn_process": None, "project_turn_by_user": False})
         elif k[1] in board.store.load_tasks():
             self._update_task_after_turn(board, k[1], state, error, session_id)
         board.record(event[0], event[1])

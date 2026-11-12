@@ -430,11 +430,14 @@ class Board:
             return []
 
     def add_task(self, task: Task, actor: str, repo_path: Optional[str] = None) -> List[Event]:
-        """Новую задачу добавляет только пользователь; агенты предлагают её через агента проекта (propose).
+        """Новую задачу добавляет пользователь, а агент проекта — только по прямой просьбе пользователя;
+        остальные агенты предлагают её через агента проекта (propose).
 
         repo_path — папка репозитория на диске в проекте без плана: репозитория ещё нет в проекте — он добавляется."""
-        self._reject_project_agent(actor)
-        self._require_user(actor, msg("board.add_task_user_only"))
+        if actor == "project_agent":
+            self._check_project_agent_tasks()
+        else:
+            self._require_user(actor, msg("board.add_task_user_only"))
         if repo_path is not None and task.repo:
             raise ValueError(msg("board.repo_and_repo_path"))
         # git и диск проверяются до блокировки доски
@@ -458,6 +461,7 @@ class Board:
                 self.store.save_config(config)
                 events.append(self._emit("config_changed", {"fields": ["repos"]}))
             task.status = Status.NOT_STARTED
+            task.created_by = actor
             task.updated_at = self._clock()
             self.store.save_task(task)
             events.append(self._emit("task_added", {"key": task.key}))
@@ -1175,6 +1179,11 @@ class Board:
         """Агент проекта меняет статусы и внешний блокер сам, только если пользователь включил это в настройках."""
         if not self.store.load_config().project_agent_status:
             self._reject_project_agent("project_agent")
+
+    def _check_project_agent_tasks(self) -> None:
+        """Агент проекта создаёт задачу сам, только если это разрешено настройкой и его ход разбудил пользователь."""
+        if not (self.store.load_config().project_agent_tasks and self.store.load_meta().get("project_turn_by_user")):
+            raise PermissionError(msg("board.project_agent_add_task"))
 
     @staticmethod
     def _reject_project_agent(actor: str) -> None:

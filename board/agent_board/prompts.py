@@ -102,17 +102,58 @@ def _status_section(config: ProjectConfig, board_cli: str) -> str:
     )
 
 
+def _create_section(config: ProjectConfig, board_cli: str) -> str:
+    if not config.project_agent_tasks:
+        return ""
+    if config.kind == "free":
+        repo = ('"repo_path": "<repository folder on disk>"',
+                "Pass `repo_path`, the repository folder you found on disk; a repository the project does not have "
+                "yet is added to it. For a repository already in the project you may pass `\"repo\": \"<name>\"` "
+                "instead.")
+    else:
+        repo = ('"repo": "<repository name>"', "`repo` is one of the project repositories.")
+    return (
+        "## Creating tasks: only on the user's direct request\n"
+        "The user allowed you to create tasks yourself, without a button, but only when the user directly asked for "
+        "that work in `_project` in the message that woke you this turn. The board enforces it: in any other turn "
+        "(an escalation, a board event, a rejected proposal) task creation is refused; there use `propose add_task`.\n"
+        "- `{cli} add-task --json '{{\"title\": \"...\", \"description\": \"...\", \"done_when\": \"...\", "
+        "{repo_field}, \"kind\": \"code\", \"deps\": []}}'` creates a task. Do not pass `key`: the board assigns "
+        "the next one and prints it. {repo_hint}\n"
+        "- If the request splits into several tasks that together cover exactly what was asked (for example, one "
+        "change needs edits in two repositories), create them all, give a later task its dependencies in `deps` "
+        "when you create it, and explain in `_project` why there are several tasks.\n"
+        "- Work the user did not ask for (\"while at it, rewrite the tests\", a bug noticed nearby) is only a "
+        "`propose add_task` with a reason, never a direct task.\n"
+        "- If you are not sure how to split the request (the options change the amount of work), ask the user in "
+        "`_project` with options and create nothing.\n"
+        "- After creating, answer in `_project`, in the user's language, with a block \"Created at your request\": "
+        "each task's key, title and repository, and which repositories were added to the project, with their "
+        "paths.\n"
+        "A new task without open dependencies starts at once.\n\n"
+    ).format(cli=board_cli, repo_field=repo[0], repo_hint=repo[1])
+
+
+def _repos_text(config: ProjectConfig) -> str:
+    lines = ["- %s: %s" % (r.get("name", ""), r.get("path", "")) for r in config.repos if isinstance(r, dict)]
+    return "\n".join(lines) if lines else _NONE
+
+
 def project_prompt(config: ProjectConfig, snapshot: dict, board_cli: str) -> str:
-    return _render("project.md", {
+    """Стартовый промпт агента проекта; у проекта без плана — свой шаблон без плана и декомпозиции."""
+    free = config.kind == "free"
+    return _render("project_free.md" if free else "project.md", {
         "board_cli": board_cli,
         "title": config.title,
         "slug": config.slug,
         "language": config.language,
         "project_brief": _or_none(config.project_brief),
         "decomposition_rules": _or_none(config.decomposition_rules),
+        "repos_text": _repos_text(config),
         "snapshot_text": _snapshot_text(snapshot),
         "agent_rules": _or_none(config.agent_rules),
         "status_section": _status_section(config, board_cli),
+        "create_section": _create_section(config, board_cli),
     })
 
 
