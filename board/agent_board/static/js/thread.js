@@ -93,6 +93,7 @@ export function createThread({
   const loadError = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const sendError = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const area = h('textarea', { placeholder, 'aria-label': placeholder });
+  const hintEl = h('span', { class: 'faint hint' }, hint || T.card.composerHint);
   area.value = drafts.get(draftKey);
   const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.send);
   // прервать идущий ход агента: видна, только пока агент этого треда работает
@@ -100,7 +101,7 @@ export function createThread({
   const interruptLabel = h('label', { class: 'toggle interrupt', title: T.card.interruptHint, hidden: true },
     interrupt, ' ' + T.card.interrupt);
   const composer = h('div', { class: 'composer' }, area,
-    h('div', { class: 'row' }, h('span', { class: 'faint hint' }, hint || T.card.composerHint),
+    h('div', { class: 'row' }, hintEl,
       h('div', { class: 'acts' }, interruptLabel, send)));
   area.addEventListener('input', () => drafts.set(draftKey, area.value));
   area.addEventListener('keydown', e => {
@@ -188,6 +189,7 @@ export function createThread({
     list: [loadError, list, empty, indicator.el],
     composer: [composer, sendError],
     area,
+    hint: hintEl,
     interrupt,
     // meta — {size, unread, agent}: число сообщений на сервере, непрочитанное и состояние агента
     // из threadAgentModel (без agent индикатора нет)

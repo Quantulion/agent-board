@@ -2,7 +2,7 @@
 import { h, icon, patchList } from './dom.js';
 import { layoutGraph, mountGraph } from './graph.js';
 import { sdot, statusOf, color } from './chips.js';
-import { connectionIndicator, paintStageAction, paintStepper } from './header.js';
+import { boardLayout, connectionIndicator, paintStageAction, paintStepper, projectSubtitle } from './header.js';
 import { STATUSES, T, statusInfo } from './i18n.js';
 import { openNewTaskDialog } from './newtask.js';
 import { requestMove, statusMenu } from './status.js';
@@ -67,6 +67,15 @@ export function columnsOf(snapshot, filters = {}) {
     const all = tasks.filter(t => statusOf(t) === s.id);
     return { id: s.id, label: s.label, color: s.color, total: all.length, tasks: all.filter(pass) };
   });
+}
+
+// Колонки, скрытые, пока в них нет задач: в проекте «Без плана» задачи сразу идут в работу,
+// и пустые «Не начата» и «Заблокирована» только занимают место.
+const HIDDEN_WHEN_EMPTY = ['not_started', 'blocked'];
+
+export function hiddenColumns(snapshot) {
+  if (!snapshot || !boardLayout(snapshot.config.kind).free) return new Set();
+  return new Set(HIDDEN_WHEN_EMPTY.filter(id => !snapshot.tasks.some(t => statusOf(t) === id)));
 }
 
 function proposalKey(p) {
@@ -200,6 +209,7 @@ export function cardModel(task, ctx) {
     unmerged: SHIPPED.has(status) && task.kind !== 'research' ? base : null,
     shipHint: shipHint(task, ctx.snapshot),
     tracker: trackerLink(task),
+    byAgent: task.created_by === 'project_agent',
   };
 }
 
@@ -275,7 +285,11 @@ export function mountBoard(root, store, ctx) {
   const cleanups = [];
   let painted = false;
 
+  // тип проекта приходит со снимком; до него доска выглядит как проект «По плану»
+  let kind = ctx.kind || 'plan';
   const title = h('h1', null, h('span', { class: 'skel title' }));
+  const crumb = h('a', { class: 'crumb', href: '#/', hidden: true }, '← ' + T.projects);
+  const kindChip = h('span', { class: 'kind free', hidden: true }, T.home.kind.free);
   const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
   // ревью отключено настройкой auto_approve: пометка видна всё время, пока режим включён
   const autoApprove = h('span', { class: 'chip q auto-approve', role: 'note', hidden: true, title: T.autoApproveHint },
@@ -289,6 +303,7 @@ export function mountBoard(root, store, ctx) {
   const restText = h('span', { class: 'muted' });
   const bar = h('div', { class: 'bar' });
   const pills = h('div', { class: 'pills' });
+  const ptxt = h('div', { class: 'ptxt' }, doneText, restText);
   const artifacts = h('nav', { class: 'artifacts', 'aria-label': T.planning });
   const attn = h('div', { class: 'attn', hidden: true });
   // ошибки чтения показываются над доской и исчезают со следующим удачным снимком
@@ -334,6 +349,7 @@ export function mountBoard(root, store, ctx) {
   const viewButtons = [['board', T.board, 'board'], ['graph', T.graph, 'graph']].map(([id, label, ic]) =>
     h('button', { type: 'button', 'data-view': id, 'aria-pressed': String(prefs.view === id), onclick: () => setView(id) }, icon(ic), label));
 
+  const viewSeg = h('div', { class: 'seg', role: 'group', 'aria-label': T.viewAria }, viewButtons);
   const panel = mountProjectPanel(ctx, store, projectBtn);
   const trackerSync = mountTrackerSync(ctx, store);
   const trackerStage = mountTrackerStage(ctx, store);
@@ -348,14 +364,14 @@ export function mountBoard(root, store, ctx) {
     h('header', { class: 'top' },
       h('div', { class: 'row1' },
         ctx.brand(), h('span', { class: 'divider' }),
-        h('div', { class: 'proj' }, h('div', { class: 'ptl' }, title, settingsButton(ctx), autoApprove), sub),
+        h('div', { class: 'proj' }, crumb, h('div', { class: 'ptl' }, title, kindChip, settingsButton(ctx), autoApprove), sub),
         stepper, stageGo, h('span', { class: 'spacer' }), trackerSync.el, sync, projectBtn, ctx.themeButton()),
       h('div', { class: 'row2' },
-        h('div', { class: 'progress' }, h('div', { class: 'ptxt' }, doneText, restText), bar, pills),
+        h('div', { class: 'progress' }, ptxt, bar, pills),
         artifacts),
       trackerStage.el, attn, banner),
     h('div', { class: 'toolbar' },
-      h('div', { class: 'seg', role: 'group', 'aria-label': T.viewAria }, viewButtons),
+      viewSeg,
       repoSelect, waveSelect, typeSeg,
       h('label', { class: 'toggle' }, attnToggle, ' ' + T.onlyMine),
       h('div', { class: 'search' }, icon('search'), search),
@@ -371,7 +387,7 @@ export function mountBoard(root, store, ctx) {
   }
 
   function paintView() {
-    const isGraph = prefs.view === 'graph';
+    const isGraph = prefs.view === 'graph' && boardLayout(kind).graph;
     cols.hidden = isGraph;
     graphView.hidden = !isGraph;
     viewButtons.forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === prefs.view)));
@@ -418,11 +434,11 @@ export function mountBoard(root, store, ctx) {
     typeSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.type === prefs.type)));
     const snap = store.get().snapshot;
     if (snap) paintColumns(snap, new Set());
-    if (snap && prefs.view === 'graph') paintGraph(snap);
+    if (snap && prefs.view === 'graph' && boardLayout(kind).graph) paintGraph(snap);
   }
 
   function jumpTo(id) {
-    if (prefs.view !== 'board') setView('board');
+    if (prefs.view !== 'board' && boardLayout(kind).graph) setView('board');
     if (collapse.isCollapsed(id)) collapse.set(id, false);
     const c = columns.get(id).col;
     c.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
@@ -474,6 +490,7 @@ export function mountBoard(root, store, ctx) {
         more),
       h('div', { class: 'ttl' }, m.title),
     ];
+    if (m.byAgent) parts.push(h('div', { class: 'by-agent' }, icon('spark'), T.createdByAgent));
     if (m.why) {
       parts.push(h('div', { class: 'why' },
         m.why.deps.length ? h('div', { class: 'w' }, icon('clock'), T.waits, m.why.deps.map(d =>
@@ -525,7 +542,7 @@ export function mountBoard(root, store, ctx) {
     if (entry.sig !== sig) {
       entry.sig = sig;
       entry.model = model;
-      entry.node.className = 'card st-' + model.status;
+      entry.node.className = 'card st-' + model.status + (model.byAgent ? ' by-pa' : '');
       entry.node.replaceChildren(...cardParts(model, entry.node));
       repainted.add(task.key);
     }
@@ -548,8 +565,10 @@ export function mountBoard(root, store, ctx) {
       repoBase: new Map((snap.config.repos || []).map(r => [r.name, r.base || DEFAULT_BASE])),
       config: snap.config,
     };
+    const hidden = hiddenColumns(snap);
     for (const c of columnsOf(snap, prefs)) {
       const ref = columns.get(c.id);
+      ref.col.hidden = hidden.has(c.id);
       ref.n.textContent = String(c.tasks.length);
       const node = t => ensureCard(t, modelCtx);
       patchList(ref.cb, c.tasks, 'key', node, (_, t) => node(t));
@@ -614,10 +633,23 @@ export function mountBoard(root, store, ctx) {
     const cfg = snap.config;
     document.title = cfg.title + ' — ' + T.appName;
     title.textContent = cfg.title;
-    sub.textContent = T.projectSub((cfg.repos || []).length, cfg.max_agents, cfg.chains);
+    sub.textContent = projectSubtitle(cfg);
     autoApprove.hidden = cfg.auto_approve !== true;
-    paintStepper(stepper, cfg);
-    paintStageAction(stageGo, ctx, snap);
+    const layout = boardLayout(kind);
+    crumb.hidden = !layout.free;
+    kindChip.hidden = !layout.free;
+    stepper.hidden = !layout.stepper;
+    ptxt.hidden = !layout.progress;
+    bar.hidden = !layout.progress;
+    artifacts.hidden = !layout.planning;
+    viewSeg.hidden = !layout.graph;
+    waveSelect.hidden = !layout.waves;
+    if (layout.stepper) {
+      paintStepper(stepper, cfg);
+      paintStageAction(stageGo, ctx, snap);
+    } else {
+      stageGo.hidden = true;
+    }
 
     const live = snap.tasks.filter(t => statusOf(t) !== 'cancelled');
     const count = id => live.filter(t => statusOf(t) === id).length;
@@ -742,11 +774,23 @@ export function mountBoard(root, store, ctx) {
     paintConnection(state);
     const snap = state.snapshot;
     if (!snap || (painted && !changes.snapshot)) return;
+    applyKind(snap.config.kind === 'free' ? 'free' : 'plan');
     paintHeader(snap);
     paintAttn(snap);
     paintColumns(snap, painted ? changes.tasks : new Set());
-    if (prefs.view === 'graph') paintGraph(snap);
+    if (prefs.view === 'graph' && boardLayout(kind).graph) paintGraph(snap);
     painted = true;
+  }
+
+  // Тип проекта стал известен: умолчания сворачивания колонок, панель и вид доски — по нему.
+  function applyKind(next) {
+    if (next === kind) return;
+    kind = next;
+    ctx.kind = kind;
+    Object.assign(prefs, loadPrefs(prefsKey, kind));
+    collapse.paint();
+    panel.setKind(kind);
+    paintView();
   }
 
   collapse.paint();

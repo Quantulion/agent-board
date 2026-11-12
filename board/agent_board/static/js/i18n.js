@@ -350,6 +350,10 @@ const RU = {
   projectSub: (repos, limit, chains) => repos + ' ' + plural(repos, ['репозиторий', 'репозитория', 'репозиториев'])
     + ' · лимит ' + limit + ' ' + plural(limit, ['агент', 'агента', 'агентов'])
     + ' · цепочки веток ' + (chains ? 'включены' : 'выключены'),
+  projectSubFree: (repos, limit, autoApprove) => repos + ' ' + plural(repos, ['репозиторий', 'репозитория', 'репозиториев'])
+    + ' · лимит ' + limit + ' ' + plural(limit, ['агент', 'агента', 'агентов'])
+    + ' · ' + (autoApprove ? 'ревью выключено' : 'ревью перед коммитом'),
+  createdByAgent: 'Создана агентом проекта по вашей просьбе',
   statusUnchanged: 'Статус не изменился.',
   noReaction: 'Других изменений нет.',
   moveFailed: key => 'Не удалось перенести ' + key + ': ',
@@ -456,6 +460,8 @@ const RU = {
     parked: 'Агенты переписываются без участия пользователя — остановлено. Напишите агенту проекта, чтобы он продолжил.',
     composer: 'Спросить агента проекта…',
     composerHint: 'Агент только предлагает изменения, применяете их вы',
+    composerFree: 'Опишите, что сделать, — агент заведёт задачи…',
+    composerHintFree: 'По вашей просьбе агент сам заводит задачи, остальное — предлагает',
     history: n => 'Обработанные · ' + n,
   },
   proposal: {
@@ -986,6 +992,10 @@ const EN = {
   projectSub: (repos, limit, chains) => count(repos, 'repository', 'repositories')
     + ' · limit ' + count(limit, 'agent')
     + ' · branch chains ' + (chains ? 'on' : 'off'),
+  projectSubFree: (repos, limit, autoApprove) => count(repos, 'repository', 'repositories')
+    + ' · limit ' + count(limit, 'agent')
+    + ' · ' + (autoApprove ? 'review off' : 'review before commit'),
+  createdByAgent: 'Created by the project agent at your request',
   statusUnchanged: 'Status did not change.',
   noReaction: 'No other changes.',
   moveFailed: key => 'Failed to move ' + key + ': ',
@@ -1089,6 +1099,8 @@ const EN = {
     parked: 'Agents are messaging each other without the user — stopped. Write to the project agent to let it continue.',
     composer: 'Ask the project agent…',
     composerHint: 'The agent only proposes changes; you apply them',
+    composerFree: 'Describe what to do — the agent will create tasks…',
+    composerHintFree: 'The agent creates tasks when you ask; anything else it proposes',
     history: n => 'Processed · ' + n,
   },
   proposal: {

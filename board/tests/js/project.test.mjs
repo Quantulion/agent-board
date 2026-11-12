@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { agentStateLine, describeFor, describeProposal, partsText, proposalOutcome, proposalSignature, proposalsTouching } from '../../agent_board/static/js/project.js';
+import { agentStateLine, dockKey, dockOpen, panelTexts, describeFor, describeProposal, partsText, proposalOutcome, proposalSignature, proposalsTouching } from '../../agent_board/static/js/project.js';
+import { installFakeStorage } from './fake-dom.mjs';
 
 const tasks = new Map([
   ['PAY-104', { key: 'PAY-104', title: 'Переливка истории', status: 'in_progress' }],
@@ -229,4 +230,31 @@ test('proposalOutcome: итог действия пользователя не �
   assert.equal(proposalOutcome({ ...p, status: 'applied' }).text, 'Применено');
   assert.equal(proposalOutcome({ ...p, status: 'rejected' }).text, 'Отклонено — ничего не изменилось');
   assert.equal(proposalOutcome({ ...p, kind: 'add_task', status: 'applied' }).text, 'Применено — граф обновлён');
+});
+
+test('dockOpen: в «Без плана» панель открыта по умолчанию и запоминается для проекта, в «По плану» — как раньше', () => {
+  // arrange
+  const storage = installFakeStorage();
+  storage.setItem('ab-dock', '0');
+
+  // act + assert
+  assert.equal(dockKey('free', 'notes'), 'ab-dock:notes');
+  assert.equal(dockKey('plan', 'pay'), 'ab-dock');
+  assert.equal(dockOpen('free', 'notes'), true, 'закрытая в другом проекте панель не мешает');
+  assert.equal(dockOpen('plan', 'pay'), false);
+  storage.setItem('ab-dock:notes', '0');
+  assert.equal(dockOpen('free', 'notes'), false, 'закрытие запоминается');
+  storage.removeItem('ab-dock');
+  assert.equal(dockOpen('plan', 'pay'), true);
+});
+
+test('panelTexts: в «Без плана» поле ввода зовёт описать работу для новых задач', () => {
+  // act
+  const free = panelTexts('free');
+  const plan = panelTexts('plan');
+
+  // assert
+  assert.equal(free.placeholder, 'Опишите, что сделать, — агент заведёт задачи…');
+  assert.equal(plan.placeholder, 'Спросить агента проекта…');
+  assert.notEqual(free.hint, plan.hint);
 });

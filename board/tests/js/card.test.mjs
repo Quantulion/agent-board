@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { authorOf, createDrafts, formatTime, initialTab, tabsFor } from '../../agent_board/static/js/card.js';
+import { authorOf, createDrafts, formatTime, initialTab, originNote, tabsFor } from '../../agent_board/static/js/card.js';
 import { diffFiles, diffLines, reportHref } from '../../agent_board/static/js/changes.js';
 
 function task(extra = {}) {
@@ -138,4 +138,11 @@ test('reportHref ведёт отчёт через file, относительны
   assert.equal(reportHref('pay', task({ report: 'r.md' })), '/api/p/pay/file?path=r.md');
   assert.equal(reportHref('pay', task({ report: 'https://wiki/x' })), 'https://wiki/x');
   assert.equal(reportHref('pay', task()), null);
+});
+
+test('originNote: подпись у задачи, созданной агентом проекта по просьбе пользователя', () => {
+  // act + assert
+  assert.equal(originNote({ created_by: 'project_agent' }), 'Создана агентом проекта по вашей просьбе');
+  assert.equal(originNote({ created_by: 'user' }), null);
+  assert.equal(originNote({}), null);
 });

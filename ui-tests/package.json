@@ -18,9 +18,10 @@
     "slot": "node slot.mjs && node retry.mjs",
     "thread-agent": "node thread-agent.mjs",
     "interrupt": "node interrupt.mjs",
-    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs && node retry.mjs && node thread-agent.mjs && node proposals.mjs && node interrupt.mjs && node home.mjs",
+    "test": "node skeleton.mjs && node board.mjs && node card.mjs && node graph.mjs && node decomposition.mjs && node smoke.mjs && node integrations.mjs && node english.mjs && node settings.mjs && node slot.mjs && node retry.mjs && node thread-agent.mjs && node proposals.mjs && node interrupt.mjs && node home.mjs && node free.mjs",
     "readme-media": "node readme-media.mjs && python3 frames_to_gif.py out/readme/frames ../docs/media/demo.gif",
-    "home": "node home.mjs"
+    "home": "node home.mjs",
+    "free": "node free.mjs"
   },
   "devDependencies": {
     "puppeteer": "^25.16.0"
