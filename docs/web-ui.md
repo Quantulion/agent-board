@@ -6,7 +6,24 @@ automatic themes. It is plain ES modules served by the board, with no build step
 
 ## Screens
 
-- **Projects** (`#/`) — the list of projects.
+- **Projects** (`#/`) — the home screen, a board of projects. The header shows "N active · M agents working of
+  the limit · K waiting for a slot" (the limit is the largest `global_max_agents` among projects), the connection
+  indicator and "New project" (for now it shows the `agent-board init <key> --kind free` command). A common
+  "Waiting for you" strip collects items from all projects, each marked with the project key; a click opens the card
+  or the project board. Projects move between columns by themselves:
+  - "Waiting for you" — something in the project waits for you (see "Waiting for you" below);
+  - "Agents working" — nothing waits for you, but at least one agent (a task's or the project agent) works or waits
+    for a slot;
+  - "Quiet" — neither;
+  - "Archive" — collapsed by default: projects archived from the card's "⋯" menu ("Archive" / "Restore from
+    archive", the `archived` setting), and planned projects at the `done` stage. An archived project opens and works
+    as usual. If something in it waits for you, the project stays in the archive, its items appear in the common
+    strip and the collapsed "Archive" column shows their number.
+
+  A project card shows the key (the prefix of its task keys), the type ("No plan" or "Planned" with the stage),
+  working agents, task counts, a progress bar and "X of Y done" for planned projects, chips for questions, review,
+  errors and proposals, and up to two repositories with "+N". A click opens the project board. Any column collapses
+  and expands; the state is stored in `localStorage` (`ab-home`).
 - **Board** (`#/p/<slug>`) — columns by status, filters (repository, kind, search), the project stage bar with the
   next step ("Start work" at the `tracker` stage, "Finish project" when all tasks are done), progress and the
   connection indicator. The "Planning" row holds the project links and the decomposition page. Change a status by
@@ -27,7 +44,8 @@ automatic themes. It is plain ES modules served by the board, with no build step
   tasks go to the project agent.
 - **Project settings** — the gear next to the project name, see [Configuration](configuration.md#changing-settings).
 - **"Waiting for you"** — a strip above the board: open questions, proposals, tasks in review, agent errors, parked
-  agents, external blockers, decomposition rule violations. A click opens the relevant card or page.
+  agents, external blockers, decomposition rule violations, an unread reply of the project agent in the "Project"
+  thread (it goes away once you open the thread). A click opens the relevant card or page.
 
 ## Threads
 
@@ -52,6 +70,9 @@ tab reconnects by itself (`?since=<last event>`), re-reads the snapshot and retu
 A failed snapshot read is retried after 1, 2, 4 and 8 s; a hung request is aborted after 15 s. If the server answers
 "no access" (the cookie expired), reconnecting stops: open the link from `serve` again. Re-rendering keeps the open
 card and tab, panel width, scroll, drafts and focus.
+
+The home screen listens to the common stream `/api/stream` and re-reads the snapshot of the project that changed
+(several events in a row are merged), so cards move between columns without reloading.
 
 The panel width, the board view (columns or graph), the filters and collapsed columns (per project), the collapsed
 "Project" panel and the theme are stored in `localStorage`; message drafts in `sessionStorage`.

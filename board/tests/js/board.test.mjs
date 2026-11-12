@@ -129,6 +129,12 @@ test('waitingForYou на стадии разбивки показывает на
   assert.deepEqual(waitingForYou(null), []);
 });
 
+test('waitingForYou: непрочитанный ответ агента проекта — пункт «агент проекта ответил»', () => {
+  const s = { ...snap([]), project_unread: 2 };
+  assert.deepEqual(waitingForYou(s), [{ kind: 'pa_reply', count: 2, open: { type: 'project' } }]);
+  assert.deepEqual(waitingForYou(snap([])), [], 'прочитанный тред не ждёт пользователя');
+});
+
 test('whyBlocked: открытые зависимости со статусами и внешний блокер', () => {
   const tasks = [
     task('B-1', { status: 'in_progress' }),

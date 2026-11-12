@@ -56,9 +56,9 @@ try {
     await page.screenshot({ path: path.join(out, 'english-' + name + '.png') });
   };
 
-  // список проектов: язык берётся из проектов
+  // главный экран: язык берётся из проектов
   await page.goto(env.url.replace(/#.*$/, '') + '#/', { waitUntil: 'domcontentloaded' });
-  await page.waitForFunction(() => document.querySelector('.scr') && document.documentElement.lang === 'en', { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelector('.pcard') && document.documentElement.lang === 'en', { timeout: 10000 });
   await check('projects');
 
   // разбивка
