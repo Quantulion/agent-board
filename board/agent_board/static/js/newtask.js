@@ -1,4 +1,5 @@
 // Модальное окно «Новая задача»: поля задачи, зависимости с поиском, проверка до отправки и ошибки сервера под полями.
+import { api } from './api.js';
 import { h, icon } from './dom.js';
 import { spill, statusOf } from './chips.js';
 import { STATUSES, T } from './i18n.js';
@@ -40,11 +41,18 @@ export function suggestKey(keys, slug) {
   return prefix + String(n).padStart(width, '0');
 }
 
+// Ввод в поле репозитория — путь к папке на диске, а не имя репозитория проекта.
+const isPath = text => text.startsWith('/') || text.startsWith('~');
+
 // Ошибки полей формы до отправки; пустой объект — можно отправлять.
-export function validateNewTask(form, existingKeys) {
+// В проекте без плана (free) ключ выдаёт доска, а репозиторий — имя из проекта или путь к папке.
+export function validateNewTask(form, existingKeys, { free = false, repos = [] } = {}) {
   const errors = {};
   const key = String(form.key || '').trim();
-  if (!key) errors.key = T.nt.needKey;
+  if (free) {
+    const repo = String(form.repo || '').trim();
+    if (repo && !isPath(repo) && !repos.includes(repo)) errors.repo = T.nt.badRepo;
+  } else if (!key) errors.key = T.nt.needKey;
   else if (!KEY_RE.test(key) || key.includes('..')) errors.key = T.nt.badKey;
   else {
     const clash = existingKeys.find(k => k.toLowerCase() === key.toLowerCase());
@@ -59,18 +67,37 @@ export function validateNewTask(form, existingKeys) {
   return errors;
 }
 
-export function taskPayload(form) {
+export function taskPayload(form, { free = false } = {}) {
   const task = {
-    key: String(form.key).trim(),
     title: String(form.title).trim(),
     description: String(form.description || '').trim(),
     done_when: String(form.done_when || '').trim(),
     kind: form.kind === 'research' ? 'research' : 'code',
-    repo: form.repo || '',
   };
+  const repo = String(form.repo || '').trim();
+  if (!free) task.key = String(form.key).trim();
+  if (free && isPath(repo)) task.repo_path = repo;
+  else task.repo = repo;
+  if (form.priority) task.priority = form.priority;
   if (String(form.estimate ?? '').trim()) task.estimate = parseEstimate(form.estimate);
   task.deps = [...(form.deps || [])];
   return task;
+}
+
+// Подсказки поля репозитория: сначала репозитории проекта, подходящие под ввод, затем папки с сервера.
+// Папка не git недоступна для выбора.
+export function repoSuggestions(repos, folders, text) {
+  const q = String(text || '').trim().toLowerCase();
+  const own = repos
+    .filter(r => !q || r.name.toLowerCase().includes(q) || String(r.path || '').toLowerCase().startsWith(q))
+    .map(r => ({ type: 'repo', value: r.name, path: r.path || '' }));
+  const dirs = folders.map(f => ({ type: 'folder', value: f.path, git: f.git, branch: f.branch || null, disabled: !f.git }));
+  return [...own, ...dirs];
+}
+
+// Текст, который подставится в поле при выборе подсказки; null — подсказку выбрать нельзя.
+export function pickRepo(option) {
+  return option && !option.disabled ? option.value : null;
 }
 
 // Новые зависимости задач, которые новая задача newKey должна блокировать (неизвестные и уже ждущие пропускаются).
@@ -109,6 +136,7 @@ export function errorField(message) {
   if (/Ключ|идентификатор|уже существует/i.test(m)) return 'key';
   if (/Зависим|цикл|deps/i.test(m)) return 'deps';
   if (/Оценка/i.test(m)) return 'estimate';
+  if (/репозитор/i.test(m)) return 'repo';
   if (/Вид задачи/i.test(m)) return 'kind';
   if (/Заголов|title/i.test(m)) return 'title';
   return null;
@@ -162,12 +190,151 @@ function taskPicker(id, label, tasks, onChange) {
   return { picked, search, picker };
 }
 
+const SUGGEST_DELAY_MS = 200;
+
+// Поле репозитория с подсказками: репозитории проекта и папки на машине доски. Список живёт поверх окна,
+// чтобы прокрутка окна его не обрезала.
+function repoCombo(repos, fsClient) {
+  const input = h('input', { type: 'text', id: 'nt-repo', class: 'mono', autocomplete: 'off', spellcheck: 'false',
+    placeholder: T.nt.repoPh, role: 'combobox', 'aria-autocomplete': 'list', 'aria-expanded': 'false', 'aria-controls': 'nt-repo-list' });
+  const list = h('div', { class: 'repo-dd', id: 'nt-repo-list', role: 'listbox', hidden: true });
+  let options = [];
+  let active = -1;
+  let folders = [];
+  let timer = null;
+  let inflight = null;
+
+  const hide = () => {
+    list.hidden = true;
+    input.setAttribute('aria-expanded', 'false');
+    active = -1;
+  };
+  // список шириной во весь ряд полей: пути длинные
+  const place = () => {
+    const r = input.getBoundingClientRect();
+    const row = (input.closest('.two') || input).getBoundingClientRect();
+    list.style.setProperty('left', r.left + 'px');
+    list.style.setProperty('top', r.bottom + 4 + 'px');
+    list.style.setProperty('width', Math.max(row.right - r.left, 320) + 'px');
+  };
+  // введённая часть имени папки выделяется, как в макете
+  const label = (value, text) => {
+    const cut = text.lastIndexOf('/') + 1;
+    if (!isPath(text) || !value.toLowerCase().startsWith(text.toLowerCase()) || cut === 0) return value;
+    return [value.slice(0, cut), h('b', null, value.slice(cut, text.length)), value.slice(text.length)];
+  };
+  function render() {
+    const text = input.value.trim();
+    options = repoSuggestions(repos, folders, text);
+    if (!options.length) return hide();
+    active = Math.min(Math.max(active, 0), options.length - 1);
+    if (options[active].disabled) active = options.findIndex(o => !o.disabled);
+    const rows = [];
+    options.forEach((o, i) => {
+      if (i === 0 && o.type === 'repo') rows.push(h('div', { class: 'g' }, T.nt.repoGroupOwn));
+      if (o.type === 'folder' && (i === 0 || options[i - 1].type !== 'folder')) rows.push(h('div', { class: 'g' }, T.nt.repoGroupFolders));
+      const tag = o.type === 'repo' ? h('span', { class: 'tag' }, o.path)
+        : h('span', { class: 'tag ' + (o.git ? 'ok' : 'no') }, o.git ? T.nt.repoGit(o.branch) : T.nt.repoNotGit);
+      rows.push(h('div', { class: 'o' + (i === active ? ' hl' : ''), role: 'option', 'data-i': String(i),
+        'aria-selected': String(i === active), 'aria-disabled': o.disabled ? 'true' : null,
+        // фокус остаётся в поле ввода
+        onmousedown: e => e.preventDefault(),
+        onclick: () => choose(o) },
+      h('span', { class: 'p', title: o.value }, h('bdi', null, o.type === 'repo' ? o.value : label(o.value, text))), tag));
+    });
+    list.replaceChildren(...rows);
+    place();
+    list.hidden = false;
+    input.setAttribute('aria-expanded', 'true');
+  }
+  function choose(o) {
+    const value = pickRepo(o);
+    if (value === null) return;
+    input.value = value;
+    input.dispatchEvent(new Event('input'));
+    clearTimeout(timer);
+    folders = [];
+    hide();
+  }
+  // папки запрашиваются с задержкой, ответ на устаревший ввод отбрасывается
+  function fetchFolders() {
+    clearTimeout(timer);
+    if (inflight) inflight.abort();
+    const text = input.value.trim();
+    if (!isPath(text)) {
+      folders = [];
+      return;
+    }
+    timer = setTimeout(() => {
+      const ctl = new AbortController();
+      inflight = ctl;
+      fsClient.get('/fs/complete?path=' + encodeURIComponent(text), { signal: ctl.signal })
+        .then(res => {
+          if (ctl.signal.aborted || input.value.trim() !== text) return;
+          folders = (res && res.items) || [];
+          if (document.activeElement === input) render();
+        })
+        .catch(() => {});
+    }, SUGGEST_DELAY_MS);
+  }
+  input.addEventListener('input', e => {
+    if (!e.isTrusted) return;
+    active = 0;
+    folders = folders.filter(f => f.path.toLowerCase().startsWith(input.value.trim().toLowerCase()));
+    fetchFolders();
+    render();
+  });
+  input.addEventListener('focus', () => render());
+  input.addEventListener('blur', () => hide());
+  const move = step => {
+    for (let i = active + step; i >= 0 && i < options.length; i += step) {
+      if (!options[i].disabled) {
+        active = i;
+        return render();
+      }
+    }
+  };
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' && list.hidden) {
+      e.preventDefault();
+      render();
+    } else if (list.hidden) {
+      return;
+    } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      move(e.key === 'ArrowDown' ? 1 : -1);
+    } else if (e.key === 'Enter' && options[active]) {
+      e.preventDefault();
+      choose(options[active]);
+    }
+  });
+  // Escape при открытом списке закрывает только список, а не окно
+  const onEscape = e => {
+    if (e.key !== 'Escape' || list.hidden) return;
+    e.stopPropagation();
+    e.preventDefault();
+    hide();
+  };
+  window.addEventListener('keydown', onEscape, true);
+  window.addEventListener('resize', hide);
+  const dispose = () => {
+    clearTimeout(timer);
+    if (inflight) inflight.abort();
+    window.removeEventListener('keydown', onEscape, true);
+    window.removeEventListener('resize', hide);
+    list.remove();
+  };
+  return { input, list, hide, place, dispose };
+}
+
 export function openNewTaskDialog(ctx) {
   const snap = ctx.store.get().snapshot;
   if (!snap) return null;
   const tasks = [...snap.tasks].sort((a, b) => KEYS.compare(a.key, b.key));
   const keys = tasks.map(t => t.key);
-  const repos = (snap.config.repos || []).map(r => r.name);
+  const free = snap.config.kind === 'free';
+  const projectRepos = (snap.config.repos || []).filter(r => r && typeof r.name === 'string');
+  const repos = projectRepos.map(r => r.name);
   const errs = {};
   const err = name => {
     errs[name] = h('div', { class: 'ferr', role: 'alert', hidden: true });
@@ -181,9 +348,18 @@ export function openNewTaskDialog(ctx) {
   const descInput = h('textarea', { id: 'nt-description', placeholder: T.nt.descriptionPh });
   const doneInput = h('input', { type: 'text', id: 'nt-done_when', placeholder: T.nt.doneWhenPh });
   const estInput = h('input', { type: 'text', id: 'nt-estimate', inputmode: 'decimal', placeholder: T.nt.estimatePh });
-  const repoSelect = h('select', { id: 'nt-repo' },
+  const combo = free ? repoCombo(projectRepos, ctx.fsClient || api(null)) : null;
+  const repoSelect = free ? combo.input : h('select', { id: 'nt-repo' },
     repos.length ? null : h('option', { value: '' }, T.nt.noRepo),
     repos.map(r => h('option', { value: r }, r)));
+  let priority = 'normal';
+  const prioSeg = h('div', { class: 'seg', role: 'group', 'aria-label': T.nt.priority },
+    ['high', 'normal', 'low'].map(id =>
+      h('button', { type: 'button', 'data-v': id, 'aria-pressed': String(id === priority), onclick: () => setPriority(id) }, T.nt.priorities[id])));
+  function setPriority(id) {
+    priority = id;
+    prioSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === id)));
+  }
   let kind = 'code';
   const kindHint = h('span', { class: 'hint' }, T.nt.kindCodeHint);
   const kindSeg = h('div', { class: 'seg', role: 'group', 'aria-label': T.nt.kind },
@@ -213,20 +389,38 @@ export function openNewTaskDialog(ctx) {
   preview();
 
   const general = h('div', { class: 'ferr', role: 'alert', hidden: true });
-  const createBtn = h('button', { class: 'btn primary', type: 'button', onclick: submit }, T.nt.create);
-  const body = [
+  const createBtn = h('button', { class: 'btn primary', type: 'button', 'data-action': 'create-task', onclick: submit },
+    free ? T.nt.createAndStart : T.nt.create);
+  const depsField = h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.deps), depsPick.search, depsPick.picker, err('deps'));
+  const blocksField = h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.blocks), blocksPick.search, blocksPick.picker,
+    h('span', { class: 'hint' }, T.nt.blocksHint), err('blocks'));
+  const kindField = h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.kind), kindSeg, kindHint, err('kind'));
+  // в проекте без плана ключ выдаёт доска, а редкие поля убраны под «Дополнительно»
+  const body = free ? [
+    field('nt-title', T.nt.title, titleInput),
+    field('nt-description', T.nt.whatToDo, descInput),
+    h('div', { class: 'two' }, field('nt-repo', T.nt.repo, repoSelect, h('span', { class: 'hint' }, T.nt.repoHint)), kindField),
+    h('details', { class: 'np-adv nt-adv' },
+      h('summary', null, T.nt.advanced),
+      h('div', { class: 'np-adv-body' },
+        field('nt-done_when', T.nt.doneWhen, doneInput),
+        h('div', { class: 'two' },
+          h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.priority), prioSeg),
+          field('nt-estimate', T.nt.estimate, estInput)),
+        depsField,
+        blocksField)),
+    prev,
+    general,
+  ] : [
     field('nt-title', T.nt.title, titleInput),
     field('nt-description', T.nt.description, descInput),
     field('nt-done_when', T.nt.doneWhen, doneInput),
-    h('div', { class: 'two' },
-      h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.kind), kindSeg, kindHint, err('kind')),
-      field('nt-repo', T.nt.repo, repoSelect)),
+    h('div', { class: 'two' }, kindField, field('nt-repo', T.nt.repo, repoSelect)),
     h('div', { class: 'two' },
       field('nt-key', T.nt.key, keyInput, h('span', { class: 'hint' }, T.nt.keyHint)),
       field('nt-estimate', T.nt.estimate, estInput)),
-    h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.deps), depsPick.search, depsPick.picker, err('deps')),
-    h('div', { class: 'field' }, h('span', { class: 'lbl' }, T.nt.blocks), blocksPick.search, blocksPick.picker,
-      h('span', { class: 'hint' }, T.nt.blocksHint), err('blocks')),
+    depsField,
+    blocksField,
     prev,
     general,
   ];
@@ -234,10 +428,16 @@ export function openNewTaskDialog(ctx) {
     h('span', { class: 'muted foot-note' }, T.nt.footer),
     h('button', { class: 'btn', type: 'button', onclick: () => close() }, T.cancel),
     createBtn,
-  ]);
+  ], () => { if (combo) combo.dispose(); });
   modal.classList.add('newtask');
+  if (combo) {
+    modal.parentElement.append(combo.list);
+    // список следует за полем при прокрутке окна
+    modal.addEventListener('scroll', () => { if (!combo.list.hidden) combo.place(); });
+  }
 
-  const inputs = { key: keyInput, title: titleInput, estimate: estInput };
+  const inputs = free ? { title: titleInput, repo: repoSelect, estimate: estInput } : { key: keyInput, title: titleInput, estimate: estInput };
+  const opts = { free, repos };
   function showErrors(errors) {
     for (const [name, node] of Object.entries(errs)) {
       node.textContent = errors[name] || '';
@@ -262,14 +462,17 @@ export function openNewTaskDialog(ctx) {
     const form = {
       key: keyInput.value, title: titleInput.value, description: descInput.value, done_when: doneInput.value,
       kind, repo: repoSelect.value, estimate: estInput.value, deps: [...picked].sort(KEYS.compare),
-      blocks: [...blocksPick.picked].sort(KEYS.compare),
+      blocks: [...blocksPick.picked].sort(KEYS.compare), priority: free ? priority : undefined,
     };
-    const errors = validateNewTask(form, keys);
+    const errors = validateNewTask(form, keys, opts);
+    // ошибка в свёрнутом блоке не должна остаться незамеченной
+    const adv = modal.querySelector('.nt-adv');
+    if (adv && ['estimate', 'deps', 'blocks'].some(n => errors[n])) adv.open = true;
     showErrors(errors);
     if (Object.keys(errors).length) return;
     sending = true;
     createBtn.disabled = true;
-    ctx.client.post('/tasks', { task: taskPayload(form), actor: 'user' })
+    ctx.client.post('/tasks', { task: taskPayload(form, opts), actor: 'user' })
       .then(res => {
         const key = (res && res.key) || form.key.trim();
         close();
@@ -291,7 +494,10 @@ export function openNewTaskDialog(ctx) {
       })
       .catch(e => {
         const message = (e && e.message) || String(e);
-        showErrors({ [errorField(message) || 'general']: message });
+        const at = errorField(message);
+        // у ключа в проекте без плана поля нет — такая ошибка показывается общей
+        showErrors({ [at && errs[at] ? at : 'general']: message });
+        if (adv && ['estimate', 'deps'].includes(at)) adv.open = true;
       })
       .finally(() => {
         sending = false;

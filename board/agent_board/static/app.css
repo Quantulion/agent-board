@@ -938,3 +938,18 @@ span.chip.trk { font-family: var(--mono); font-size: 11px; }
 .modal.newproject input.num { width: 120px; }
 @media (max-width: 900px) { .modal.newproject .np-names, .ptypes { grid-template-columns: 1fr; } }
 .modal.newproject #np-key { text-transform: uppercase; }
+
+/* ===== Окно «Новая задача» в проекте без плана (макет free-board.html) ===== */
+.repo-dd { position: fixed; z-index: 45; max-height: 280px; overflow: auto; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 10px; box-shadow: var(--shadow-2); padding: 4px; font-size: 13px; }
+.repo-dd .g { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .04em; padding: 6px 8px 2px; }
+.repo-dd .o { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; cursor: pointer; }
+.repo-dd .o.hl { background: var(--surface-2); }
+.repo-dd .o[aria-disabled="true"] { cursor: not-allowed; opacity: .6; }
+.repo-dd .o .p { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; color: var(--fg-2); }
+.repo-dd .o .p b { color: var(--fg); }
+/* длинный путь обрезается с начала: важнее конец */
+.repo-dd .o .p { direction: rtl; text-align: left; }
+.repo-dd .o .p bdi { direction: ltr; }
+.repo-dd .o .tag { flex: none; white-space: nowrap; margin-left: auto; font-size: 11px; color: var(--muted); }
+.repo-dd .o .tag.ok { color: var(--ok-fg); }
+.repo-dd .o .tag.no { color: var(--faint); }

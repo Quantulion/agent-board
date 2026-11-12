@@ -49,7 +49,13 @@ automatic themes. It is plain ES modules served by the board, with no build step
   hidden while empty. The "Project" panel is open by default with the hint "Describe what to do — the agent will
   create tasks…"; closing it is remembered for this project only. A task the project agent created at your request is
   signed "Created by the project agent at your request" on its card and in the task card, and a new one is briefly
-  highlighted.
+  highlighted. "New task" here asks for the title, "What to do", the repository and the kind; the key is assigned
+  by the board, and "Done when", dependencies, priority and estimate are under "More". The "Repository" field
+  suggests the project repositories first, then folders on the board's machine for the typed path (`/…` or `~/…`):
+  a git folder shows "git · <default branch>", a plain folder shows "not git" and cannot be picked. A project
+  repository is sent as `repo`, a folder as `repo_path`: a new folder is added to the project repositories (see
+  [Repository by path](api.md#repository-by-path)). The button is "Create and start" — a task without blockers starts
+  as soon as an agent slot is free. In a project with a plan the dialog is unchanged.
 - **Graph** — the same tasks as a dependency graph ("Board / Graph" in the header), with the critical path
   highlighted.
 - **Task card** (`#/p/<slug>?task=<KEY>`) — a panel on the right with the tabs "Overview", "Thread", "Review" and
