@@ -15,7 +15,9 @@ go backwards.
   before start (within limits), and a project agent without a session starts.
 - **done** — the project is finished ("Finish project" appears when every task is done or cancelled).
 
-The project agent works at any stage.
+The project agent works at any stage. In a project without a plan (`kind: free`) there are no stages to switch: it
+starts at `work`, and the board does not start its project agent without a session on a server start — only a user
+message in the "Project" thread does.
 
 ## Tasks and statuses
 
@@ -152,7 +154,7 @@ Details:
 ## Proposals
 
 The project agent cannot change the graph or act for the user (except the statuses allowed by
-`project_agent_status`); it prepares a proposal with `agent-board propose <kind> --json '{...}' [--reason R]`, and
+`project_agent_status` and [tasks the user asked for](#tasks-from-the-project-agent)); it prepares a proposal with `agent-board propose <kind> --json '{...}' [--reason R]`, and
 the user applies it with one button in the "Project" panel or rejects it (the project agent is woken).
 
 | Kind | Payload | Applied as |
@@ -171,6 +173,25 @@ is not saved if they fail. Applying goes as `user` through the same checks. The 
 proposal was checked against (task status, stage, current values of the changed settings); if it changed since,
 applying is refused as stale, and the proposal stays open — reject it and ask for a new one. Proposals about a
 cancelled or missing task, and `add_task` with an existing key, are closed automatically as `obsolete`.
+
+## Tasks from the project agent
+
+With [`project_agent_tasks`](configuration.md#project-agent-tasks) on (default) the project agent creates tasks
+directly, without a proposal, but only when the user asked for that work in the "Project" thread:
+
+- the board allows `add-task` from the project agent only in a turn woken by a user message; in any other turn (an
+  escalation of a task agent, a board event, a rejected proposal) it is refused with a hint to propose `add_task`;
+- if the request splits into several tasks that together cover exactly what was asked (one change in two
+  repositories), the agent creates them all, sets dependencies between them and explains in the thread why there are
+  several;
+- work beyond the request ("while at it, rewrite the tests", a bug noticed nearby) is only a proposal with a button;
+- if the agent is not sure how to split the request, it asks in the thread and creates nothing;
+- afterwards it lists the created tasks in the thread: key, title, repository, and which repositories were added to
+  the project, with their paths.
+
+A created task starts at once if it has no open dependencies, like any new task at the `work` stage. In a project
+without a plan the agent finds the repository on disk itself (it reads the file system but does not change it) and
+passes its path as `repo_path`. With the setting off the project agent only proposes tasks.
 
 ## Shared resources
 

@@ -122,6 +122,8 @@ class Task(_Serializable):
     harness: str = ""
     turn_process: Optional[dict] = None
     rule_violations: List[dict] = field(default_factory=list)
+    # кто завёл задачу: user (в том числе применив предложение) или project_agent по просьбе пользователя
+    created_by: str = ""
     updated_at: str = ""
 
     @classmethod

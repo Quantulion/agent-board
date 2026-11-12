@@ -26,7 +26,7 @@ default. All commands print JSON results unless stated otherwise.
 | `show <KEY>` | A single task from the snapshot. |
 | `status <KEY> <STATUS>` | Change a task's status. A task agent may set only `in_progress` and `in_review`; the project agent only with [`project_agent_status`](configuration.md#project-agent-statuses). |
 | `update <KEY> [options]` | Update task fields, see the table below. |
-| `add-task --json '{...}'` | Add a task. Fields: `key` (omit it to get the next key of the project), `title`, `description`, `done_when`, `repo` (a name from `repos`), `kind` (`code` or `research`), `estimate`, `deps`, `priority`. User only.* |
+| `add-task --json '{...}'` | Add a task. Fields: `key` (omit it to get the next key of the project), `title`, `description`, `done_when`, `repo` (a name from `repos`), `kind` (`code` or `research`), `estimate`, `deps`, `priority`. User only,* and the project agent at the user's direct request (see [Tasks from the project agent](workflow.md#tasks-from-the-project-agent)). |
 | `deps <KEY> --json '[...]'` | Replace a task's dependencies with a list of keys. A cycle or an unknown task — code 1. User only.* |
 | `ask <KEY> --text T [--option O ...] [--context C] [--recommended O]` | An agent asks the user a question; the task waits for the answer. |
 | `say <THREAD> --text T [--interrupt]` | Post to a task thread or to `_project`. `--interrupt` stops the agent's running turn so it answers at once (user and project agent only), see [Interrupting a turn](workflow.md#interrupting-a-turn). |
