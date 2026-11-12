@@ -16,7 +16,7 @@ default. All commands print JSON results unless stated otherwise.
 | `status [--json]` | Without arguments: whether the board is running (link, version, pid) and the projects with their stages. Needs no server. With arguments (`status <KEY> <STATUS>`) it changes a task's status, see below. |
 | `version` | Print the agent-board version. |
 | `self-update [--ref REF] [--repo PATH]` | Reinstall the board from a commit, see [Installation](installation.md#updating). |
-| `init <slug> --title T` | Create a project. |
+| `init <slug> --title T [--kind plan\|free]` | Create a project. `plan` (default): tasks come from a decomposition, the project starts at the decomposition stage. `free`: tasks are added one by one, the project starts at the `work` stage. The type does not change later. `global_max_agents` is copied from the existing projects (the largest one). |
 
 ## Tasks and threads
 
@@ -26,7 +26,7 @@ default. All commands print JSON results unless stated otherwise.
 | `show <KEY>` | A single task from the snapshot. |
 | `status <KEY> <STATUS>` | Change a task's status. A task agent may set only `in_progress` and `in_review`; the project agent only with [`project_agent_status`](configuration.md#project-agent-statuses). |
 | `update <KEY> [options]` | Update task fields, see the table below. |
-| `add-task --json '{...}'` | Add a task. Fields: `key`, `title`, `description`, `done_when`, `repo` (a name from `repos`), `kind` (`code` or `research`), `estimate`, `deps`, `priority`. User only.* |
+| `add-task --json '{...}'` | Add a task. Fields: `key` (omit it to get the next key of the project), `title`, `description`, `done_when`, `repo` (a name from `repos`), `kind` (`code` or `research`), `estimate`, `deps`, `priority`. User only.* |
 | `deps <KEY> --json '[...]'` | Replace a task's dependencies with a list of keys. A cycle or an unknown task — code 1. User only.* |
 | `ask <KEY> --text T [--option O ...] [--context C] [--recommended O]` | An agent asks the user a question; the task waits for the answer. |
 | `say <THREAD> --text T [--interrupt]` | Post to a task thread or to `_project`. `--interrupt` stops the agent's running turn so it answers at once (user and project agent only), see [Interrupting a turn](workflow.md#interrupting-a-turn). |

@@ -766,7 +766,7 @@ def test_new_task_from_dict_builds_task_from_creatable_fields():
     {"key": "A", "title": "a", "external_blocker": "x"},
     {"key": "A", "title": "a", "estimate": None, "deps": None},
     {"key": 1, "title": "a"},
-    {"title": "a"},
+    {"key": None, "title": "a"},
     "A",
 ])
 def test_new_task_from_dict_rejects_invalid_input(raw):
@@ -1791,3 +1791,33 @@ def test_request_rebase__task_without_worktree__rejected(board):
     # act / assert
     with pytest.raises(ValueError, match="рабочей копии"):
         board.request_rebase("A", "user")
+
+
+def test_add_task__no_key__next_key_assigned(tmp_home):
+    # arrange
+    store = ProjectStore("fix")
+    store.create(ProjectConfig(slug="fix", title="Fix"))
+    board = Board(store, clock=lambda: NOW)
+
+    # act
+    board.add_task(mk(""), "user")
+    board.add_task(mk(""), "user")
+
+    # assert
+    assert sorted(store.load_tasks()) == ["FIX-1", "FIX-2"]
+
+
+@pytest.mark.parametrize("keys, expected", [
+    ([], "PAY-1"),
+    (["T-1", "T-7", "X-3"], "T-8"),
+    (["A-09", "A-10"], "A-11"),
+    (["T-001"], "T-002"),
+    (["B-1", "A-1"], "A-2"),
+])
+def test_next_task_key__existing_keys__most_common_prefix_next_number(board, keys, expected):
+    # arrange
+    for key in keys:
+        board.add_task(mk(key), "user")
+
+    # act, assert
+    assert board.next_task_key() == expected

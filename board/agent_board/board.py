@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import copy
+import re
 import sys
 import threading
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional, Set
+from typing import Any, Callable, Dict, Iterable, List, Optional, Set
 
 from .config import (
     LEGACY_SHIP_COMMAND, ProjectConfig, check_field_names, clean_links, validate_config as validate_project_config,
@@ -138,6 +139,8 @@ def new_task_from_dict(d: Any) -> Task:
     extra = set(d) - set(CREATABLE_FIELDS)
     if extra:
         raise ValueError(msg("board.task_extra_fields", names=", ".join(sorted(map(str, extra)))))
+    # без ключа задача получает следующий ключ проекта
+    d = dict({"key": ""}, **d)
     for name in ("key", "title"):
         if not isinstance(d.get(name), str):
             raise ValueError(msg("board.task_field_str", name=name))
@@ -155,6 +158,34 @@ def new_task_from_dict(d: Any) -> Task:
     if "priority" in d:
         _check_priority(d["priority"])
     return Task(**dict(d, deps=list(deps)))
+
+
+_NUMBERED = re.compile(r"^(.*?)(\d+)$")
+
+
+def next_key(keys: Iterable[str], slug: str) -> str:
+    """Следующий ключ задачи: самый частый префикс задач проекта и номер больше всех с этим префиксом (с той же
+    шириной номера); задач с номером нет — ключ проекта и 1."""
+    keys = list(keys)
+    groups: Dict[str, list] = {}
+    for key in keys:
+        m = _NUMBERED.match(key)
+        if not m:
+            continue
+        group = groups.setdefault(m.group(1), [0, -1, 0])
+        group[0] += 1
+        if int(m.group(2)) > group[1]:
+            group[1], group[2] = int(m.group(2)), len(m.group(2))
+    if groups:
+        prefix = min(groups, key=lambda p: (-groups[p][0], p))
+        start, width = groups[prefix][1] + 1, groups[prefix][2]
+    else:
+        prefix, start, width = (slug or "task").upper() + "-", 1, 0
+    taken = {k.lower() for k in keys}
+    n = start
+    while (prefix + str(n).zfill(width)).lower() in taken:
+        n += 1
+    return prefix + str(n).zfill(width)
 
 
 def _check_priority(value) -> None:
@@ -388,6 +419,8 @@ class Board:
             self._reject_project_agent(actor)
             self._require_user(actor, msg("board.add_task_user_only"))
             tasks = self.store.load_tasks()
+            if task.key == "":
+                task.key = next_key(tasks, self.store.slug)
             self._check_new_key(task.key, tasks)
             self._check_repo(task.repo)
             _check_priority(task.priority)
@@ -400,6 +433,11 @@ class Board:
                 events.append(self._emit("agent_wake", {"key": task.key, "reason": "ready"}))
             events.extend(self._retire_proposals())
             return events
+
+    def next_task_key(self) -> str:
+        """Ключ, который получит новая задача без явного ключа."""
+        with self._lock:
+            return next_key(self.store.load_tasks(), self.store.slug)
 
     def transition(self, key: str, to: Status, actor: str, wake_extra: Optional[dict] = None,
                    fields: Optional[dict] = None, auto: bool = False) -> List[Event]:

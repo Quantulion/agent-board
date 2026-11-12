@@ -52,6 +52,8 @@ CATALOG: Dict[str, tuple] = {
     "help.stop": ("stop the running board", "остановить запущенную доску"),
     "help.version": ("agent-board version", "версия agent-board"),
     "help.init": ("create a project", "создать проект"),
+    "help.init_kind": ("project type: plan (tasks from a decomposition) or free (tasks one by one, straight to the work "
+                       "stage)", "тип проекта: plan (задачи из разбивки) или free (задачи по одной, сразу стадия работы)"),
     "help.state": ("full project snapshot", "весь snapshot проекта"),
     "help.show": ("show a task", "показать задачу"),
     "help.status": ("without arguments: board and project state; status <KEY> <STATUS>: move a task",
@@ -385,6 +387,20 @@ CATALOG: Dict[str, tuple] = {
     "config.auto_approve": ("auto_approve must be true or false", "auto_approve должен быть true или false"),
     "config.project_agent_status": ("project_agent_status must be true or false",
                                     "project_agent_status должен быть true или false"),
+    "config.bool": ("{name} must be true or false", "{name} должен быть true или false"),
+    "config.kind": ("kind must be one of: {kinds}", "kind должен быть одним из: {kinds}"),
+    "config.kind_fixed": ("the project type is set when the project is created",
+                          "тип проекта задаётся при создании"),
+    "project.bad_key": ("The task key must start with a letter and contain only Latin letters and digits, up to 10 "
+                        "characters: {key}",
+                        "Ключ задач должен начинаться с буквы и состоять из латинских букв и цифр, до 10 символов: "
+                        "{key}"),
+    "project.title": ("The project title must not be empty", "Название проекта не должно быть пустым"),
+    "project.user_only": ("Only the user creates projects", "Проекты создаёт только пользователь"),
+    "project.plan_kind": ("A project by plan is created with the skill in the agent CLI; here only kind free is "
+                          "available",
+                          "Проект по плану создаётся скиллом в CLI агента; здесь доступен только тип free"),
+    "project.unknown_option": ("Unknown project option: {name}", "Неизвестный параметр проекта: {name}"),
     "config.tracker_object": ("tracker must be an object with a type field",
                               "tracker должен быть объектом с полем type"),
     # --- трекер ---

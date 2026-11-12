@@ -51,6 +51,7 @@ RULES = [
     ("board/agent_board/lifecycle.py", ["test_cli.py", "test_install.py", "skill/test_wrapper.py"]),
     ("board/agent_board/messages.py", ["test_messages.py"]),
     ("board/agent_board/model.py", ["test_model.py", "test_board.py", "test_store.py"]),
+    ("board/agent_board/projects.py", ["test_projects.py", "test_server.py", "test_cli.py"]),
     ("board/agent_board/prompts.py", ["test_prompts.py", "test_runner.py"]),
     ("board/agent_board/prompts/*", ["test_prompts.py", "test_packaging.py"]),
     ("board/agent_board/resources.py", ["test_resources.py", "test_server.py"]),
