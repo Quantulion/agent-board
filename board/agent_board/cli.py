@@ -15,7 +15,6 @@ import urllib.request
 from typing import List, Optional
 
 from . import __version__, lifecycle
-from .config import ProjectConfig
 from .messages import LANG_HEADER, current_language, msg
 from .server import BoardServer, ServerAlreadyRunning, read_discovery
 from .store import ProjectStore
@@ -130,8 +129,10 @@ def cmd_open(args):
 
 
 def cmd_init(args):
-    ProjectStore(args.slug).create(ProjectConfig(slug=args.slug, title=args.title))
-    return {"slug": args.slug, "title": args.title}
+    from .projects import new_config
+
+    ProjectStore(args.slug).create(new_config(args.slug, args.title, args.kind, {}))
+    return {"slug": args.slug, "title": args.title, "kind": args.kind}
 
 
 def cmd_show(args):
@@ -426,6 +427,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = add("init", cmd_init, help=msg("help.init"))
     sp.add_argument("slug")
     sp.add_argument("--title", required=True)
+    sp.add_argument("--kind", choices=["plan", "free"], default="plan", help=msg("help.init_kind"))
     add("state", cmd_state, help=msg("help.state"))
     add("show", cmd_show, help=msg("help.show")).add_argument("key")
     sp = add("status", cmd_status, help=msg("help.status"))

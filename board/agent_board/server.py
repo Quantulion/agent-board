@@ -5,6 +5,7 @@ import fcntl
 import hmac
 import json
 import os
+import queue
 import secrets
 import socket
 import sys
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import __version__, tracker
+from . import __version__, projects, tracker
 from .board import Board, ConfigConflict, new_task_from_dict
 from .messages import LANG_HEADER, localize, msg, normalize, reason
 from .model import Event, Question, Status, Task
@@ -109,6 +110,7 @@ class _Hub:
         self._queues: Dict[str, ResourceQueue] = {}
         self._versions: Dict[str, int] = {}
         self._subscribers: List[Callable[[str, Event], None]] = []
+        self._feeds: List[queue.Queue] = []
         self.stopping = False
 
     def subscribe(self, callback: Callable[[str, Event], None]) -> None:
@@ -120,6 +122,27 @@ class _Hub:
         with self._lock:
             if callback in self._subscribers:
                 self._subscribers.remove(callback)
+
+    def open_feed(self) -> queue.Queue:
+        """Очередь изменений всех проектов для общего потока: {"slug", "seq", "type"}; None — сервер остановлен."""
+        feed: queue.Queue = queue.Queue()
+        with self._lock:
+            self._feeds.append(feed)
+        return feed
+
+    def close_feed(self, feed: queue.Queue) -> None:
+        with self._lock:
+            if feed in self._feeds:
+                self._feeds.remove(feed)
+
+    def _publish(self, item: Optional[dict]) -> None:
+        with self._lock:
+            feeds = list(self._feeds)
+        for feed in feeds:
+            feed.put(item)
+
+    def project_created(self, slug: str) -> None:
+        self._publish({"slug": slug, "seq": 0, "type": "project_created"})
 
     def cond(self, slug: str) -> threading.Condition:
         with self._lock:
@@ -171,6 +194,7 @@ class _Hub:
                 callback(slug, event)
             except Exception:
                 traceback.print_exc(file=sys.stderr)
+        self._publish({"slug": slug, "seq": event.seq, "type": event.type})
 
     def wake_all(self) -> None:
         self.stopping = True
@@ -179,6 +203,7 @@ class _Hub:
         for cond in conds:
             with cond:
                 cond.notify_all()
+        self._publish(None)
 
 
 def _need(body: dict, name: str):
@@ -327,6 +352,10 @@ class _Handler(BaseHTTPRequestHandler):
         parts = [unquote(p) for p in path.split("/")[2:]]
         if method == "GET" and parts == ["projects"]:
             return self._send_json(200, {"projects": list_projects()})
+        if method == "POST" and parts == ["projects"]:
+            return self._create_project()
+        if method == "GET" and parts == ["stream"]:
+            return self._common_stream()
         if len(parts) < 3 or parts[0] != "p":
             raise KeyError(msg("api.unknown_route"))
         board = self.app.hub.board(parts[1])
@@ -547,18 +576,56 @@ class _Handler(BaseHTTPRequestHandler):
         except TypeError as e:
             raise ValueError(msg("api.bad_question", error=e))
 
+    def _create_project(self) -> None:
+        body = self._read_body()
+        if _need(body, "actor") != "user":
+            raise PermissionError(msg("project.user_only"))
+        kind = _need(body, "kind")
+        if kind != "free":
+            raise ValueError(msg("project.plan_kind") if kind == "plan" else msg("config.kind", kinds="free"))
+        options = {k: v for k, v in body.items() if k not in ("actor", "title", "key", "kind")}
+        config = projects.create_project(_need(body, "title"), _need(body, "key"), kind, options)
+        self.app.hub.project_created(config.slug)
+        self._send_json(200, {"slug": config.slug, "key": config.slug.upper(), "title": config.title})
+
     # --- SSE ---
 
-    def _stream(self, board: Board, slug: str, query: dict) -> None:
-        last = self._since(query)
-        hub = self.app.hub
-        cond = hub.cond(slug)
+    def _sse_headers(self) -> None:
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
         self.wfile.flush()
+
+    def _common_stream(self) -> None:
+        """Изменения всех проектов: какой проект и какое событие; подробности клиент читает сам."""
+        hub = self.app.hub
+        feed = hub.open_feed()
+        try:
+            self._sse_headers()
+            while not hub.stopping:
+                try:
+                    item = feed.get(timeout=KEEPALIVE_SECONDS)
+                except queue.Empty:
+                    self.wfile.write(b": keep-alive\n\n")
+                    self.wfile.flush()
+                    continue
+                if item is None:
+                    break
+                self.wfile.write(("event: project\ndata: %s\n\n" % json.dumps(item, ensure_ascii=False))
+                                 .encode("utf-8"))
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError, socket.timeout):
+            return
+        finally:
+            hub.close_feed(feed)
+
+    def _stream(self, board: Board, slug: str, query: dict) -> None:
+        last = self._since(query)
+        hub = self.app.hub
+        cond = hub.cond(slug)
+        self._sse_headers()
         try:
             while not hub.stopping:
                 # версия фиксируется до чтения, чтобы не пропустить событие между чтением и ожиданием

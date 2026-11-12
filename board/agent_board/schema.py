@@ -19,6 +19,9 @@ DESCRIPTIONS = {
     "project_agent_status": "Let the project agent change task statuses itself at the user's direct request "
                             "(done, in_progress, not_started, cancelled, external blocker); approval stays with the "
                             "user. false: it only proposes, the user applies with a button.",
+    "project_agent_tasks": "Let the project agent create a task itself at the user's direct request; tasks it wants on "
+                           "its own initiative still go through a proposal.",
+    "archived": "Project is in the archive on the home screen; it opens and works as usual.",
     "language": "Language of the UI and agent messages (e.g. ru, en).",
     "repos": "Project repositories: name, absolute path to a git work tree, base branch.",
     "tracker": "Issue tracker for creating issues and reading their statuses; secrets only by env var name or "

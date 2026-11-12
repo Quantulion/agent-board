@@ -34,6 +34,9 @@ class ProjectConfig(_Serializable):
     project_session_id: Optional[str] = None
     links: List[dict] = field(default_factory=list)
     project_agent_status: bool = False
+    kind: str = "plan"
+    archived: bool = False
+    project_agent_tasks: bool = True
 
     def __post_init__(self):
         self.links = clean_links(self.links)
@@ -70,9 +73,11 @@ def clean_links(links) -> List[dict]:
     return result
 
 
-# настройки, которые ведёт не пользователь: имя проекта, стадия (своя команда) и сессия агента проекта (раннер)
+# настройки, которые ведёт не пользователь: имя и тип проекта, стадия (своя команда) и сессия агента проекта (раннер)
 NOT_SETTABLE = {"slug": "config.slug_fixed", "stage": "config.stage_command",
-                "project_session_id": "config.session_runner"}
+                "project_session_id": "config.session_runner", "kind": "config.kind_fixed"}
+# по плану — задачи из декомпозиции и стадии; без плана — задачи по одной, сразу стадия работы
+PROJECT_KINDS = ("plan", "free")
 HARNESS_TYPES = ("claude", "codex", "fake")
 REVIEW_TOOLS = ("crit", "none")
 # что делать с задачей, когда команда отправки упала: оставить одобренной или вернуть агенту
@@ -240,9 +245,19 @@ def _check_auto_approve(config: ProjectConfig) -> None:
         raise ValueError(msg("config.auto_approve"))
 
 
+def _bool(value, name: str) -> None:
+    if not isinstance(value, bool):
+        raise ValueError(msg("config.bool", name=name))
+
+
 def _check_project_agent_status(config: ProjectConfig) -> None:
     if not isinstance(config.project_agent_status, bool):
         raise ValueError(msg("config.project_agent_status"))
+
+
+def _check_kind(config: ProjectConfig) -> None:
+    if config.kind not in PROJECT_KINDS:
+        raise ValueError(msg("config.kind", kinds=", ".join(PROJECT_KINDS)))
 
 
 # полные проверки каждого поля, которое задаёт пользователь (repos проверяются отдельно — с учётом прежних)
@@ -251,6 +266,8 @@ FIELD_CHECKS = {
     "chains": _check_chains,
     "auto_approve": _check_auto_approve,
     "project_agent_status": _check_project_agent_status,
+    "project_agent_tasks": lambda c: _bool(c.project_agent_tasks, "project_agent_tasks"),
+    "archived": lambda c: _bool(c.archived, "archived"),
     "max_agents": lambda c: _positive_int(c.max_agents, "max_agents"),
     "global_max_agents": lambda c: _positive_int(c.global_max_agents, "global_max_agents"),
     "language": lambda c: _text(c.language, "language", required=True),
@@ -296,6 +313,9 @@ def validate_structure(config: ProjectConfig) -> None:
     _check_chains(config)
     _check_auto_approve(config)
     _check_project_agent_status(config)
+    _check_kind(config)
+    _bool(config.archived, "archived")
+    _bool(config.project_agent_tasks, "project_agent_tasks")
     _positive_int(config.max_agents, "max_agents")
     _positive_int(config.global_max_agents, "global_max_agents")
     for name in ("language", "agent_rules", "project_brief", "decomposition_rules", "branch_template"):

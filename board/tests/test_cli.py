@@ -1042,3 +1042,27 @@ def test_open__server_failed_to_start__exits_with_error(tmp_home, capsys, monkey
     assert code == 1
     assert "boom" in err
     assert opened == []
+
+
+@pytest.mark.parametrize("argv, expected", [([], ("plan", "decomposition")), (["--kind", "free"], ("free", "work"))])
+def test_init__kind__saved_with_its_stage(tmp_home, capsys, argv, expected):
+    # arrange
+    from agent_board.store import ProjectStore
+
+    # act
+    result = run_json(capsys, "init", "fix", "--title", "Fix", *argv)
+
+    # assert
+    config = ProjectStore("fix").load_config()
+    assert (config.kind, config.stage) == expected
+    assert result["kind"] == expected[0]
+
+
+def test_config_set__kind__rejected_archived_accepted(srv, capsys):
+    # act
+    code, _, err = run(capsys, "config", "set", "--json", '{"kind": "free"}')
+    saved = run_json(capsys, "config", "set", "--json", '{"archived": true}')["config"]
+
+    # assert
+    assert code == 1 and "kind" in err and "тип проекта задаётся при создании" in err
+    assert (saved["kind"], saved["archived"], saved["project_agent_tasks"]) == ("plan", True, True)

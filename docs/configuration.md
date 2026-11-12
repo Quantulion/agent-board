@@ -25,8 +25,8 @@ repositories, so a repository removed from disk does not block other changes. Sl
 is taken; under the lock the settings are re-read and checked for shape, and if the same field was changed elsewhere
 at the same time the save is retried up to three times, then fails with 409.
 
-`config validate` checks the whole saved file. An unknown field, `slug`, `stage` (use `agent-board stage`) and
-`project_session_id` (maintained by the runner) are rejected with 400. A change writes a `config_changed {fields}`
+`config validate` checks the whole saved file. An unknown field, `slug`, `kind` (set when the project is created),
+`stage` (use `agent-board stage`) and `project_session_id` (maintained by the runner) are rejected with 400. A change writes a `config_changed {fields}`
 event; raising `max_agents` or `global_max_agents` starts queued turns right away.
 
 The deprecated top-level `ship_command` field is moved into `ship.command` (if that is empty) the first time the
@@ -54,6 +54,9 @@ board reads the file, with a `config_migrated {field, to, moved}` event.
 | `project_brief` | `""` | Project description for the project agent: goal, key decisions, constraints. |
 | `decomposition_rules` | `""` | Rules every task must follow (up to 4000 characters). They go into the project agent's prompt, and it checks the task graph against them. |
 | `project_agent_status` | `false` | Let the project agent change task statuses at the user's request, see [below](#project-agent-statuses). |
+| `project_agent_tasks` | `true` | Let the project agent create a task itself at the user's direct request; tasks it wants on its own initiative still go through a [proposal](workflow.md#proposals). |
+| `archived` | `false` | The project is in the archive on the home screen. An archived project opens and works as usual. |
+| `kind` | `plan` | Project type, set when the project is created and never changed: `plan` — tasks from a decomposition, stages from decomposition to completion; `free` — tasks one by one, the project starts at the `work` stage. Projects without the field are `plan`. Not settable. |
 
 ### Harness
 

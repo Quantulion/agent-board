@@ -6,6 +6,8 @@ const RU_HELP = {
   chains: 'Зависимая задача стартует, как только её зависимость одобрена, — от ветки зависимости; выключено — только после «Готово».',
   auto_approve: 'Задача кода одобряется сразу, как агент переводит её на ревью: без раунда ревью — коммит, перенос зависимых и отправка по ship.on_approve, как при одобрении пользователем. Исследования не одобряются автоматически.',
   project_agent_status: 'Агент проекта сам меняет статусы задач по прямой просьбе пользователя (done, in_progress, not_started, cancelled, внешний блокер); одобрение остаётся за пользователем. Выключено — агент только предлагает, пользователь применяет кнопкой.',
+  project_agent_tasks: 'Агент проекта сам создаёт задачу по прямой просьбе пользователя; задачи по своей инициативе он только предлагает.',
+  archived: 'Проект в архиве на главном экране; открывается и работает как обычно.',
   max_agents: 'Сколько ходов агентов одновременно идёт в этом проекте.',
   global_max_agents: 'Сколько ходов агентов одновременно идёт на всём сервере.',
   language: 'Язык интерфейса и сообщений агентов (например, ru, en).',
@@ -455,7 +457,8 @@ const RU = {
     labels: {
       title: 'Название', language: 'Язык', max_agents: 'Агентов в проекте', global_max_agents: 'Агентов на сервере',
       chains: 'Цепочки задач', auto_approve: 'Автоодобрение',
-      project_agent_status: 'Статусы от агента проекта', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
+      project_agent_status: 'Статусы от агента проекта', project_agent_tasks: 'Задачи от агента проекта',
+      archived: 'В архиве', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
       agent_rules: 'Правила для агентов', decomposition_rules: 'Правила разбивки', repos: 'Репозитории',
       tracker: 'Трекер', review: 'Ревью', ship: 'Отправка в ревью', harness: 'CLI агентов', resources: 'Общие ресурсы',
       links: 'Ссылки',
@@ -1029,7 +1032,8 @@ const EN = {
     labels: {
       title: 'Title', language: 'Language', max_agents: 'Agents in project', global_max_agents: 'Agents on server',
       chains: 'Task chains', auto_approve: 'Auto-approve',
-      project_agent_status: 'Project agent statuses', branch_template: 'Branch template', project_brief: 'Project brief',
+      project_agent_status: 'Project agent statuses', project_agent_tasks: 'Project agent tasks',
+      archived: 'Archived', branch_template: 'Branch template', project_brief: 'Project brief',
       agent_rules: 'Agent rules', decomposition_rules: 'Decomposition rules', repos: 'Repositories',
       tracker: 'Tracker', review: 'Review', ship: 'Ship to review', harness: 'Agent CLI', resources: 'Shared resources',
       links: 'Links',

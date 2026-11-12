@@ -1455,3 +1455,81 @@ def test_rebase_by_user_or_project_agent_records_rebase_wake(server):
     assert [e["data"] for e in user.json()["events"]] == [{"key": "T-1", "reason": "rebase", "by": "user"}]
     assert project_agent.json()["events"][0]["data"]["by"] == "project_agent"
 
+
+
+# ---------- проекты ----------
+
+def test_create_project__user__created_and_announced_in_common_stream(server):
+    # arrange
+    sock = open_sse(server, path="/api/stream")
+    try:
+        read_until(sock, "\r\n\r\n")
+
+        # act
+        r = post(server, "/api/projects", {"actor": "user", "title": "Исправления", "key": "FIX", "kind": "free"})
+
+        # assert
+        assert r.status == 200
+        assert r.json() == {"slug": "fix", "key": "FIX", "title": "Исправления"}
+        out = read_until(sock, '"slug": "fix"')
+        assert "event: project\n" in out and '"type": "project_created"' in out
+    finally:
+        sock.close()
+    assert get(server, "/api/projects").json() == {"projects": ["fix", "pay"]}
+    config = get(server, "/api/p/fix/state").json()["config"]
+    assert (config["kind"], config["stage"]) == ("free", "work")
+
+
+def test_create_project__key_taken__numbered(server):
+    # act
+    r = post(server, "/api/projects", {"actor": "user", "title": "Ещё платежи", "key": "pay", "kind": "free"})
+
+    # assert
+    assert r.json() == {"slug": "pay2", "key": "PAY2", "title": "Ещё платежи"}
+
+
+def test_create_project__not_user__forbidden(server):
+    # act
+    r = post(server, "/api/projects", {"actor": "agent", "title": "X", "key": "X", "kind": "free"})
+
+    # assert
+    assert r.status == 403
+    assert get(server, "/api/projects").json() == {"projects": ["pay"]}
+
+
+@pytest.mark.parametrize("body", [{"kind": "plan"}, {"key": "F-1"}, {"max_agents": 0}, {"title": ""}])
+def test_create_project__bad_body__400(server, body):
+    # arrange
+    request = dict({"actor": "user", "title": "X", "key": "X", "kind": "free"}, **body)
+
+    # act
+    r = post(server, "/api/projects", request)
+
+    # assert
+    assert r.status == 400 and r.json()["error"]
+    assert get(server, "/api/projects").json() == {"projects": ["pay"]}
+
+
+def test_common_stream__event_of_any_project__sent_with_slug_seq_type(server):
+    # arrange
+    sock = open_sse(server, path="/api/stream")
+    try:
+        read_until(sock, "\r\n\r\n")
+
+        # act
+        add_task(server, "T-1")
+
+        # assert
+        out = read_until(sock, '"type": "agent_wake"')
+        assert 'data: {"slug": "pay", "seq": 1, "type": "task_added"}' in out
+        assert 'data: {"slug": "pay", "seq": 2, "type": "agent_wake"}' in out
+    finally:
+        sock.close()
+
+
+def test_add_task__no_key__key_assigned_by_board(server):
+    # act
+    r = post(server, "/api/p/pay/tasks", {"task": {"title": "Без ключа"}, "actor": "user"})
+
+    # assert
+    assert r.status == 200 and r.json()["key"] == "PAY-1"

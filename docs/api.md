@@ -19,6 +19,7 @@ tools. The port and token of the running board are in `<home>/server.json`.
 | `GET /api/p/<slug>/state` | the project snapshot: `config`, `tasks`, `proposals`, `project_agent {state, turn_error, wait_reason, session_id, parked, turn_process}`, `project_unread`, `project_thread_size`, `tracker_sync`, `last_seq` |
 | `GET /api/p/<slug>/events?since=N` | `{events}` after event number `N` |
 | `GET /api/p/<slug>/stream?since=N` | Server-Sent Events: the same events live (`Last-Event-ID` is honoured) |
+| `GET /api/stream` | Server-Sent Events for all projects: an `event: project` with `{slug, seq, type}` for every journal event of any project and `{slug, seq: 0, type: "project_created"}` when a project is created; no replay, read the details from the project itself |
 | `GET /api/p/<slug>/threads/<thread>` | `{messages}` of a task thread or `_project` |
 | `GET /api/p/<slug>/tasks/<KEY>/diff` | `{base, files, diff, truncated}` — task changes against its base branch (up to 400 KB) |
 | `GET /api/p/<slug>/file?path=P` | a local file from a project link, see [Links](configuration.md#links) |
@@ -29,7 +30,7 @@ tools. The port and token of the running board are in `<home>/server.json`.
 
 | Request | Body | Who |
 |---|---|---|
-| `POST /api/p/<slug>/tasks` | `{task, actor}` → also `{key}` | user |
+| `POST /api/p/<slug>/tasks` | `{task, actor}` → also `{key}`; without `task.key` (or with `""`) the board picks the next key: the most common prefix of the project's tasks with the next number, `<SLUG>-1` in an empty project | user |
 | `POST .../tasks/<KEY>/transition` | `{to, actor}` | by status rules, see [Workflow](workflow.md#tasks-and-statuses) |
 | `POST .../tasks/<KEY>/update` | `{fields, actor}` | per field, see [`update`](cli.md#tasks-and-threads) |
 | `POST .../tasks/<KEY>/deps` | `{deps, actor}` | user |
@@ -52,6 +53,7 @@ tools. The port and token of the running board are in `<home>/server.json`.
 
 | Request | Body | Who |
 |---|---|---|
+| `POST /api/projects` | `{actor, title, key, kind: "free", harness_type?, language?, max_agents?, auto_approve?, project_agent_tasks?}` → `{slug, key, title}`, see [New project](#new-project) | user |
 | `POST /api/p/<slug>/stage` | `{stage, actor}` | user |
 | `POST /api/p/<slug>/config` | `{actor, fields, dry_run}` → `{config, saved, events}`; `fields: {}` with `dry_run: true` checks the saved file | user |
 | `POST /api/p/<slug>/ship` | `{keys, actor}` | user |
@@ -59,6 +61,17 @@ tools. The port and token of the running board are in `<home>/server.json`.
 | `POST /api/p/<slug>/proposals` | `{kind, payload, reason}` → also `{proposal_id}` | project agent |
 | `POST /api/p/<slug>/proposals/<id>/apply`, `/reject` | — | user |
 | `POST /api/p/<slug>/locks/<resource>/acquire`, `/poll`, `/release` | `{task, pid}` → `{position}` | `lock-run` |
+
+### New project
+
+`POST /api/projects` creates a project without a plan (`kind: "free"`); a project by plan is still created with the
+skill or `agent-board init`, and `kind: "plan"` is rejected with 400. `key` is the task key prefix: a Latin letter,
+then up to 9 letters or digits. The project gets `slug = key` in lower case, and its tasks are `KEY-1`, `KEY-2`…
+If the key is taken by another project's slug or by the task key prefix of any project (`AB` while another project
+has `AB-1`), the board adds a number: `FIX` → `FIX2`, `FIX3`…; the answer carries the key actually used. The new
+project starts at the `work` stage with no repositories, and `global_max_agents` is copied from the existing projects
+(the largest one). `harness_type` is `claude` or `codex`; the other options are the settings of the same name.
+Nothing is started: agents run only after user actions.
 
 ## Events
 
