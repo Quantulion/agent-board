@@ -187,22 +187,58 @@ export const cardSignature = (task, ctx) => signatureOf(cardModel(task, ctx));
 
 // --- Настройки вида, переживающие перезагрузку ---
 
-function loadPrefs(key) {
-  const defaults = { view: 'board', repo: '', wave: '', type: '', q: '', attn: false, collapsed: { cancelled: true } };
+// Колонки, свёрнутые, пока пользователь их не развернул: в проекте «Без плана» прячутся и законченные задачи.
+export function defaultCollapsed(kind) {
+  return kind === 'free' ? { cancelled: true, sent: true, done: true } : { cancelled: true };
+}
+
+export function loadPrefs(key, kind) {
+  const defaults = { view: 'board', repo: '', wave: '', type: '', q: '', attn: false, collapsed: defaultCollapsed(kind) };
   try {
-    const saved = JSON.parse(window.localStorage.getItem(key) || 'null');
+    const saved = JSON.parse(globalThis.localStorage.getItem(key) || 'null');
     return saved && typeof saved === 'object' ? { ...defaults, ...saved } : defaults;
   } catch (e) {
     return defaults;
   }
 }
 
-function savePrefs(key, prefs) {
+export function savePrefs(key, prefs) {
   try {
-    window.localStorage.setItem(key, JSON.stringify(prefs));
+    globalThis.localStorage.setItem(key, JSON.stringify(prefs));
   } catch (e) {
     // хранилище недоступно — настройки живут до перезагрузки
   }
+}
+
+// Сворачивание колонок: у каждой колонки кнопка «Свернуть», свёрнутая разворачивается кликом по ней;
+// состояние живёт в настройках вида.
+export function columnCollapse(prefs, save) {
+  const cols = new Map();
+  const isCollapsed = id => Boolean(prefs.collapsed && prefs.collapsed[id]);
+
+  function attach(id, col) {
+    const button = h('button', { class: 'btn ghost sm icon collapse', type: 'button', 'aria-label': T.collapse, title: T.collapse,
+      onclick: e => { e.stopPropagation(); set(id, true); } }, icon('fold'));
+    col.addEventListener('click', () => { if (isCollapsed(id)) set(id, false); });
+    cols.set(id, { col, button });
+    return button;
+  }
+
+  function set(id, on) {
+    prefs.collapsed = { ...prefs.collapsed, [id]: on };
+    save();
+    paint();
+  }
+
+  function paint() {
+    for (const [id, c] of cols) {
+      const on = isCollapsed(id);
+      c.col.classList.toggle('collapsed', on);
+      c.button.hidden = on;
+    }
+  }
+
+  return { attach, set, paint, isCollapsed };
 }
 
 // --- Вид ---
@@ -210,7 +246,8 @@ function savePrefs(key, prefs) {
 export function mountBoard(root, store, ctx) {
   const slug = ctx.slug;
   const prefsKey = 'ab-board:' + slug;
-  const prefs = loadPrefs(prefsKey);
+  const prefs = loadPrefs(prefsKey, ctx.kind);
+  const collapse = columnCollapse(prefs, () => savePrefs(prefsKey, prefs));
   const cards = new Map();
   const cleanups = [];
   let painted = false;
@@ -331,14 +368,10 @@ export function mountBoard(root, store, ctx) {
   function column(s) {
     const n = h('span', { class: 'n' }, '0');
     const cb = h('div', { class: 'cb' });
-    const collapseBtn = h('button', { class: 'btn ghost sm icon collapse', type: 'button', 'aria-label': T.collapse,
-      onclick: e => { e.stopPropagation(); setCollapsed(s.id, true); } }, icon('x'));
-    const col = h('section', { class: 'col', 'data-st': s.id, 'aria-label': s.label },
-      h('div', { class: 'ch' }, sdot(s.id), h('span', { class: 'lbl' }, s.label),
-        T.colHint[s.id] ? h('span', { class: 'hint' }, T.colHint[s.id]) : null, n,
-        s.id === 'cancelled' ? collapseBtn : null),
-      cb);
-    col.addEventListener('click', () => { if (col.classList.contains('collapsed')) setCollapsed(s.id, false); });
+    const head = h('div', { class: 'ch' }, sdot(s.id), h('span', { class: 'lbl' }, s.label),
+      T.colHint[s.id] ? h('span', { class: 'hint' }, T.colHint[s.id]) : null, n);
+    const col = h('section', { class: 'col', 'data-st': s.id, 'aria-label': s.label }, head, cb);
+    head.append(collapse.attach(s.id, col));
     col.addEventListener('dragover', e => {
       if (!e.dataTransfer.types.includes(DRAG_MIME)) return;
       e.preventDefault();
@@ -353,21 +386,7 @@ export function mountBoard(root, store, ctx) {
       if (task) requestMove(ctx, task, s.id);
     });
     cols.append(col);
-    return { col, n, cb, collapseBtn };
-  }
-
-  function setCollapsed(id, on) {
-    prefs.collapsed = { ...prefs.collapsed, [id]: on };
-    savePrefs(prefsKey, prefs);
-    paintCollapsed();
-  }
-
-  function paintCollapsed() {
-    for (const [id, c] of columns) {
-      const on = Boolean(prefs.collapsed && prefs.collapsed[id]);
-      c.col.classList.toggle('collapsed', on);
-      c.collapseBtn.hidden = on;
-    }
+    return { col, n, cb };
   }
 
   function setFilter(name, value) {
@@ -381,7 +400,7 @@ export function mountBoard(root, store, ctx) {
 
   function jumpTo(id) {
     if (prefs.view !== 'board') setView('board');
-    if (prefs.collapsed && prefs.collapsed[id]) setCollapsed(id, false);
+    if (collapse.isCollapsed(id)) collapse.set(id, false);
     const c = columns.get(id).col;
     c.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
     c.classList.add('over');
@@ -726,7 +745,7 @@ export function mountBoard(root, store, ctx) {
     painted = true;
   }
 
-  paintCollapsed();
+  collapse.paint();
   paintView();
   const unsubscribe = store.subscribe(paint);
   paint(store.get(), { tasks: new Set(), snapshot: true });
