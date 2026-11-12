@@ -975,3 +975,70 @@ def test_rebase__started_task__records_rebase_wake(srv, capsys):
     result = run_json(capsys, "rebase", "T-1")
     # assert
     assert result["events"][0]["data"] == {"key": "T-1", "reason": "rebase", "by": "user"}
+
+
+@pytest.fixture
+def stop_board(tmp_home):
+    yield
+    main(["stop"])
+
+
+def test_open__no_browser__starts_server_and_prints_link(tmp_home, stop_board, capsys, monkeypatch):
+    # arrange
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: opened.append(url))
+
+    # act
+    code, out, err = run(capsys, "open", "--no-browser")
+
+    # assert
+    assert code == 0, err
+    assert "token=" in out.strip()
+    assert (tmp_home / "server.json").exists()
+    assert opened == []
+
+
+def test_open__server_running__prints_same_link_without_second_server(tmp_home, stop_board, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setattr("webbrowser.open", lambda url, *a, **kw: True)
+    _, first, _ = run(capsys, "open", "--no-browser")
+    pid = json.loads((tmp_home / "server.json").read_text(encoding="utf-8"))["pid"]
+
+    # act
+    code, second, err = run(capsys, "open", "--no-browser")
+
+    # assert
+    assert code == 0, err
+    assert second == first
+    assert json.loads((tmp_home / "server.json").read_text(encoding="utf-8"))["pid"] == pid
+
+
+def test_open__no_arguments__opens_browser_on_link(tmp_home, capsys, monkeypatch):
+    # arrange
+    url = "http://127.0.0.1:8737/?token=t"
+    monkeypatch.setattr("agent_board.lifecycle.start_detached", lambda *a: {"url": url})
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda u, *a, **kw: opened.append(u) or True)
+
+    # act
+    code, out, err = run(capsys)
+
+    # assert
+    assert code == 0, err
+    assert opened == [url]
+    assert out.strip() == url
+
+
+def test_open__server_failed_to_start__exits_with_error(tmp_home, capsys, monkeypatch):
+    # arrange
+    monkeypatch.setattr("agent_board.lifecycle.start_detached", lambda *a: {"error": "boom", "code": 1})
+    opened = []
+    monkeypatch.setattr("webbrowser.open", lambda u, *a, **kw: opened.append(u))
+
+    # act
+    code, _, err = run(capsys, "open")
+
+    # assert
+    assert code == 1
+    assert "boom" in err
+    assert opened == []
