@@ -7,7 +7,7 @@ import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer';
 import { python } from './python.mjs';
 
@@ -380,31 +380,6 @@ try {
   results.narrowAttnThenOutside = await page.$eval('.dock', el => el.hidden);
   await page.setViewport(VIEW);
   results.pageErrors = errors;
-
-  // макет того же размера: граф, панель «Проект», новая задача
-  const mock = await browser.newPage();
-  await mock.setViewport(VIEW);
-  await mock.goto(pathToFileURL(path.join(repo, 'docs', 'design', 'mockups', 'board.html')).href, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
-  for (const theme of ['light', 'dark']) {
-    await mock.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
-    await mock.click('[data-view="graph"]').catch(() => {});
-    await sleep(300);
-    let file = path.join(out, `mockup-graph-${theme}.png`);
-    await mock.screenshot({ path: file });
-    shots[`mockup_graph_${theme}`] = file;
-    await mock.click('[data-view="board"]').catch(() => {});
-    await mock.evaluate(() => { const d = document.querySelector('#dock'); if (d.hidden) document.querySelector('#dockBtn').click(); });
-    await sleep(300);
-    file = path.join(out, `mockup-project-panel-${theme}.png`);
-    await mock.screenshot({ path: file });
-    shots[`mockup_project_panel_${theme}`] = file;
-    await mock.click('#newBtn').catch(() => {});
-    await sleep(300);
-    file = path.join(out, `mockup-new-task-${theme}.png`);
-    await mock.screenshot({ path: file });
-    shots[`mockup_new_task_${theme}`] = file;
-    await mock.keyboard.press('Escape');
-  }
 } catch (e) {
   // снимок экрана в момент сбоя помогает понять, на каком шаге всё остановилось
   if (page) await page.screenshot({ path: path.join(out, 'graph-failure.png') }).catch(() => {});
