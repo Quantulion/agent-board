@@ -1,4 +1,4 @@
-// Шапка проекта: индикатор соединения, шкала стадий и кнопка следующего шага.
+// Шапка проекта: индикатор соединения, шкала стадий, кнопка следующего шага и вид шапки по типу проекта.
 import { h } from './dom.js';
 import { STAGES, T } from './i18n.js';
 import { openModal, toast } from './ui.js';
@@ -13,6 +13,20 @@ export function connectionIndicator(state) {
     busy: !failed && state.connection !== 'live',
     text: denied ? T.unauthorized : failed ? T.syncError : T.connection[state.connection] || state.connection,
   };
+}
+
+// Части доски по типу проекта: у проекта «Без плана» нет стадий, плана и графа зависимостей.
+export function boardLayout(kind) {
+  const plan = kind !== 'free';
+  return { free: !plan, stepper: plan, progress: plan, planning: plan, graph: plan, waves: plan };
+}
+
+// Подзаголовок проекта под названием.
+export function projectSubtitle(config) {
+  const repos = (config.repos || []).length;
+  return config.kind === 'free'
+    ? T.projectSubFree(repos, config.max_agents, config.auto_approve === true)
+    : T.projectSub(repos, config.max_agents, config.chains);
 }
 
 // Стадии проекта для шкалы: пройдена, текущая, впереди или пропущена (трекер без подключённого трекера).

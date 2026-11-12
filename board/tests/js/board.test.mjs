@@ -1,11 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  cardModel, cardSignature, columnCollapse, columnsOf, defaultCollapsed, loadPrefs, savePrefs, waitingForYou, whyBlocked,
+  cardModel, cardSignature, columnCollapse, columnsOf, defaultCollapsed, hiddenColumns, loadPrefs, savePrefs, waitingForYou, whyBlocked,
 } from '../../agent_board/static/js/board.js';
 import { h } from '../../agent_board/static/js/dom.js';
 import { STATUSES, setLanguage } from '../../agent_board/static/js/i18n.js';
-import { connectionIndicator, stageAction, stepperModel } from '../../agent_board/static/js/header.js';
+import { boardLayout, connectionIndicator, projectSubtitle, stageAction, stepperModel } from '../../agent_board/static/js/header.js';
 import { reactionText } from '../../agent_board/static/js/status.js';
 import { installFakeDocument, installFakeStorage } from './fake-dom.mjs';
 
@@ -367,4 +367,50 @@ test('loadPrefs: сохранённое состояние колонок важ
   assert.deepEqual(loadPrefs('ab-board:notes', 'free').collapsed, { done: false });
   storage.setItem('ab-board:notes', '{битый');
   assert.deepEqual(loadPrefs('ab-board:notes', 'free').collapsed, defaultCollapsed('free'));
+});
+
+test('boardLayout: в проекте «Без плана» нет стадий, прогресса по плану, «Планирования», графа и волн', () => {
+  // act
+  const free = boardLayout('free');
+  const plan = boardLayout('plan');
+
+  // assert
+  assert.deepEqual(free, { free: true, stepper: false, progress: false, planning: false, graph: false, waves: false });
+  assert.deepEqual(plan, { free: false, stepper: true, progress: true, planning: true, graph: true, waves: true });
+  assert.deepEqual(boardLayout(undefined), plan, 'проект без типа — «По плану»');
+});
+
+test('projectSubtitle: у «Без плана» — репозитории, лимит и ревью; у «По плану» — как раньше', () => {
+  // arrange
+  const free = { kind: 'free', repos: [{ name: 'a' }, { name: 'b' }], max_agents: 4, chains: true };
+
+  // act + assert
+  assert.equal(projectSubtitle(free), '2 репозитория · лимит 4 агента · ревью перед коммитом');
+  assert.equal(projectSubtitle({ ...free, auto_approve: true }), '2 репозитория · лимит 4 агента · ревью выключено');
+  assert.equal(projectSubtitle({ ...free, kind: 'plan' }), '2 репозитория · лимит 4 агента · цепочки веток включены');
+});
+
+test('hiddenColumns: в «Без плана» пустые «Не начата» и «Заблокирована» скрыты, непустые видны', () => {
+  // arrange
+  const free = { config: { kind: 'free' } };
+  const work = task('A-1', { status: 'in_progress' });
+  const blocked = task('A-2', { status: 'blocked' });
+
+  // act + assert
+  assert.deepEqual(hiddenColumns({ ...snap([work]), ...free }), new Set(['not_started', 'blocked']));
+  assert.deepEqual(hiddenColumns({ ...snap([work, blocked]), ...free }), new Set(['not_started']));
+  assert.deepEqual(hiddenColumns({ ...snap([task('A-3')]), ...free }), new Set(['blocked']));
+  assert.deepEqual(hiddenColumns(snap([work])), new Set(), 'в «По плану» видны все колонки');
+});
+
+test('cardModel: задача, созданная агентом проекта, помечена', () => {
+  // arrange
+  const s = snap([task('A-1', { created_by: 'project_agent' }), task('A-2', { created_by: 'user' }), task('A-3')]);
+  const ctx = { byKey: new Map(s.tasks.map(t => [t.key, t])), snapshot: s, proposalKeys: new Set(), repoBase: new Map(), config: s.config };
+
+  // act
+  const marks = s.tasks.map(t => cardModel(t, ctx).byAgent);
+
+  // assert
+  assert.deepEqual(marks, [true, false, false]);
 });

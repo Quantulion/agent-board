@@ -45,6 +45,11 @@ export function tabsFor(task, filesCount) {
   return isResearch(task) ? tabs.slice(0, 2) : tabs;
 }
 
+// Подпись о происхождении задачи: видно, что её завёл агент проекта, а не пользователь.
+export function originNote(task) {
+  return task.created_by === 'project_agent' ? T.createdByAgent : null;
+}
+
 // Открытый вопрос важнее всего; иначе — вкладка, на которой пользователь был в прошлый раз.
 export function initialTab(task, remembered) {
   if (task.open_questions > 0) return 'overview';
@@ -282,6 +287,7 @@ function createCard(ctx, key, returnFocus) {
     const menuSlot = h('div', { class: 'slot' });
     const stmenu = h('div', { class: 'stmenu' }, statusBtn, menuSlot);
     const title = h('h2');
+    const origin = h('div', { class: 'by-agent', hidden: true });
     const terminal = h('button', { class: 'btn', type: 'button', onclick: () => { if (lastTask.terminal_command) copyText(lastTask.terminal_command); } },
       icon('term'), T.card.terminal);
     const acts = h('span', { class: 'slot' });
@@ -291,7 +297,7 @@ function createCard(ctx, key, returnFocus) {
     const el = h('div', { class: 'dh' },
       h('div', { class: 'l1' }, keySlot, chips, stmenu, h('span', { class: 'sp' }),
         h('button', { class: 'btn icon ghost', type: 'button', 'aria-label': T.close, title: T.close, onclick: () => ctx.closeCard() }, icon('x'))),
-      title,
+      title, origin,
       h('div', { class: 'acts' }, acts, h('span', { class: 'grow' }), terminal));
     let lastTask = first;
     let sig = null;
@@ -355,7 +361,7 @@ function createCard(ctx, key, returnFocus) {
       paint(t, snap) {
         lastTask = t;
         paintActions(t, snap);
-        const next = JSON.stringify([t.title, t.tracker_key, t.tracker_url, t.repo, t.kind, t.estimate, statusOf(t), t.terminal_command]);
+        const next = JSON.stringify([t.title, t.tracker_key, t.tracker_url, t.repo, t.kind, t.estimate, statusOf(t), t.terminal_command, t.created_by]);
         if (next === sig) return;
         sig = next;
         keySlot.replaceChildren(h('span', { class: 'key' }, key));
@@ -368,6 +374,9 @@ function createCard(ctx, key, returnFocus) {
         ].filter(Boolean));
         statusBtn.replaceChildren(spill(statusOf(t)), icon('chev'));
         title.textContent = t.title;
+        const note = originNote(t);
+        origin.hidden = !note;
+        origin.replaceChildren(...(note ? [icon('spark'), note] : []));
         terminal.disabled = !t.terminal_command;
         terminal.title = t.terminal_command || T.card.noTerminal;
       },

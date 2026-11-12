@@ -42,6 +42,14 @@ automatic themes. It is plain ES modules served by the board, with no build step
   instead. "New task" adds a task with its dependencies. Any column folds into a narrow strip with its task count
   with the "Collapse" button in its header; a click on the strip unfolds it. By default "Cancelled" is collapsed, and
   in a project without a plan (`kind: free`) also "Sent" and "Done".
+- **Board of a project without a plan** (`kind: free`) — the same board without the plan parts. The header shows
+  "← Projects", the title with a "No plan" chip, the gear and "N repositories · limit K agents · review before
+  commit" ("review off" with `auto_approve`); there is no stage bar, plan progress bar, "Planning" row, "Board /
+  Graph" switch or wave filter. Status counters and "Waiting for you" are as usual. "Not started" and "Blocked" are
+  hidden while empty. The "Project" panel is open by default with the hint "Describe what to do — the agent will
+  create tasks…"; closing it is remembered for this project only. A task the project agent created at your request is
+  signed "Created by the project agent at your request" on its card and in the task card, and a new one is briefly
+  highlighted.
 - **Graph** — the same tasks as a dependency graph ("Board / Graph" in the header), with the critical path
   highlighted.
 - **Task card** (`#/p/<slug>?task=<KEY>`) — a panel on the right with the tabs "Overview", "Thread", "Review" and

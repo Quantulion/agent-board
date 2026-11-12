@@ -132,6 +132,8 @@ function projectView(slug, mode) {
     slug,
     client,
     store,
+    // тип проекта («По плану» / «Без плана»): доска узнаёт его из первого снимка
+    kind: null,
     brand,
     themeButton,
     errorNotice,

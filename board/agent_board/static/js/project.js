@@ -272,12 +272,26 @@ export function proposalNote(ctx, p, byKey) {
 
 // --- Панель ---
 
-function storedOpen() {
+// Где запоминается, закрыта ли панель: в проекте «Без плана» панель — главный способ заводить задачи,
+// поэтому её состояние своё у каждого проекта и не зависит от других.
+export function dockKey(kind, slug) {
+  return kind === 'free' ? DOCK_KEY + ':' + slug : DOCK_KEY;
+}
+
+// Открыта ли панель: пока пользователь её не закрыл — открыта.
+export function dockOpen(kind, slug) {
   try {
-    return window.localStorage.getItem(DOCK_KEY) !== '0';
+    return globalThis.localStorage.getItem(dockKey(kind, slug)) !== '0';
   } catch (e) {
     return true;
   }
+}
+
+// Подсказки поля ввода панели по типу проекта.
+export function panelTexts(kind) {
+  return kind === 'free'
+    ? { placeholder: T.project.composerFree, hint: T.project.composerHintFree }
+    : { placeholder: T.project.composer, hint: T.project.composerHint };
 }
 
 const narrow = () => Boolean(window.matchMedia && window.matchMedia(NARROW).matches);
@@ -285,7 +299,9 @@ const narrow = () => Boolean(window.matchMedia && window.matchMedia(NARROW).matc
 // Панель справа от доски; свёрнутость запоминается. toggleButton — кнопка «Проект» в шапке:
 // ей сообщается состояние панели, на неё возвращается фокус после сворачивания.
 export function mountProjectPanel(ctx, store, toggleButton) {
-  let open = storedOpen() && !narrow();
+  // тип проекта известен из снимка: до него панель ведёт себя как в проекте «По плану»
+  let kind = ctx.kind || 'plan';
+  let open = dockOpen(kind, ctx.slug) && !narrow();
   const onToggle = on => toggleButton.setAttribute('aria-pressed', String(on));
   let alive = true;
   const stateDot = h('span', { class: 'sdot' });
@@ -300,8 +316,7 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     scroller: () => scroll,
     visible: () => open && alive && document.visibilityState !== 'hidden',
     alive: () => alive,
-    placeholder: T.project.composer,
-    hint: T.project.composerHint,
+    ...panelTexts(kind),
     parkedText: T.project.parked,
   });
   scroll.append(historyBox, ...thread.list, openList);
@@ -344,7 +359,7 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     open = on;
     el.hidden = !on;
     try {
-      window.localStorage.setItem(DOCK_KEY, on ? '1' : '0');
+      window.localStorage.setItem(dockKey(kind, ctx.slug), on ? '1' : '0');
     } catch (e) {
       // хранилище недоступно — состояние живёт до перезагрузки
     }
@@ -384,6 +399,25 @@ export function mountProjectPanel(ctx, store, toggleButton) {
     el,
     isOpen: () => open,
     toggle: () => setOpen(!open),
+    // тип проекта пришёл со снимком: подсказки поля ввода и открытость панели — по нему
+    setKind(next) {
+      if (next === kind) return;
+      kind = next;
+      const texts = panelTexts(kind);
+      thread.area.placeholder = texts.placeholder;
+      thread.area.setAttribute('aria-label', texts.placeholder);
+      if (thread.hint) thread.hint.textContent = texts.hint;
+      const want = dockOpen(kind, ctx.slug) && !narrow();
+      if (want !== open) {
+        open = want;
+        el.hidden = !open;
+        onToggle(open);
+        if (open) {
+          thread.shown();
+          paint(store.get());
+        }
+      }
+    },
     // показать панель с открытыми предложениями
     reveal() {
       if (!open) setOpen(true);
