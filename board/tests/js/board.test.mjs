@@ -1,8 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { cardModel, cardSignature, columnsOf, waitingForYou, whyBlocked } from '../../agent_board/static/js/board.js';
+import {
+  cardModel, cardSignature, columnCollapse, columnsOf, defaultCollapsed, loadPrefs, savePrefs, waitingForYou, whyBlocked,
+} from '../../agent_board/static/js/board.js';
+import { h } from '../../agent_board/static/js/dom.js';
+import { STATUSES, setLanguage } from '../../agent_board/static/js/i18n.js';
 import { connectionIndicator, stageAction, stepperModel } from '../../agent_board/static/js/header.js';
 import { reactionText } from '../../agent_board/static/js/status.js';
+import { installFakeDocument, installFakeStorage } from './fake-dom.mjs';
+
+installFakeDocument();
+setLanguage('ru');
 
 function task(key, extra = {}) {
   const status = extra.status || 'not_started';
@@ -277,4 +285,80 @@ test('connectionIndicator: ошибка снимка при живом пото�
 test('connectionIndicator: потерянный доступ — «Нет доступа»', () => {
   const ind = connectionIndicator({ connection: 'offline', error: Object.assign(new Error('x'), { status: 401 }) });
   assert.deepEqual(ind, { failed: true, busy: false, text: 'Нет доступа' });
+});
+
+// Колонки доски со сворачиванием, как их собирает доска проекта с ключом настроек prefsKey.
+function collapsibleColumns(prefsKey, kind) {
+  const prefs = loadPrefs(prefsKey, kind);
+  const collapse = columnCollapse(prefs, () => savePrefs(prefsKey, prefs));
+  const cols = new Map(STATUSES.map(s => {
+    const col = h('section', { class: 'col' });
+    return [s.id, { col, button: collapse.attach(s.id, col) }];
+  }));
+  collapse.paint();
+  return { cols, prefs };
+}
+
+const collapsedIds = cols => [...cols].filter(([, c]) => c.col.classList.contains('collapsed')).map(([id]) => id);
+
+test('defaultCollapsed: в проекте «По плану» свёрнута «Отменена», в «Без плана» ещё «Отправлена» и «Готово»', () => {
+  // act + assert
+  assert.deepEqual(defaultCollapsed('plan'), { cancelled: true });
+  assert.deepEqual(defaultCollapsed(undefined), { cancelled: true }, 'проект без типа — «По плану»');
+  assert.deepEqual(defaultCollapsed('free'), { cancelled: true, sent: true, done: true });
+});
+
+test('columnCollapse: у каждой колонки кнопка «Свернуть», по умолчанию свёрнуты колонки типа проекта', () => {
+  // arrange
+  installFakeStorage();
+
+  // act
+  const plan = collapsibleColumns('ab-board:pay', 'plan');
+  const free = collapsibleColumns('ab-board:notes', 'free');
+
+  // assert
+  for (const [id, c] of plan.cols) {
+    assert.equal(c.button.getAttribute('aria-label'), 'Свернуть', id);
+    assert.equal(c.button.hidden, id === 'cancelled', 'у свёрнутой колонки кнопка спрятана: ' + id);
+  }
+  assert.deepEqual(collapsedIds(plan.cols), ['cancelled']);
+  assert.deepEqual(collapsedIds(free.cols), ['sent', 'done', 'cancelled']);
+});
+
+test('columnCollapse: кнопка сворачивает колонку, клик по свёрнутой разворачивает; состояние — в настройках проекта', () => {
+  // arrange
+  const storage = installFakeStorage();
+  const { cols } = collapsibleColumns('ab-board:pay', 'plan');
+  const work = cols.get('in_progress');
+
+  // act
+  work.button.dispatch('click');
+
+  // assert
+  assert.deepEqual(collapsedIds(cols), ['in_progress', 'cancelled']);
+  assert.equal(work.button.hidden, true);
+  assert.deepEqual(JSON.parse(storage.getItem('ab-board:pay')).collapsed, { cancelled: true, in_progress: true });
+  assert.equal(storage.getItem('ab-board:other'), null, 'другой проект не затронут');
+  const reloaded = collapsibleColumns('ab-board:pay', 'plan');
+  assert.deepEqual(collapsedIds(reloaded.cols), ['in_progress', 'cancelled'], 'переживает перезагрузку');
+
+  // act
+  reloaded.cols.get('in_progress').col.dispatch('click');
+  reloaded.cols.get('not_started').col.dispatch('click');
+
+  // assert
+  assert.deepEqual(collapsedIds(reloaded.cols), ['cancelled'], 'клик по развёрнутой колонке ничего не меняет');
+  assert.equal(reloaded.cols.get('in_progress').button.hidden, false);
+  assert.deepEqual(JSON.parse(storage.getItem('ab-board:pay')).collapsed, { cancelled: true, in_progress: false });
+});
+
+test('loadPrefs: сохранённое состояние колонок важнее умолчаний типа проекта', () => {
+  // arrange
+  const storage = installFakeStorage();
+  storage.setItem('ab-board:notes', JSON.stringify({ collapsed: { done: false } }));
+
+  // act + assert
+  assert.deepEqual(loadPrefs('ab-board:notes', 'free').collapsed, { done: false });
+  storage.setItem('ab-board:notes', '{битый');
+  assert.deepEqual(loadPrefs('ab-board:notes', 'free').collapsed, defaultCollapsed('free'));
 });

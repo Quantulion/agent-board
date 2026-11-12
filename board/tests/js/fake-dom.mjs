@@ -56,6 +56,20 @@ class FakeElement extends FakeNode {
     this.listeners = {};
     const props = {};
     this.style = { setProperty: (k, v) => { props[k] = v; }, props };
+    const classes = () => (this.getAttribute('class') || '').split(/\s+/).filter(Boolean);
+    this.classList = {
+      contains: name => classes().includes(name),
+      toggle: (name, on = !classes().includes(name)) => {
+        const rest = classes().filter(c => c !== name);
+        this.setAttribute('class', (on ? [...rest, name] : rest).join(' '));
+        return on;
+      },
+    };
+  }
+  // событие без всплытия: обработчики только этого элемента
+  dispatch(type, extra = {}) {
+    const event = { type, target: this, stopPropagation() {}, preventDefault() {}, ...extra };
+    (this.listeners[type] || []).forEach(fn => fn(event));
   }
   setAttribute(k, v) { this.attributes.set(k, String(v)); }
   getAttribute(k) { return this.attributes.has(k) ? this.attributes.get(k) : null; }
@@ -67,6 +81,18 @@ class FakeElement extends FakeNode {
 
 class FakeFragment extends FakeNode {
   constructor() { super(); this.nodeType = 11; }
+}
+
+// localStorage в памяти: настройки вида, которые доска хранит в браузере.
+export function installFakeStorage() {
+  const data = new Map();
+  globalThis.localStorage = {
+    getItem: k => (data.has(k) ? data.get(k) : null),
+    setItem: (k, v) => { data.set(k, String(v)); },
+    removeItem: k => { data.delete(k); },
+    clear: () => data.clear(),
+  };
+  return globalThis.localStorage;
 }
 
 export function installFakeDocument() {

@@ -313,6 +313,24 @@ try {
   results.filterPersisted = await page.$eval('.toolbar select', el => el.value);
   await page.select('.toolbar select', '');
 
+  // любая колонка сворачивается кнопкой в узкую полоску со счётчиком; состояние переживает перезагрузку, клик разворачивает
+  results.collapseButtons = await page.$$eval('.col', cols => cols.filter(c => c.querySelector('.ch .collapse')).length);
+  await page.click('.col[data-st="in_progress"] .collapse');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForFunction(() => document.querySelectorAll('.card[data-key]').length > 2, { timeout: 10000 });
+  results.collapsedAfterReload = await page.$eval('.col[data-st="in_progress"]', el => ({
+    collapsed: el.classList.contains('collapsed'),
+    narrow: el.getBoundingClientRect().width < 60,
+    count: el.querySelector('.ch .n').offsetParent !== null && el.querySelector('.ch .n').textContent !== '',
+    buttonHidden: el.querySelector('.ch .collapse').hidden,
+  }));
+  const collapsedFile = path.join(out, 'board-collapsed-light.png');
+  await page.screenshot({ path: collapsedFile });
+  results.board_collapsed_light = collapsedFile;
+  await page.click('.col[data-st="in_progress"]');
+  results.expandedByClick = await page.$eval('.col[data-st="in_progress"]', el => !el.classList.contains('collapsed'));
+  results.expandedSaved = await page.evaluate(() => JSON.parse(localStorage.getItem('ab-board:pay')).collapsed);
+
   // тёмная тема из переключателя применяется до стилей: без мигания при загрузке
   await page.evaluate(() => localStorage.setItem('ab-theme', 'dark'));
   await page.reload({ waitUntil: 'domcontentloaded' });
@@ -355,6 +373,8 @@ const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
   && results.attnFocusKept && results.menuInViewport && results.edgeMenuInViewport && results.menuFocusBack
   && results.spaceOpens === '#/p/pay?task=PAY-113'
   && results.filterPersisted === 'ledger-reports' && results.themeBeforeModules === 'dark'
+  && results.collapseButtons === 10 && Object.values(results.collapsedAfterReload).every(Boolean)
+  && results.expandedByClick && results.expandedSaved.in_progress === false && results.expandedSaved.cancelled === true
   && results.decompositionAttn.some(t => t.includes('нарушает правила'))
   && results.pageErrors.length === 0;
 process.exit(ok ? 0 : 1);

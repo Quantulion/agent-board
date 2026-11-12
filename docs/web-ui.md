@@ -11,7 +11,9 @@ automatic themes. It is plain ES modules served by the board, with no build step
   next step ("Start work" at the `tracker` stage, "Finish project" when all tasks are done), progress and the
   connection indicator. The "Planning" row holds the project links and the decomposition page. Change a status by
   dragging a card or from its status menu; "Blocked" is not a drag target, use "External blocker…" with a reason
-  instead. "New task" adds a task with its dependencies.
+  instead. "New task" adds a task with its dependencies. Any column folds into a narrow strip with its task count
+  with the "Collapse" button in its header; a click on the strip unfolds it. By default "Cancelled" is collapsed, and
+  in a project without a plan (`kind: free`) also "Sent" and "Done".
 - **Graph** — the same tasks as a dependency graph ("Board / Graph" in the header), with the critical path
   highlighted.
 - **Task card** (`#/p/<slug>?task=<KEY>`) — a panel on the right with the tabs "Overview", "Thread", "Review" and
@@ -51,5 +53,5 @@ A failed snapshot read is retried after 1, 2, 4 and 8 s; a hung request is abort
 "no access" (the cookie expired), reconnecting stops: open the link from `serve` again. Re-rendering keeps the open
 card and tab, panel width, scroll, drafts and focus.
 
-The panel width, the board view (columns or graph), the collapsed "Project" panel and the theme are stored in
-`localStorage`; message drafts in `sessionStorage`.
+The panel width, the board view (columns or graph), the filters and collapsed columns (per project), the collapsed
+"Project" panel and the theme are stored in `localStorage`; message drafts in `sessionStorage`.
