@@ -43,6 +43,14 @@ The script copies `board/agent_board` from the commit (via `git archive`, so the
 `PATH`. The wrapper ignores the current directory and the repository state, and uses the Python interpreter the
 script was run with.
 
+Then open the board:
+
+```bash
+agent-board          # same as `agent-board open`: starts it in the background if needed and opens the browser
+```
+
+On a machine without a browser `agent-board open --no-browser` only prints the link with the access token.
+
 Alternatives: `pip install -e .` provides the `agent-board` command, and
 `PYTHONPATH=board python3 -m agent_board …` runs it from the repository root without installing.
 
@@ -54,10 +62,10 @@ agent-board self-update --ref <sha>   # another commit, or back to an earlier on
 ```
 
 The running server keeps the code it was started with; restart it after an update:
-`agent-board stop && agent-board serve --detach`. Old `<home>/runtime/<commit>` directories are kept (a running
+`agent-board stop && agent-board`. Old `<home>/runtime/<commit>` directories are kept (a running
 server may still use one) and can be deleted by hand.
 
-The board compares versions: after a plugin update, `serve --detach` and the skill notice that an older server is
+The board compares versions: after a plugin update, `open`, `serve --detach` and the skill notice that an older server is
 still running and ask to restart it.
 
 ## Data

@@ -30,34 +30,34 @@ Running several coding agents at once quickly turns into juggling terminals. age
 
 Requirements: Python 3.9+, git, and the `claude` or `codex` CLI.
 
-1. **Install the skill.** In Claude Code:
-
-   ```
-   /plugin marketplace add ~/path/to/agent-board
-   /plugin install agent-board@agent-board-local
-   ```
-
-   In Codex: `sh scripts/install-codex.sh` from the repository root.
-
-2. **Install the board** from a fixed commit and put it on `PATH`:
+1. **Install the board** from a fixed commit and put it on `PATH`:
 
    ```bash
    python3 scripts/install.py
    export PATH="$HOME/.agent-board/bin:$PATH"
    ```
 
-3. **Start your first project.** After writing a plan with your agent, say "put this plan on the board". The skill
-   starts the board, creates the project, turns the plan into tasks and gives you a link to the decomposition page.
-   Review it, press "Approve breakdown", and the agents start.
-
-   Or by hand:
+2. **Open it:**
 
    ```bash
-   agent-board init payments --title "Payments"
-   agent-board serve --detach        # prints http://127.0.0.1:8737/?token=…
+   agent-board                       # starts the board in the background and opens it in the browser
    ```
 
-From then on everything happens on the board.
+   It prints the link too (`http://127.0.0.1:8737/?token=…`); `agent-board open --no-browser` only prints it.
+
+3. **Create a project** with "New project" on the home screen and add tasks in any git repository on your disk.
+   Nothing starts by itself: agents run only when you start them.
+
+**Projects from a plan.** Install the skill to lay a plan out as tasks. In Claude Code:
+
+```
+/plugin marketplace add ~/path/to/agent-board
+/plugin install agent-board@agent-board-local
+```
+
+In Codex: `sh scripts/install-codex.sh` from the repository root. After writing a plan with your agent, say "put
+this plan on the board". The skill starts the board, creates the project, turns the plan into tasks and gives you a
+link to the decomposition page. Review it, press "Approve breakdown", and the agents start.
 
 ## Documentation
 

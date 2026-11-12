@@ -10,6 +10,7 @@ default. All commands print JSON results unless stated otherwise.
 
 | Command | What it does |
 |---|---|
+| `open [--no-browser]` | Open the board as an app: start it in the background if it is not running (like `serve --detach`), open its home screen in the browser and print the link. If a board is already running it just opens it again; a running board of a different version exits with code 3. `--no-browser` only prints the link (remote machines, scripts). `agent-board` without a command does the same as `open`. |
 | `serve [--detach] [--port N] [--no-runner] [--no-tracker-sync]` | Start the board together with the agent runner and prints its link. `--detach` runs it in the background with a log in `<home>/server.log`; if a board of the same version is already running it just prints that link, a different version exits with code 3. `--no-runner` (board only) and `--no-tracker-sync` (no background tracker sync) are for debugging. Without `--port` the board takes the first free port in 8737–8746, or a random one if all are busy. A second `serve` on the same data directory exits with code 3. |
 | `stop` | Stop the running board: SIGTERM to the pid from `<home>/server.json` after checking that it is the board's process. No board running — code 0. |
 | `status [--json]` | Without arguments: whether the board is running (link, version, pid) and the projects with their stages. Needs no server. With arguments (`status <KEY> <STATUS>`) it changes a task's status, see below. |
@@ -75,9 +76,9 @@ mistakes and is not a trust boundary, see [Security](security.md).
 | 0 | success |
 | 1 | the request failed (validation, permission, tracker error) |
 | 2 | no running board (or it did not answer in time) |
-| 3 | another board is already running on this data directory, or a different version is running (`serve --detach`) |
+| 3 | another board is already running on this data directory, or a different version is running (`serve --detach`, `open`) |
 
-All commands except `serve`, `init`, `stop`, `version`, `self-update`, `status` without arguments and
+All commands except `open`, `serve`, `init`, `stop`, `version`, `self-update`, `status` without arguments and
 `config schema` talk to the running board.
 
 ## Environment variables

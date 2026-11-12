@@ -115,6 +115,20 @@ def cmd_serve(args):
     return None
 
 
+def cmd_open(args):
+    result = lifecycle.start_detached(None, False, False)
+    if "error" in result:
+        raise CliError(result["error"], result["code"])
+    url = result["url"]
+    print(url, flush=True)
+    if not getattr(args, "no_browser", False):
+        import webbrowser
+
+        # без графической среды браузер не откроется — ссылка уже напечатана
+        webbrowser.open(url)
+    return None
+
+
 def cmd_init(args):
     ProjectStore(args.slug).create(ProjectConfig(slug=args.slug, title=args.title))
     return {"slug": args.slug, "title": args.title}
@@ -388,7 +402,9 @@ def _lock_call(path: str, body: dict) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="agent_board")
     parser.add_argument("--project", help=msg("help.project"))
-    sub = parser.add_subparsers(dest="command", required=True)
+    # без команды доска открывается как приложение
+    parser.set_defaults(func=cmd_open)
+    sub = parser.add_subparsers(dest="command")
 
     def add(name, func, **kw):
         sp = sub.add_parser(name, **kw)
@@ -400,6 +416,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--no-runner", action="store_true", help=msg("help.no_runner"))
     sp.add_argument("--no-tracker-sync", action="store_true", help=msg("help.no_tracker_sync"))
     sp.add_argument("--detach", action="store_true", help=msg("help.detach"))
+    sp = add("open", cmd_open, help=msg("help.open"))
+    sp.add_argument("--no-browser", action="store_true", help=msg("help.no_browser"))
     add("stop", cmd_stop, help=msg("help.stop"))
     add("version", cmd_version, help=msg("help.version"))
     sp = add("self-update", cmd_self_update, help=msg("help.self_update"))
