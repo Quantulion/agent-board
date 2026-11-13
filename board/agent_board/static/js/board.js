@@ -2,6 +2,7 @@
 import { h, icon, patchList } from './dom.js';
 import { layoutGraph, mountGraph } from './graph.js';
 import { sdot, statusOf, color } from './chips.js';
+import { setTabAttention, setTabTitle } from './browser-tab.js';
 import { boardLayout, connectionIndicator, paintStageAction, paintStepper, projectSubtitle } from './header.js';
 import { STATUSES, T, statusInfo } from './i18n.js';
 import { openNewTaskDialog } from './newtask.js';
@@ -626,12 +627,13 @@ export function mountBoard(root, store, ctx) {
     document.removeEventListener('keydown', onKey);
     closeMenu();
   });
+  cleanups.push(() => setTabAttention(0));
 
   // --- шапка ---
 
   function paintHeader(snap) {
     const cfg = snap.config;
-    document.title = cfg.title + ' — ' + T.appName;
+    setTabTitle(cfg.title + ' — ' + T.appName);
     title.textContent = cfg.title;
     sub.textContent = projectSubtitle(cfg);
     autoApprove.hidden = cfg.auto_approve !== true;
@@ -735,6 +737,7 @@ export function mountBoard(root, store, ctx) {
 
   function paintAttn(snap) {
     const items = waitingForYou(snap);
+    setTabAttention(items.length);
     attn.hidden = !items.length;
     attnLabel.replaceChildren(icon('warn'), T.waitingForYou + ' · ' + items.length);
     patchList(attnList, items, item => item.kind + ':' + (item.key || item.id || ''), item => {

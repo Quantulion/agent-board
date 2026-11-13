@@ -166,6 +166,8 @@ try {
   results.headerOneRow = await page.$eval('.top .row1', el => el.getBoundingClientRect().height < 50);
   results.columns = await page.$$eval('.col', cols => Object.fromEntries(cols.map(c => [c.dataset.st, [...c.querySelectorAll('.card')].map(x => x.dataset.key)])));
   results.attn = await page.$$eval('.attn .it', els => els.map(e => e.textContent));
+  // вкладка: число пунктов «Ждут вас» в заголовке и иконка с точкой
+  results.tab = await page.evaluate(() => ({ title: document.title, icon: document.querySelector('link[rel="icon"]').getAttribute('href'), n: document.querySelectorAll('.attn .it').length }));
   for (const theme of ['light', 'dark']) {
     await page.emulateMediaFeatures([{ name: 'prefers-color-scheme', value: theme }]);
     // переходы цвета колонок и кнопок должны закончиться до снимка
@@ -358,6 +360,7 @@ try {
 }
 console.log(JSON.stringify(results, null, 2));
 const ok = results.columns.blocked.join() === 'PAY-108,PAY-109,PAY-111,PAY-112'
+  && results.tab.n > 0 && results.tab.title.startsWith('(' + results.tab.n + ') ') && results.tab.icon === '/static/favicon-attn.svg'
   && results.stageGoLabel === 'Перейти к работе' && results.stageGoOneRow && results.stageGoDialog === 'Перейти к работе?'
   && /Недопустимый переход стадии/.test(results.stageAfterGo)
   && results.headerSkipped && results.headerChip && results.headerOneRow

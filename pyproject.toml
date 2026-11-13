@@ -18,7 +18,7 @@ package-dir = {"" = "board"}
 packages = ["agent_board"]
 
 [tool.setuptools.package-data]
-agent_board = ["prompts/*.md", "static/*.html", "static/*.css", "static/js/*.js"]
+agent_board = ["prompts/*.md", "static/*.html", "static/*.css", "static/*.svg", "static/js/*.js"]
 
 [tool.pytest.ini_options]
 testpaths = ["board/tests"]

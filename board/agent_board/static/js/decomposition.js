@@ -1,5 +1,6 @@
 // Согласование разбивки: задачи с нарушениями правил и комментариями, граф по шагам, общий тред с агентом проекта
 // и утверждение, которое переводит проект на следующую стадию. После утверждения страница только для чтения.
+import { setTabTitle } from './browser-tab.js';
 import { statusOf } from './chips.js';
 import { connectionIndicator, paintStageAction, paintStepper } from './header.js';
 import { h, icon, patchList, safeMarkdown } from './dom.js';
@@ -432,7 +433,7 @@ export function mountDecomposition(root, store, ctx) {
     if (!snap || (painted && changes && !changes.snapshot)) return;
     painted = true;
     const cfg = snap.config;
-    document.title = cfg.title + ' — ' + T.dc.heading;
+    setTabTitle(cfg.title + ' — ' + T.dc.heading);
     title.textContent = cfg.title;
     paintStepper(stepper, cfg);
     paintStageAction(stageGo, ctx, snap);
