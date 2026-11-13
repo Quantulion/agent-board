@@ -39,4 +39,4 @@ def test_pyproject_ships_static_ui():
     text = (root / "pyproject.toml").read_text(encoding="utf-8")
 
     # assert
-    assert '"static/*.html"' in text and '"static/*.css"' in text and '"static/js/*.js"' in text
+    assert '"static/*.html"' in text and '"static/*.css"' in text and '"static/js/*.js"' in text and '"static/*.svg"' in text

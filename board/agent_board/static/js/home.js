@@ -1,6 +1,7 @@
 // Главный экран — доска проектов: проект сам переезжает между колонками по тому, что в нём происходит.
 import { api } from './api.js';
 import { boardSettingsButton } from './boardsettings.js';
+import { setTabAttention, setTabTitle } from './browser-tab.js';
 import { ATTN_LOOK, BAR_ORDER, attnText, columnCollapse, savePrefs, waitingForYou } from './board.js';
 import { color, sdot, statusOf } from './chips.js';
 import { h, icon, patchList } from './dom.js';
@@ -169,7 +170,7 @@ export function mountHome(root, ctx) {
         ctx.themeButton()),
       attn, banner),
     cols));
-  document.title = T.projects + ' — ' + T.appName;
+  setTabTitle(T.projects + ' — ' + T.appName);
 
   function column(id) {
     const n = h('span', { class: 'n' }, '0');
@@ -319,6 +320,7 @@ export function mountHome(root, ctx) {
   }
 
   function paintAttn(items) {
+    setTabAttention(items.length);
     attn.hidden = !items.length;
     attnLabel.replaceChildren(icon('warn'), T.waitingForYou + ' · ' + items.length);
     patchList(attnList, items, item => item.slug + ':' + item.kind + ':' + (item.key || item.id || ''), item => {
@@ -489,5 +491,6 @@ export function mountHome(root, ctx) {
     document.removeEventListener('click', onDocClick);
     document.removeEventListener('keydown', onKey);
     closeMenu();
+    setTabAttention(0);
   };
 }

@@ -65,6 +65,10 @@ try {
     && layout.summary.startsWith('2 активных · 1 агент работает') && layout.fixKind === 'Без плана' ? 'ok' : layout;
   await page.screenshot({ path: path.join(out, 'home-light.png') });
 
+  // вкладка главной: вопрос PAY-1 ждёт — число в заголовке и точка на иконке
+  const homeTab = await page.evaluate(() => ({ title: document.title, icon: document.querySelector('link[rel="icon"]').getAttribute('href') }));
+  results.tab = homeTab.title.startsWith('(') && homeTab.title.endsWith('Проекты — agent-board') && homeTab.icon === '/static/favicon-attn.svg' ? 'ok' : homeTab;
+
   // живое обновление: агент закончил ход — проект уходит в «Тихо» без перезагрузки
   await call('fix', 'tasks/FIX-1/update', { actor: 'system', fields: { agent_state: 'idle' } });
   results.live = await waitColumn(page, 'fix', 'quiet', 'fix в «Тихо»').then(() => 'ok', e => String(e));
@@ -74,8 +78,14 @@ try {
   await page.click('.attn a.it');
   await page.waitForFunction(() => window.location.hash === '#/p/pay?task=PAY-1', { timeout: 10000 });
   results.attnLink = item.href === '#/p/pay?task=PAY-1' && item.text.includes('PAY') ? 'ok' : item;
+  await page.waitForFunction(() => document.querySelector('.top h1') && !document.title.includes('Проекты'), { timeout: 10000 }).catch(() => {});
+  const boardTab = await page.evaluate(() => ({ title: document.title, icon: document.querySelector('link[rel="icon"]').getAttribute('href') }));
   await page.goto(env.url.replace(/[?#].*$/, '') + '#/', { waitUntil: 'domcontentloaded' });
   await page.waitForSelector('.pcard[data-slug="fix"]', { timeout: 10000 });
+  // после возврата с доски заголовок снова от главной, а не от доски
+  const backTab = await page.evaluate(() => ({ title: document.title, icon: document.querySelector('link[rel="icon"]').getAttribute('href') }));
+  results.tabBack = boardTab.title.startsWith('(') && !boardTab.title.includes('Проекты')
+    && /^\(\d+\) Проекты — agent-board$/.test(backTab.title) && backTab.icon === '/static/favicon-attn.svg' ? 'ok' : { boardTab, backTab };
 
   // «В архив» из меню карточки
   await page.click('.pcard[data-slug="fix"] .more');
@@ -140,7 +150,7 @@ try {
   await page.keyboard.press('Escape');
 
   results.errors = errors;
-  ok = ['layout', 'live', 'attnLink', 'archive', 'archivedAttention', 'unarchive', 'newProject', 'dark'].every(k => results[k] === 'ok') && !errors.length;
+  ok = ['layout', 'tab', 'live', 'attnLink', 'tabBack', 'archive', 'archivedAttention', 'unarchive', 'newProject', 'dark'].every(k => results[k] === 'ok') && !errors.length;
 } catch (e) {
   results.exception = String(e && e.stack || e);
   results.errors = errors;

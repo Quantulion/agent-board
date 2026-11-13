@@ -135,6 +135,8 @@ try {
   await page.waitForFunction(() => document.querySelectorAll('.decomp g.node').length === 8, { timeout: 10000 });
   await page.waitForFunction(() => document.querySelector('.gthread .msg.pa'), { timeout: 10000 });
   results.violatedTasks = await page.$$eval('.decomp .task.viol', els => els.map(e => e.dataset.key));
+  // на разбивке вкладка без числа и без точки
+  results.tab = await page.evaluate(() => ({ title: document.title, icon: document.querySelector('link[rel="icon"]').getAttribute('href') }));
   results.summaryRows = await page.$$eval('.decomp .vsum .rule', els => els.map(e => e.textContent));
   results.stats = await page.$$eval('.decomp .stat', els => els.map(e => e.textContent));
   results.lanes = await page.$$eval('.decomp svg .lane-sub', els => els.map(e => e.textContent));
@@ -315,6 +317,7 @@ try {
 }
 console.log(JSON.stringify({ results, shots }, null, 2));
 const ok = results.violatedTasks.join() === 'T-4,T-6' && results.summaryRows.length === 2
+  && results.tab.icon === '/static/favicon.svg' && !results.tab.title.startsWith('(')
   && results.summaryRows.some(r => r.includes('Оценка задачи') && r.includes('T-4'))
   && results.lanes.some(l => l.startsWith('параллельно: ')) && results.critNodes.length > 0 && results.violNodes.join() === 'T-4,T-6'
   && results.rulesText.includes('один деплой') && results.noDod && results.stepper.includes('Разбивка')
