@@ -1,5 +1,6 @@
 // Окно «Новый проект»: название, ключ задач, тип, агенты и дополнительные настройки; создаёт проект и открывает его доску.
 import { api } from './api.js';
+import { defaultHarnessType } from './boardsettings.js';
 import { h } from './dom.js';
 import { T } from './i18n.js';
 import { boardHref } from './router.js';
@@ -93,7 +94,8 @@ export function projectErrorField(message) {
 
 // --- Окно ---
 
-// ctx: takenKeys() — занятые ключи для подсказки; client — клиент общего API (для тестов).
+// ctx: takenKeys() — занятые ключи для подсказки; settings — настройки доски, если уже прочитаны;
+// client — клиент общего API (для тестов).
 export function openNewProjectDialog(ctx = {}) {
   const client = ctx.client || api();
   const taken = () => (ctx.takenKeys ? ctx.takenKeys() : []);
@@ -136,13 +138,24 @@ export function openNewProjectDialog(ctx = {}) {
     typeCard('free', T.home.kind.free, T.np.freeText, true),
     typeCard('plan', T.home.kind.plan, T.np.planText, false));
 
-  let harness = 'claude';
+  // агент по умолчанию — как у доски: такой выбор не создаёт у проекта своего значения
+  let harness = defaultHarnessType(ctx.settings);
+  let harnessPicked = false;
   const harnessSeg = h('div', { class: 'seg', role: 'group', 'aria-label': T.np.agents },
     [['claude', 'Claude Code'], ['codex', 'Codex']].map(([id, label]) =>
-      h('button', { type: 'button', 'data-v': id, 'aria-pressed': String(id === harness), onclick: () => setHarness(id) }, label)));
+      h('button', { type: 'button', 'data-v': id, 'aria-pressed': String(id === harness), onclick: () => {
+        harnessPicked = true;
+        setHarness(id);
+      } }, label)));
   function setHarness(id) {
     harness = id;
     harnessSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === id)));
+  }
+
+  if (!ctx.settings) {
+    client.get('/settings')
+      .then(res => { if (!harnessPicked && res && res.settings) setHarness(defaultHarnessType(res.settings)); })
+      .catch(() => {});
   }
 
   const limitInput = h('input', { type: 'text', id: 'np-max_agents', inputmode: 'numeric', autocomplete: 'off', class: 'num' });

@@ -4,12 +4,12 @@ import { closeCard, openCard } from './card.js';
 import { mountDecomposition } from './decomposition.js';
 import { h, icon } from './dom.js';
 import { mountHome } from './home.js';
-import { T, currentLanguage, setLanguage, uiLanguage } from './i18n.js';
+import { T, currentLanguage, setLanguage } from './i18n.js';
 import { decompositionHref, parseRoute, withTask } from './router.js';
 import { createStore } from './store.js';
 
 const THEME_KEY = 'ab-theme';
-// последний язык интерфейса: до загрузки проекта показываем его, чтобы не мигать другим языком
+// последний язык интерфейса: до загрузки настроек доски показываем его, чтобы не мигать другим языком
 const LANG_KEY = 'ab-lang';
 const root = document.getElementById('app');
 let view = null;
@@ -114,11 +114,8 @@ function projectsView() {
     brand,
     themeButton,
     errorNotice,
-    // общий язык всех проектов становится языком главного экрана
-    onStates: states => {
-      const langs = new Set(states.filter(s => s.snapshot).map(s => uiLanguage(s.snapshot.config.language)));
-      if (langs.size === 1) applyLanguage([...langs][0], self);
-    },
+    // язык интерфейса — из настроек доски
+    onSettings: settings => applyLanguage(settings.language, self),
   });
   return self;
 }
@@ -176,6 +173,7 @@ function projectView(slug, mode) {
     destroy() { unsubscribe(); closeCard(false); destroyMode(); store.stop(); },
   };
   const unsubscribe = store.subscribe(st => {
+    // в снимке проекта — язык из настроек доски
     if (st.snapshot && st.snapshot.config) applyLanguage(st.snapshot.config.language, self);
   });
   store.start();

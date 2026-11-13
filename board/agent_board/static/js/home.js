@@ -1,5 +1,6 @@
 // Главный экран — доска проектов: проект сам переезжает между колонками по тому, что в нём происходит.
 import { api } from './api.js';
+import { boardSettingsButton } from './boardsettings.js';
 import { ATTN_LOOK, BAR_ORDER, attnText, columnCollapse, savePrefs, waitingForYou } from './board.js';
 import { color, sdot, statusOf } from './chips.js';
 import { h, icon, patchList } from './dom.js';
@@ -87,12 +88,13 @@ export function projectCardModel(snapshot, slug = snapshot.config.slug) {
   };
 }
 
-// Модель экрана: проекты по колонкам, общая полоса «Ждут вас» и сводка агентов в шапке.
-export function homeModel(states) {
+// Модель экрана: проекты по колонкам, общая полоса «Ждут вас» и сводка агентов в шапке; лимит — из настроек доски.
+export function homeModel(states, settings = null) {
   const columns = Object.fromEntries(HOME_COLUMNS.map(id => [id, []]));
   const waiting = [];
   let archiveAttention = 0;
-  const header = { active: 0, running: 0, limit: 0, queued: 0 };
+  const limit = settings && settings.global_max_agents;
+  const header = { active: 0, running: 0, limit: Number.isInteger(limit) ? limit : 0, queued: 0 };
   for (const entry of states) {
     const snap = entry.snapshot;
     const col = projectColumn(snap);
@@ -102,8 +104,6 @@ export function homeModel(states) {
     const agents = agentsOf(snap);
     header.running += agents.running;
     header.queued += agents.queued;
-    const limit = snap.config.global_max_agents;
-    if (Number.isInteger(limit) && limit > header.limit) header.limit = limit;
     const items = waitingForYou(snap);
     if (col === 'archive') archiveAttention += items.length;
     const project = projectKey(snap, entry.slug);
@@ -133,16 +133,18 @@ function loadPrefs() {
 
 // --- Вид ---
 
-// ctx: brand, themeButton, errorNotice, onStates(states) — общий язык проектов.
+// ctx: brand, themeButton, errorNotice, onSettings(settings) — настройки доски прочитаны или изменились.
 export function mountHome(root, ctx) {
   const prefs = loadPrefs();
   const collapse = columnCollapse(prefs, () => savePrefs(PREFS_KEY, prefs));
   const snapshots = new Map();
   let slugs = [];
+  let settings = null;
   let alive = true;
   let loaded = false;
   const newProject = () => openNewProjectDialog({
     takenKeys: () => takenProjectKeys(slugs.map(slug => ({ slug, snapshot: snapshots.get(slug) || null }))),
+    settings,
   });
 
   const sub = h('span', { class: 'sub' }, h('span', { class: 'skel w60' }));
@@ -163,6 +165,7 @@ export function mountHome(root, ctx) {
         h('span', { class: 'spacer' }), sync,
         h('button', { class: 'btn primary', type: 'button', 'data-action': 'new-project', onclick: newProject },
           icon('plus'), T.home.newProject),
+        boardSettingsButton({ onSaved: applySettings }),
         ctx.themeButton()),
       attn, banner),
     cols));
@@ -330,7 +333,7 @@ export function mountHome(root, ctx) {
   function paint() {
     if (!alive || !loaded) return;
     const states = slugs.map(slug => ({ slug, snapshot: snapshots.get(slug) || null }));
-    const model = homeModel(states);
+    const model = homeModel(states, settings);
     const h0 = model.header;
     sub.textContent = T.home.summary(h0.active, h0.running, h0.limit, h0.queued);
     paintAttn(model.waiting);
@@ -349,7 +352,6 @@ export function mountHome(root, ctx) {
     flag.hidden = !model.archiveAttention;
     flag.textContent = T.home.archiveAttention(model.archiveAttention);
     flag.title = flag.textContent;
-    if (ctx.onStates) ctx.onStates(states);
   }
 
   function setConnection(state, error) {
@@ -361,9 +363,21 @@ export function mountHome(root, ctx) {
     banner.replaceChildren(...(failed ? [ctx.errorNotice(error)] : []));
   }
 
-  // --- данные: список проектов, снимки и общий поток событий ---
+  // --- данные: настройки доски, список проектов, снимки и общий поток событий ---
 
   let listError = null;
+
+  function applySettings(next) {
+    if (!alive || !next) return;
+    settings = next;
+    paint();
+    if (ctx.onSettings) ctx.onSettings(settings);
+  }
+
+  async function readSettings() {
+    const res = await api(null).get('/settings');
+    applySettings(res && res.settings);
+  }
 
   async function readList() {
     const { projects } = await api(null).get('/projects');
@@ -384,7 +398,7 @@ export function mountHome(root, ctx) {
 
   async function reloadAll() {
     try {
-      const projects = await readList();
+      const [projects] = await Promise.all([readList(), readSettings()]);
       listError = null;
       await readProjects(projects);
       loaded = true;
@@ -450,6 +464,10 @@ export function mountHome(root, ctx) {
         data = JSON.parse(e.data) || {};
       } catch (err) {
         data = {};
+      }
+      if (data.type === 'settings_changed') {
+        readSettings().catch(() => {});
+        return;
       }
       if (!data.slug) return;
       if (data.type === 'project_created' || !slugs.includes(data.slug)) listDirty = true;

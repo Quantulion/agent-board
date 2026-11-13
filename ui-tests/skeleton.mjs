@@ -142,8 +142,8 @@ try {
   results.projects_light = projFile;
 
   // переключатель темы перекрывает системную
-  await page.click('.app.home .row1 > .btn.icon');
-  await page.click('.app.home .row1 > .btn.icon');
+  await page.click('.app.home .row1 > .btn.icon:last-child');
+  await page.click('.app.home .row1 > .btn.icon:last-child');
   results.themeAfterToggle = await page.evaluate(() => document.documentElement.dataset.theme);
   const projDark = path.join(out, 'skeleton-projects-dark.png');
   await page.screenshot({ path: projDark });
