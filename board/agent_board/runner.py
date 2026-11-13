@@ -30,6 +30,7 @@ from .harness import (
 from .messages import LANG_ENV, Msg, msg, normalize, reason as error_text
 from .model import DEFAULT_PRIORITY, PRIORITIES, Event, Status, Task
 from .review import RoundResult, kill_group, kill_round, make_review, port_of, prune_review_data, trim_log
+from .settings import load_settings
 from .store import PROJECT_THREAD, board_home, list_projects
 from .wakes import WakeContext
 from .worktree import (
@@ -352,8 +353,8 @@ class Runner:
             "AGENT_BOARD_PROJECT": board.store.slug,
             "AGENT_BOARD_ACTOR": "project_agent" if project else "agent",
             "AGENT_BOARD_TASK": "" if project else key,
-            # сообщения доски агент получает на языке проекта
-            LANG_ENV: normalize(board.store.load_config().language),
+            # сообщения доски агент получает на языке доски
+            LANG_ENV: normalize(load_settings().language),
             "PATH": str(board.store.root / "bin") + os.pathsep + os.environ.get("PATH", ""),
         }
 
@@ -769,7 +770,7 @@ class Runner:
             return None
         config = self._board(k[0]).store.load_config()
         task_turns = [s for s, key in self._turns if key != PROJECT_THREAD]
-        if len(task_turns) >= config.global_max_agents:
+        if len(task_turns) >= load_settings().global_max_agents:
             return "global"
         return None if task_turns.count(k[0]) < config.max_agents else "project"
 

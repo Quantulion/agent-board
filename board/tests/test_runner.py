@@ -19,6 +19,7 @@ from agent_board.harness import FakeHarness
 from agent_board.messages import CATALOG, msg
 from agent_board.model import Status
 from agent_board.server import BoardServer
+from agent_board.settings import update_settings
 from agent_board.store import ProjectStore
 from agent_board.worktree import ensure_worktree, run_git
 
@@ -64,6 +65,10 @@ def task(store, key):
 @pytest.fixture
 def make_project(tmp_home, git_repo):
     def make(**kw):
+        # язык и общий лимит — настройки всей доски
+        board_fields = {name: kw.pop(name) for name in ("language", "global_max_agents") if name in kw}
+        if board_fields:
+            update_settings("user", board_fields)
         kw.setdefault("repos", [{"name": "app", "path": str(git_repo), "base": "main"}])
         kw.setdefault("harness", {"type": "fake"})
         if "stage" not in kw:
@@ -211,7 +216,7 @@ def test_resume_turn_gets_task_system_prompt_from_current_config(make_project, s
     board = srv.board_for("pay")
     add(srv, "T-1")
     wait_events(store, "turn_finished", "T-1")
-    board.update_config({"language": "эсперанто"})
+    update_settings("user", {"language": "эсперанто"})
     # act
     board.post_message("T-1", "user", "продолжай")
     wait_events(store, "turn_finished", "T-1", count=2)
@@ -398,7 +403,7 @@ def test_running_task_on_start_is_interrupted_and_resumed(make_project, start_se
 
 def test_running_task_on_start__project_language__interruption_note_in_that_language(
         make_project, start_server, calls, git_repo, monkeypatch):
-    # arrange: язык процесса противоположен языку проекта — сообщение должно следовать проекту
+    # arrange: язык процесса противоположен языку доски — сообщение должно следовать доске
     monkeypatch.setenv("AGENT_BOARD_LANG", "ru")
     store = make_project(language="en")
     save_task_in_work(store, git_repo, agent_state="running")
@@ -1090,7 +1095,7 @@ def test_queued_task_wait_reason_follows_the_limit_that_blocks_it(make_project, 
     wait_for(lambda: task(store, "B").agent_state == "waiting_turn", what="B в очереди")
     first = task(store, "B").wait_reason
     # act
-    srv.board_for("pay").set_config("user", {"global_max_agents": 2})
+    srv.hub.settings_changed(update_settings("user", {"global_max_agents": 2})["changed"])
     wait_for(lambda: task(store, "B").wait_reason == "project", what="B упёрся в лимит проекта")
     gate.touch()
     wait_events(store, "turn_finished", "B")

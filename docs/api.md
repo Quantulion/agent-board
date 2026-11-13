@@ -4,7 +4,7 @@ The board serves a JSON API on `http://127.0.0.1:<port>/api/`. The CLI and the w
 tools. The port and token of the running board are in `<home>/server.json`.
 
 - Every request needs the token: the `X-Board-Token` header (or the `board_token` cookie set by the board link).
-- POST bodies are JSON objects. User actions carry `"actor": "user"`; the actor decides what is allowed (see
+- POST and PUT bodies are JSON objects. User actions carry `"actor": "user"`; the actor decides what is allowed (see
   [Security](security.md)).
 - `X-Board-Lang: en|ru` selects the language of error messages.
 - Errors: `{"error": "…"}` with 400 (invalid request), 401 (no token), 403 (not allowed for this actor or host),
@@ -19,12 +19,14 @@ tools. The port and token of the running board are in `<home>/server.json`.
 | `GET /api/p/<slug>/state` | the project snapshot: `config`, `tasks`, `proposals`, `project_agent {state, turn_error, wait_reason, session_id, parked, turn_process}`, `project_unread`, `project_thread_size`, `tracker_sync`, `last_seq` |
 | `GET /api/p/<slug>/events?since=N` | `{events}` after event number `N` |
 | `GET /api/p/<slug>/stream?since=N` | Server-Sent Events: the same events live (`Last-Event-ID` is honoured) |
-| `GET /api/stream` | Server-Sent Events for all projects: an `event: project` with `{slug, seq, type}` for every journal event of any project and `{slug, seq: 0, type: "project_created"}` when a project is created; no replay, read the details from the project itself |
+| `GET /api/stream` | Server-Sent Events for all projects: an `event: project` with `{slug, seq, type}` for every journal event of any project, `{slug, seq: 0, type: "project_created"}` when a project is created and `{slug: null, seq: 0, type: "settings_changed", fields}` when the board settings change; no replay, read the details from the project itself |
+| `GET /api/settings` | `{settings: {language, global_max_agents, harness, review}}` — the board settings, see [Board settings](#board-settings) |
+| `GET /api/settings/schema` | `{fields: [{name, type, default, description, inherited, shape?}]}` |
 | `GET /api/p/<slug>/threads/<thread>` | `{messages}` of a task thread or `_project` |
 | `GET /api/p/<slug>/tasks/<KEY>/diff` | `{base, files, diff, truncated}` — task changes against its base branch (up to 400 KB) |
 | `GET /api/p/<slug>/file?path=P` | a local file from a project link, see [Links](configuration.md#links) |
-| `GET /api/p/<slug>/config?actor=user` | `{config}` — the settings (no secrets: only variable names and paths) |
-| `GET /api/p/<slug>/config/schema` | `{fields: [{name, type, default, description, shape?}], not_settable}` |
+| `GET /api/p/<slug>/config?actor=user` | `{config}` — the effective settings (no secrets: only variable names and paths): inherited `harness` and `review` filled with the board values, `overrides` — the inherited fields the project sets itself, `language` and `global_max_agents` — the board values; the same `config` is in `/state` |
+| `GET /api/p/<slug>/config/schema` | `{fields: [{name, type, default, description, shape?}], not_settable, board_fields, inherited}` |
 | `GET /api/fs/complete?path=P` | `{items: [{path, abs, git, branch}]}` — up to 20 folders on this machine matching the typed path, see [Repository by path](#repository-by-path) |
 
 ## Tasks
@@ -54,9 +56,10 @@ tools. The port and token of the running board are in `<home>/server.json`.
 
 | Request | Body | Who |
 |---|---|---|
-| `POST /api/projects` | `{actor, title, key, kind: "free", harness_type?, language?, max_agents?, auto_approve?, project_agent_tasks?}` → `{slug, key, title}`, see [New project](#new-project) | user |
+| `POST /api/projects` | `{actor, title, key, kind: "free", harness_type?, max_agents?, auto_approve?, project_agent_tasks?}` → `{slug, key, title}`, see [New project](#new-project) | user |
+| `PUT /api/settings` | `{actor, fields, dry_run}` → `{settings, saved, changed}`, see [Board settings](#board-settings) | user |
 | `POST /api/p/<slug>/stage` | `{stage, actor}` | user |
-| `POST /api/p/<slug>/config` | `{actor, fields, dry_run}` → `{config, saved, events}`; `fields: {}` with `dry_run: true` checks the saved file | user |
+| `POST /api/p/<slug>/config` | `{actor, fields, dry_run}` → `{config, saved, events}`; `fields: {}` with `dry_run: true` checks the saved file; `harness: null` or `review: null` returns the board value; `language` and `global_max_agents` — 400 | user |
 | `POST /api/p/<slug>/ship` | `{keys, actor}` | user |
 | `POST /api/p/<slug>/tracker/create`, `/check`, `/sync` | `{actor}` | user |
 | `POST /api/p/<slug>/proposals` | `{kind, payload, reason}` → also `{proposal_id}` | project agent |
@@ -70,9 +73,20 @@ skill or `agent-board init`, and `kind: "plan"` is rejected with 400. `key` is t
 then up to 9 letters or digits. The project gets `slug = key` in lower case, and its tasks are `KEY-1`, `KEY-2`…
 If the key is taken by another project's slug or by the task key prefix of any project (`AB` while another project
 has `AB-1`), the board adds a number: `FIX` → `FIX2`, `FIX3`…; the answer carries the key actually used. The new
-project starts at the `work` stage with no repositories, and `global_max_agents` is copied from the existing projects
-(the largest one). `harness_type` is `claude` or `codex`; the other options are the settings of the same name.
+project starts at the `work` stage with no repositories and inherits `harness` and `review` from the board settings.
+`harness_type` is `claude` or `codex`: equal to the board's agent type it is inherited, otherwise it becomes the
+project's own `harness`. The other options are the settings of the same name; `language` is a board setting and is
+rejected here.
 Nothing is started: agents run only after user actions.
+
+### Board settings
+
+`PUT /api/settings` changes the [board settings](configuration.md#board-settings) — the language, the server-wide
+agent limit and the default `harness` and `review` of projects — for the user only (another actor — 403). `fields`
+holds the fields to change, each replaced whole and checked as in `config set` (an unknown field or a bad value —
+400); `dry_run: true` only checks. The answer: `settings` — the resulting values, `saved`, `changed` — the fields
+whose value changed. After a save every project where a changed field is in effect gets a
+`config_changed {fields, settings: true}` event, and `/api/stream` gets a `settings_changed` item.
 
 ### Repository by path
 

@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from .config import ProjectConfig
 from .model import DEFAULT_PRIORITY, Event, Task
+from .settings import load_settings
 
 _DIR = Path(__file__).parent / "prompts"
 _NONE = "(none)"
@@ -44,7 +45,7 @@ def _resources_section(config: ProjectConfig, board_cli: str) -> str:
 def task_system(config: ProjectConfig, board_cli: str) -> str:
     return _render("task_system.md", {
         "board_cli": board_cli,
-        "language": config.language,
+        "language": load_settings().language,
         "resources_section": _resources_section(config, board_cli),
     })
 
@@ -146,7 +147,7 @@ def project_prompt(config: ProjectConfig, snapshot: dict, board_cli: str) -> str
         "board_cli": board_cli,
         "title": config.title,
         "slug": config.slug,
-        "language": config.language,
+        "language": load_settings().language,
         "project_brief": _or_none(config.project_brief),
         "decomposition_rules": _or_none(config.decomposition_rules),
         "repos_text": _repos_text(config),

@@ -68,7 +68,8 @@ including resumed sessions. The raw stream of each turn is written to `<home>/pr
 
 ### Concurrency and priorities
 
-Concurrency is limited by `max_agents` per project and `global_max_agents` per server; the rest wait in a queue.
+Concurrency is limited by `max_agents` per project and `global_max_agents` per server (a
+[board setting](configuration.md#board-settings)); the rest wait in a queue.
 A queued turn has `agent_state: waiting_turn` and `wait_reason` (`project` or `global` — which limit is reached);
 the card, the open card and the project panel show it with a hint on how to raise the limit.
 
@@ -162,7 +163,7 @@ the user applies it with one button in the "Project" panel or rejects it (the pr
 | `add_task` | `{"task": {...}}` (fields as in `add-task`) | `add-task` |
 | `set_deps` | `{"key", "deps": [...]}` | `deps` |
 | `cancel_task` | `{"key"}` | move to `cancelled` |
-| `set_config` | `{"fields": {...}}` (as in `config set`) | `config set` |
+| `set_config` | `{"fields": {...}}` (as in `config set`; board settings such as `language` are not accepted) | `config set` |
 | `set_status` | `{"key", "to", "from"?}` | a status change by the user; `approved` works like the Approve button, only from `in_review` |
 | `ship` | `{"keys": [...]}` | `ship` |
 | `stage` | `{"stage"}` | `stage` |
@@ -196,6 +197,6 @@ passes its path as `repo_path`. With the setting off the project agent only prop
 ## Shared resources
 
 An agent runs long, resource-heavy commands (a test stand, a database, an emulator) via
-`agent-board lock-run <resource> -- <command>`; resources are declared in [`resources`](configuration.md#fields).
+`agent-board lock-run <resource> -- <command>`; resources are declared in [`resources`](configuration.md#project-fields).
 Only one task holds a resource at a time; the others queue, and the queue survives a board restart. Task cards show
 whether the task holds a resource or its place in the queue.

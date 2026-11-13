@@ -11,12 +11,13 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Set, Tuple
 
 from . import fspaths
 from .config import (
-    LEGACY_SHIP_COMMAND, ProjectConfig, check_field_names, clean_links, validate_config as validate_project_config,
+    INHERITED, LEGACY_SHIP_COMMAND, ProjectConfig, check_field_names, clean_links, validate_config as validate_project_config,
     validate_fields, validate_structure,
 )
 from .graph import dependents, display_status, open_deps, ready_tasks, validate_deps
 from .messages import Msg, localize, msg, normalize
 from .model import PRIORITIES, Event, Message, Proposal, Question, Status, Task
+from .settings import assign, config_view, load_settings, overridden
 from .ship import check_auto, check_request, is_shipping, order as ship_order, settings as ship_settings
 from .tracker import check_issue_key, is_http_url, validate_config as validate_tracker
 from .store import PROJECT_THREAD, ProjectStore, _check_ident
@@ -101,7 +102,8 @@ EVENT_TYPES: Dict[str, str] = {
     "lock_acquired": "key, resource",
     "lock_released": "key, resource",
     "stage_changed": "from, to — пользователь перевёл проект на другую стадию",
-    "config_changed": "fields [имена изменённых настроек] — пользователь изменил настройки проекта",
+    "config_changed": "fields [имена изменённых настроек], settings (true — изменились настройки доски) — "
+                      "пользователь изменил настройки проекта или доски",
     "config_migrated": "field, to, moved — устаревшее поле настроек перенесено на новое место при чтении",
     "project_agent_changed": "state, parked, wait_reason — раннер изменил состояние агента проекта",
     "review_requested": "key — пользователь попросил открыть раунд ревью",
@@ -268,11 +270,13 @@ class Board:
         self.terminal_command_for: Optional[Callable[[Task], Optional[str]]] = None
         # ресурсы, которые задача держит (position 0) или ждёт; ставит сервер, у которого очередь ресурсов
         self.locks_for: Optional[Callable[[str], List[dict]]] = None
+        # настройки доски переносятся из проектов прежнего формата раньше, чем проект перепишет свой файл
+        load_settings()
         self._migrate_config()
 
     def _localized(self, value):
-        """Сообщения каталога в сохраняемых данных переводятся на язык проекта в момент записи."""
-        return localize(value, normalize(self.store.load_config().language))
+        """Сообщения каталога в сохраняемых данных переводятся на язык доски в момент записи."""
+        return localize(value, normalize(load_settings().language))
 
     def record(self, type: str, data: dict) -> Event:
         """Записывает в журнал событие, произошедшее вне Board (например, события раннера)."""
@@ -295,7 +299,7 @@ class Board:
         with self._lock:
             config = self.store.load_config()
             for name, value in fields.items():
-                setattr(config, name, value)
+                assign(config, name, value)
             ship = config.ship if isinstance(config.ship, dict) else {}
             if "ship" in fields and ship.get("command"):
                 ship_settings(config)
@@ -331,18 +335,28 @@ class Board:
                 config.links = clean_links(config.links)
                 if not dry_run:
                     self.store.save_config(config)
-                result = config.to_dict()
-                before = current.to_dict()
-                changed = sorted(k for k in fields if result.get(k) != before.get(k))
+                result = config_view(config)
+                before = config_view(current)
+                changed = sorted(k for k in fields if result.get(k) != before.get(k)
+                                 or (k in result["overrides"]) != (k in before["overrides"]))
                 events = [] if dry_run or not changed else [self._emit("config_changed", {"fields": changed})]
                 return {"config": result, "saved": not dry_run, "events": [e.to_dict() for e in events]}
         raise ConfigConflict(msg("board.config_conflict", names=", ".join(sorted(fields))))
+
+    def settings_changed(self, names: Iterable[str]) -> List[Event]:
+        """Изменились настройки доски: проект получает событие о тех полях, что действуют у него."""
+        with self._lock:
+            own = set(overridden(self.store.load_config()))
+            affected = sorted(name for name in names if name not in own)
+            if not affected:
+                return []
+            return [self._emit("config_changed", {"fields": affected, "settings": True})]
 
     @staticmethod
     def _merged_config(config: ProjectConfig, fields: dict) -> ProjectConfig:
         merged = copy.deepcopy(config)
         for name, value in fields.items():
-            setattr(merged, name, copy.deepcopy(value))
+            assign(merged, name, copy.deepcopy(value))
         return merged
 
     def _migrate_config(self) -> None:
@@ -398,7 +412,7 @@ class Board:
                 d["open_questions"] = sum(1 for q in t.questions if q.answer is None)
                 items.append(d)
             snap = {
-                "config": config.to_dict(),
+                "config": config_view(config),
                 "tasks": items,
                 "proposals": [p.to_dict() for p in self.store.load_proposals()],
                 "project_unread": meta["project_unread"],
@@ -1063,8 +1077,15 @@ class Board:
         if not isinstance(fields, dict) or not fields:
             raise ValueError(msg("board.proposal_fields"))
         check_field_names(fields)
-        current = self.store.load_config().to_dict()
-        if all(current.get(name) == value for name, value in fields.items()):
+        current = config_view(self.store.load_config())
+
+        def unchanged(name, value) -> bool:
+            # сброс к значению доски ничего не меняет, если проект своё значение и не задавал
+            if name in INHERITED and value is None:
+                return name not in current["overrides"]
+            return current.get(name) == value
+
+        if all(unchanged(name, value) for name, value in fields.items()):
             raise ValueError(msg("board.proposal_no_change"))
         return {"config": {name: current.get(name) for name in sorted(fields)}}
 

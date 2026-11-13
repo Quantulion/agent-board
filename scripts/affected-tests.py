@@ -60,6 +60,8 @@ RULES = [
     ("board/agent_board/runner.py", ["test_runner.py", "test_e2e.py", "test_harness.py", "test_resources.py"]),
     ("board/agent_board/schema.py", ["test_server.py", "test_cli.py"]),
     ("board/agent_board/server.py", ["test_server.py", "test_cli.py", "test_e2e.py"]),
+    ("board/agent_board/settings.py", ["test_settings.py", "test_board.py", "test_projects.py", "test_server.py",
+                                       "test_cli.py", "test_runner.py"]),
     ("board/agent_board/ship.py", ["test_ship.py", "test_runner.py", "test_server.py"]),
     ("board/agent_board/store.py", ["test_store.py", "test_board.py", "test_proposals.py", "test_concurrency.py"]),
     ("board/agent_board/tracker.py", ["test_tracker.py", "test_server.py", "test_cli.py", "test_e2e.py"]),

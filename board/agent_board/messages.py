@@ -89,6 +89,15 @@ CATALOG: Dict[str, tuple] = {
                     "настройки проекта: показать, изменить или проверить (только пользователь)"),
     "help.config_get": ("show settings", "показать настройки"),
     "help.as_json": ("print as a JSON object", "вывести JSON-объектом"),
+    "help.settings": ("board settings for all projects: language, server agent limit, default agent and review; "
+                      "show or change (user only)",
+                      "настройки всей доски: язык, общий лимит агентов, агент и ревью по умолчанию; показать или "
+                      "изменить (только пользователь)"),
+    "help.settings_get": ("show board settings", "показать настройки доски"),
+    "help.settings_set": ("change board settings fields", "изменить поля настроек доски"),
+    "help.settings_fields": ("board settings fields as a JSON object", "поля настроек доски JSON-объектом"),
+    "help.settings_schema": ("allowed board settings fields; the board is not needed",
+                             "допустимые поля настроек доски; доска не нужна"),
     "help.config_set": ("change settings fields (all save checks)", "изменить поля настроек (все проверки сохранения)"),
     "help.config_fields": ("settings fields as a JSON object", "поля настроек JSON-объектом"),
     "help.dry_run": ("only validate, do not save", "только проверить, не сохраняя"),
@@ -352,6 +361,11 @@ CATALOG: Dict[str, tuple] = {
     "ship.dep_not_approved": ("{key}: dependency {dep} is not approved yet ({status})",
                               "{key}: зависимость {dep} ещё не одобрена ({status})"),
     # --- настройки проекта ---
+    "config.board_field": ("Field {name} is a board setting for all projects: agent-board settings set",
+                           "Поле {name} — настройка всей доски: agent-board settings set"),
+    "settings.user_only": ("Only the user can change board settings", "Настройки доски меняет только пользователь"),
+    "settings.unknown_field": ("Unknown board settings field: {name} (known: {fields})",
+                               "Неизвестное поле настроек доски: {name} (есть: {fields})"),
     "config.not_settable": ("Field {name} cannot be changed in settings: {reason}",
                             "Поле {name} нельзя менять в настройках: {reason}"),
     "config.slug_fixed": ("the project name does not change", "имя проекта не меняется"),

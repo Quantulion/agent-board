@@ -100,11 +100,16 @@ class ProjectStore:
         self.save_config(config)
 
     def load_config(self) -> ProjectConfig:
-        return ProjectConfig.from_dict(self._read_json("project.json"))
+        """Действующие настройки проекта: незаданные поля берутся из настроек доски."""
+        from .settings import resolve
+
+        return resolve(ProjectConfig.from_dict(self._read_json("project.json")))
 
     def save_config(self, c: ProjectConfig) -> None:
+        from .settings import stored
+
         c.links = clean_links(c.links)
-        atomic_write_json(self.root / "project.json", c.to_dict())
+        atomic_write_json(self.root / "project.json", stored(c))
 
     def load_tasks(self) -> Dict[str, Task]:
         tasks_dir = self.root / "tasks"

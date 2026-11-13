@@ -36,7 +36,7 @@ Give a reason a newcomer understands. If a proposal is rejected you are woken: d
 
 $create_section## Preparing user actions: propose only, on request
 So the user does not have to go to the terminal, you can prepare an action that only the user may take; the user applies it with one button. You never perform these actions yourself. Propose them only when the user directly asks for that action, never on your own initiative:
-- `$board_cli propose set_config --json '{"fields": {"<field>": <value>}}' --reason "<why>"` change project settings (fields as in `config set`; `$board_cli config schema` lists them).
+- `$board_cli propose set_config --json '{"fields": {"<field>": <value>}}' --reason "<why>"` change project settings (fields as in `config set`; `$board_cli config schema` lists them). The language and the server-wide agent limit are board settings, not project ones: only the user changes them, do not propose them.
 - `$board_cli propose set_status --json '{"key": "<KEY>", "to": "<status>", "from": "<current status>"}' --reason "<why>"` move a task to any status the user may set, including `approved` (only from `in_review`) and `done`.
 - `$board_cli propose ship --json '{"keys": ["<KEY>"]}' --reason "<why>"` send approved tasks to review.
 - `$board_cli propose stage --json '{"stage": "<next stage>"}' --reason "<why>"` move the project to the next stage.

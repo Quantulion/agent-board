@@ -8,7 +8,7 @@ import { setLanguage } from '../../agent_board/static/js/i18n.js';
 setLanguage('ru');
 
 const form = extra => ({
-  title: 'Мелкие доработки', key: 'FIX', harness: 'claude', language: 'ru', max_agents: '3', review: true,
+  title: 'Мелкие доработки', key: 'FIX', harness: 'claude', max_agents: '3', review: true,
   agentTasks: true, ...extra,
 });
 
@@ -66,7 +66,6 @@ test('validateNewProject: пустое название и недопустим�
   assert.ok(validateNewProject(form({ key: '1AB' })).key);
   assert.ok(validateNewProject(form({ key: '' })).key);
   assert.ok(validateNewProject(form({ max_agents: '0' })).max_agents);
-  assert.ok(validateNewProject(form({ language: '' })).language);
 });
 
 test('projectPayload: проект без плана, ревью перед коммитом — это выключенное автоодобрение', () => {
@@ -75,7 +74,7 @@ test('projectPayload: проект без плана, ревью перед ко
 
   // assert
   assert.deepEqual(body, {
-    actor: 'user', title: 'Мелкие доработки', key: 'FIX', kind: 'free', harness_type: 'codex', language: 'ru',
+    actor: 'user', title: 'Мелкие доработки', key: 'FIX', kind: 'free', harness_type: 'codex',
     max_agents: 5, auto_approve: true, project_agent_tasks: false,
   });
 });

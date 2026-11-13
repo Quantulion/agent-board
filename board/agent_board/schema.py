@@ -4,7 +4,7 @@ from dataclasses import MISSING, fields
 from typing import List
 
 from . import harness, ship, tracker
-from .config import HARNESS_TYPES, NOT_SETTABLE, REVIEW_TOOLS, ProjectConfig
+from .config import BOARD_FIELDS, HARNESS_TYPES, INHERITED, NOT_SETTABLE, REVIEW_TOOLS, ProjectConfig
 
 # описания полей для `config schema`: их читает скилл настройки, поэтому по-английски
 DESCRIPTIONS = {
@@ -15,24 +15,23 @@ DESCRIPTIONS = {
                     "commit, rebase of dependents and ship.on_approve as on user approval; research tasks are "
                     "not auto-approved.",
     "max_agents": "Max concurrent task agent turns in this project; the project agent is not counted.",
-    "global_max_agents": "Max concurrent task agent turns on the whole server; project agents run on top of it, one turn per project.",
     "project_agent_status": "Let the project agent change task statuses itself at the user's direct request "
                             "(done, in_progress, not_started, cancelled, external blocker); approval stays with the "
                             "user. false: it only proposes, the user applies with a button.",
     "project_agent_tasks": "Let the project agent create a task itself at the user's direct request; tasks it wants on "
                            "its own initiative still go through a proposal.",
     "archived": "Project is in the archive on the home screen; it opens and works as usual.",
-    "language": "Language of the UI and agent messages (e.g. ru, en).",
     "repos": "Project repositories: name, absolute path to a git work tree, base branch.",
     "tracker": "Issue tracker for creating issues and reading their statuses; secrets only by env var name or "
                "file path.",
-    "review": "Code review tool for review rounds of finished tasks.",
+    "review": "Code review tool for review rounds of finished tasks; null: the board default (settings).",
     "ship": "Command that sends an approved task branch to review (push, PR/MR); runs on user request, "
             "or right after approval with on_approve.",
     "resources": "Shared resources with exclusive access for `agent-board lock-run` (test stands, functional tests).",
     "agent_rules": "Extra rules added to every task agent and project agent prompt (links to CLAUDE.md/AGENTS.md, "
                    "build and test commands).",
-    "harness": "Agent CLI that runs background sessions and its permission mode.",
+    "harness": "Agent CLI that runs background sessions and its permission mode; null: the board default "
+               "(settings).",
     "branch_template": "Task branch name template.",
     "project_brief": "Project description for the project agent: goal, key decisions, constraints.",
     "links": "Project links shown in the UI (plan, spec, mockups).",
@@ -40,7 +39,17 @@ DESCRIPTIONS = {
                            "the project agent checks tasks against them.",
 }
 
-_TYPES = {"str": "string", "int": "integer", "bool": "boolean", "dict": "object", "List[dict]": "array"}
+_TYPES = {"str": "string", "int": "integer", "bool": "boolean", "dict": "object", "Optional[dict]": "object",
+          "List[dict]": "array"}
+
+# описания настроек доски для `settings schema`
+SETTINGS_DESCRIPTIONS = {
+    "language": "Language of the UI and agent messages for all projects (e.g. ru, en).",
+    "global_max_agents": "Max concurrent task agent turns on the whole server; project agents run on top of it, "
+                         "one turn per project.",
+    "harness": "Default agent CLI for projects that do not set their own harness.",
+    "review": "Default code review tool for projects that do not set their own review.",
+}
 
 
 def _shapes() -> dict:
@@ -141,7 +150,24 @@ def config_schema() -> dict:
         if f.name in shapes:
             item["shape"] = shapes[f.name]
         items.append(item)
-    return {"fields": items, "not_settable": sorted(NOT_SETTABLE)}
+    return {"fields": items, "not_settable": sorted(NOT_SETTABLE), "board_fields": list(BOARD_FIELDS),
+            "inherited": list(INHERITED)}
+
+
+def settings_schema() -> dict:
+    """Описание настроек всей доски: тип, значение по умолчанию и допустимые значения."""
+    from .settings import BoardSettings
+
+    shapes = _shapes()
+    items = []
+    defaults = BoardSettings()
+    for f in fields(BoardSettings):
+        item = {"name": f.name, "type": _TYPES[str(f.type)], "default": getattr(defaults, f.name),
+                "description": SETTINGS_DESCRIPTIONS[f.name], "inherited": f.name in INHERITED}
+        if f.name in shapes:
+            item["shape"] = shapes[f.name]
+        items.append(item)
+    return {"fields": items}
 
 
 def _values(item: dict) -> str:
