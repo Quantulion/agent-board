@@ -135,6 +135,7 @@ try {
   await page.waitForSelector('.attn .it.q', { timeout: 10000 });
   await page.click('.attn .it.q');
   await page.waitForSelector('.drawer[data-key="PAY-105"] .question', { timeout: 10000 });
+  results.questionHead = await page.$eval('.question .qh', el => el.textContent);
   results.hashOnOpen = await page.evaluate(() => location.hash);
   results.openTab = await page.$eval('.tabs [aria-selected="true"]', el => el.dataset.tab);
   results.tabs = await page.$$eval('.tabs button', els => els.map(e => e.textContent));
@@ -322,6 +323,7 @@ try {
 console.log(JSON.stringify({ results, shots }, null, 2));
 const ok = results.hashOnOpen === '#/p/pay?task=PAY-105' && results.openTab === 'overview'
   && results.recommendedChecked && results.recommendedChecked.startsWith('Складывать в outbox')
+  && results.questionHead.includes('Вопрос агента')
   && results.answerDisabled && results.statusAfterAnswer === 'На ревью'
   && results.diffFile.includes('src/shadow_writer.py') && results.reviewTab === 'Ревьюр2' && results.draftKeptAfterReview === 'Черновик второго сообщения!' && results.diffAdded.some(l => l.includes('retries = 3'))
   && results.diffFiles.join() === 'M README.md,A src/shadow_writer.py'

@@ -29,6 +29,8 @@ export function overviewPane(pc) {
     paint(t, snap) {
       const open = (t.questions || []).filter(q => !q.answer);
       patchList(questions, open, 'id', q => questionForm(pc, q));
+      // узлы вопросов переиспользуются, поэтому номер пересчитывается при каждой отрисовке
+      [...questions.children].forEach((node, i) => { node.counter.textContent = questionCounter(i, open.length); });
       questions.hidden = !open.length;
       const byKey = new Map(snap.tasks.map(x => [x.key, x]));
       const touching = proposalsTouching(snap.proposals || [], key);
@@ -63,6 +65,11 @@ export function overviewPane(pc) {
   };
 }
 
+// Номер вопроса в шапке; у единственного вопроса номера нет.
+export function questionCounter(index, total) {
+  return total < 2 ? '' : T.card.questionOf(index + 1, total);
+}
+
 function questionForm(pc, q) {
   const { key, client, drafts } = pc;
   const name = 'q-' + key + '-' + q.id;
@@ -77,24 +84,28 @@ function questionForm(pc, q) {
   const error = h('div', { class: 'ferr', role: 'alert', hidden: true });
   const send = h('button', { class: 'btn primary sm', type: 'button', onclick: submit }, icon('send'), T.card.answer);
   const radios = [];
+  const counter = h('span', { class: 'qn' });
   const node = h('section', { class: 'question' },
-    h('div', { class: 'qh' }, icon('chat'), T.card.question),
-    h('div', { class: 'qt' }, q.text),
-    q.context ? h('details', null, h('summary', null, T.card.context), md(q.context, 'ctx')) : null,
-    options.length ? h('div', { class: 'opts' }, options.map(opt => {
-      const rec = q.recommended === opt;
-      const radio = h('input', { type: 'radio', name, value: opt });
-      radio.checked = savedChoice && options.includes(savedChoice) ? savedChoice === opt : rec;
-      radio.addEventListener('change', () => { if (radio.checked) drafts.set(choiceKey, opt); });
-      radios.push(radio);
-      return h('label', { class: rec ? 'opt rec' : 'opt' }, radio,
-        h('div', null, h('div', { class: 'ot' }, opt, rec ? h('span', { class: 'rtag' }, T.card.recommended) : null)));
-    })) : null,
-    q.recommended && !options.includes(q.recommended)
-      ? h('div', { class: 'rec-why' }, icon('spark'), h('span', null, T.card.recommended + ': ' + q.recommended)) : null,
-    h('div', { class: 'composer' }, comment,
-      h('div', { class: 'row' }, h('span', { class: 'faint hint' }, T.card.answerHint), send)),
-    error);
+    h('div', { class: 'qh' }, icon('chat'), T.card.question, counter),
+    h('div', { class: 'qb' },
+      h('div', { class: 'qt' }, q.text),
+      q.context ? h('details', null, h('summary', null, T.card.context), md(q.context, 'ctx')) : null,
+      options.length ? h('div', { class: 'opts' }, options.map(opt => {
+        const rec = q.recommended === opt;
+        const radio = h('input', { type: 'radio', name, value: opt });
+        radio.checked = savedChoice && options.includes(savedChoice) ? savedChoice === opt : rec;
+        radio.addEventListener('change', () => { if (radio.checked) drafts.set(choiceKey, opt); });
+        radios.push(radio);
+        return h('label', { class: rec ? 'opt rec' : 'opt' }, radio,
+          h('span', { class: 'ot' }, opt),
+          rec ? h('span', { class: 'rtag' }, icon('spark'), T.card.recommended) : h('span'));
+      })) : null,
+      q.recommended && !options.includes(q.recommended)
+        ? h('div', { class: 'rec-why' }, icon('spark'), h('span', null, T.card.recommended + ': ' + q.recommended)) : null,
+      h('div', { class: 'composer' }, comment,
+        h('div', { class: 'row' }, h('span', { class: 'faint hint' }, T.card.answerHint), send)),
+      error));
+  node.counter = counter;
   comment.addEventListener('keydown', e => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !e.isComposing) {
       e.preventDefault();
