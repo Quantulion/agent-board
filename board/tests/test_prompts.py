@@ -6,6 +6,7 @@ from pathlib import Path
 from agent_board.config import ProjectConfig
 from agent_board.model import Event, Task
 from agent_board.prompts import digest, project_prompt, task_prompt, task_system, wake_message
+from agent_board.settings import BoardSettings, save_settings
 
 CLI = "agent-board"
 RULES = "Run tests via `make t {x}`; price is $5; never touch /etc."
@@ -14,7 +15,7 @@ RULES = "Run tests via `make t {x}`; price is $5; never touch /etc."
 def _config(**kw):
     kw.setdefault("agent_rules", RULES)
     kw.setdefault("resources", [{"name": "functests", "description": "shared functional test DB"}])
-    return ProjectConfig(slug="pay", title="Платежи", language="ru", **kw)
+    return ProjectConfig(slug="pay", title="Платежи", **kw)
 
 
 def _task(**kw):
@@ -420,7 +421,8 @@ def test_project_prompt__decomposition_rules__included_or_none():
 
 def test_prompts__english_project__should_contain_no_cyrillic():
     # arrange
-    config = ProjectConfig(slug="pay", title="Payments", language="en", agent_rules="Run make test",
+    save_settings(BoardSettings(language="en"))
+    config = ProjectConfig(slug="pay", title="Payments", agent_rules="Run make test",
                            project_brief="Payment service", decomposition_rules="One repo per task",
                            resources=[{"name": "functests", "description": "shared DB"}])
     task = Task(key="PAY-7", title="Add retry", description="Retry payments", done_when="Tests pass",
@@ -437,7 +439,7 @@ def test_prompts__english_project__should_contain_no_cyrillic():
         task_system(config, CLI),
         task_prompt(task, config, Path("/repo/wt"), "main", CLI),
         project_prompt(config, snapshot, CLI),
-        project_prompt(ProjectConfig(slug="fix", title="Fixes", language="en", kind="free"), snapshot, CLI),
+        project_prompt(ProjectConfig(slug="fix", title="Fixes", kind="free"), snapshot, CLI),
         wake_message(reasons, digest(events, limit=2), CLI),
     ]
 

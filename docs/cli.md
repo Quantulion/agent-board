@@ -16,7 +16,7 @@ default. All commands print JSON results unless stated otherwise.
 | `status [--json]` | Without arguments: whether the board is running (link, version, pid) and the projects with their stages. Needs no server. With arguments (`status <KEY> <STATUS>`) it changes a task's status, see below. |
 | `version` | Print the agent-board version. |
 | `self-update [--ref REF] [--repo PATH]` | Reinstall the board from a commit, see [Installation](installation.md#updating). |
-| `init <slug> --title T [--kind plan\|free]` | Create a project. `plan` (default): tasks come from a decomposition, the project starts at the decomposition stage. `free`: tasks are added one by one, the project starts at the `work` stage. The type does not change later. `global_max_agents` is copied from the existing projects (the largest one). |
+| `init <slug> --title T [--kind plan\|free]` | Create a project. `plan` (default): tasks come from a decomposition, the project starts at the decomposition stage. `free`: tasks are added one by one, the project starts at the `work` stage. The type does not change later. `harness` and `review` are inherited from the [board settings](configuration.md#board-settings). |
 
 ## Tasks and threads
 
@@ -60,10 +60,13 @@ default. All commands print JSON results unless stated otherwise.
 | `ship <KEY>...` | Send approved tasks to review with the project's command. User only.* |
 | `tracker create\|check\|sync` | Create tasks in the tracker, check tracker access, or sync statuses now. User only.* On errors — code 1. |
 | `propose <kind> --json '{...}' [--reason R]` | A project agent proposal; the user applies or rejects it, see [Proposals](workflow.md#proposals). |
-| `config get [--json]` | Show project settings. User only.* |
-| `config set --json '{...}' [--dry-run]` | Change settings fields with all save-time checks; `--dry-run` only checks. User only.* |
+| `config get [--json]` | Show the effective project settings: inherited values filled in, `overrides` — the fields the project sets itself, see [Inheritance](configuration.md#inheritance). User only.* |
+| `config set --json '{...}' [--dry-run]` | Change settings fields with all save-time checks; `--dry-run` only checks. `{"harness": null}` (or `review`) returns the board value; `language` and `global_max_agents` are refused — they are board settings. User only.* |
 | `config validate` | Check the whole saved settings file. User only.* |
 | `config schema [--json]` | List the settings fields with type, default, description and allowed values. Needs neither a board nor a project. |
+| `settings get [--json]` (alias `show`) | Show the [board settings](configuration.md#board-settings): `language`, `global_max_agents`, default `harness` and `review`. No project needed. |
+| `settings set --json '{...}' [--dry-run]` | Change board settings fields, checked as in `config set`; `--dry-run` only checks. Projects where the field is in effect get a `config_changed` event. User only.* |
+| `settings schema [--json]` | List the board settings fields. Needs no board. |
 
 \* User commands act as the user only when `AGENT_BOARD_ACTOR` is not set. The runner starts agents with it
 (an empty value also counts as an agent), so agents are refused on user-only actions. This protects against
@@ -78,8 +81,8 @@ mistakes and is not a trust boundary, see [Security](security.md).
 | 2 | no running board (or it did not answer in time) |
 | 3 | another board is already running on this data directory, or a different version is running (`serve --detach`, `open`) |
 
-All commands except `open`, `serve`, `init`, `stop`, `version`, `self-update`, `status` without arguments and
-`config schema` talk to the running board.
+All commands except `open`, `serve`, `init`, `stop`, `version`, `self-update`, `status` without arguments,
+`config schema` and `settings schema` talk to the running board.
 
 ## Environment variables
 
@@ -89,7 +92,7 @@ All commands except `open`, `serve`, `init`, `stop`, `version`, `self-update`, `
 | `AGENT_BOARD_PROJECT` | Default project instead of `--project`. |
 | `AGENT_BOARD_ACTOR` | Who acts: `agent`, `user`, `project_agent`; the runner sets it for agents. Not set: `say` and the user commands act as `user`, `status <KEY> <STATUS>` acts as `agent` (that command is mostly called by agents, while a message from the terminal is written by a human). |
 | `AGENT_BOARD_TASK` | The agent's task, set by the runner. With it `say _project` wakes the project agent (escalation) and `lock-run` knows whose turn holds the resource. |
-| `AGENT_BOARD_LANG` | Language of CLI messages and board errors: `en` (default) or `ru`. The runner sets it for agents from the project `language`. The CLI passes it to the board in the `X-Board-Lang` header. |
+| `AGENT_BOARD_LANG` | Language of CLI messages and board errors: `en` (default) or `ru`. The runner sets it for agents from the board `language`. The CLI passes it to the board in the `X-Board-Lang` header. |
 | `AGENT_BOARD_LOCK_POLL` | How often `lock-run` polls its place in the queue, seconds (default 2). |
 | `AGENT_BOARD_FROM_REPO` | `1` makes the skill wrapper run the code from the repository instead of the installed version. |
 | `AGENT_BOARD_TRACKER_KEY`, `AGENT_BOARD_TRACKER_URL` | Set for the ship command: the task's tracker issue, see [Shipping](review-and-ship.md#shipping). |

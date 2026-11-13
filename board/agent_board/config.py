@@ -17,18 +17,17 @@ class ProjectConfig(_Serializable):
     chains: bool = True
     auto_approve: bool = False
     max_agents: int = 3
-    language: str = "ru"
     repos: List[dict] = field(default_factory=list)
     tracker: dict = field(default_factory=lambda: {"type": "none"})
-    review: dict = field(default_factory=lambda: {"tool": "crit", "binary": "crit"})
+    # None — действует значение из настроек доски
+    review: Optional[dict] = None
     ship: dict = field(default_factory=lambda: {"command": None, "timeout": 600, "on_approve": False,
                                                        "on_failure": "stay"})
     resources: List[dict] = field(default_factory=list)
     agent_rules: str = ""
     stage: str = "decomposition"
-    harness: dict = field(default_factory=lambda: {"type": "claude", "permission_mode": "auto"})
+    harness: Optional[dict] = None
     branch_template: str = "{key}"
-    global_max_agents: int = 6
     project_brief: str = ""
     decomposition_rules: str = ""
     project_session_id: Optional[str] = None
@@ -76,6 +75,10 @@ def clean_links(links) -> List[dict]:
 # настройки, которые ведёт не пользователь: имя и тип проекта, стадия (своя команда) и сессия агента проекта (раннер)
 NOT_SETTABLE = {"slug": "config.slug_fixed", "stage": "config.stage_command",
                 "project_session_id": "config.session_runner", "kind": "config.kind_fixed"}
+# настройки всей доски: в проекте их не задать
+BOARD_FIELDS = ("language", "global_max_agents")
+# настройки, которые проект берёт у доски, если не задал своё значение
+INHERITED = ("harness", "review")
 # по плану — задачи из декомпозиции и стадии; без плана — задачи по одной, сразу стадия работы
 PROJECT_KINDS = ("plan", "free")
 HARNESS_TYPES = ("claude", "codex", "fake")
@@ -187,11 +190,15 @@ def _validate_links(links) -> None:
             raise ValueError(msg("config.bad_link", item=json.dumps(item, ensure_ascii=False)[:200]))
 
 
-def _check_review(config: ProjectConfig) -> None:
-    review = config.review
+def check_review(review) -> None:
     if not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS:
         raise ValueError(msg("config.review_tool", tools=", ".join(REVIEW_TOOLS)))
     _optional_text(review.get("binary"), "review.binary")
+
+
+def _check_review(config: ProjectConfig) -> None:
+    if config.review is not None:
+        check_review(config.review)
 
 
 def _check_ship(config: ProjectConfig) -> None:
@@ -218,8 +225,7 @@ def _check_ship(config: ProjectConfig) -> None:
         raise ValueError(msg("ship.on_failure", values=", ".join(SHIP_ON_FAILURE)))
 
 
-def _check_harness(config: ProjectConfig) -> None:
-    harness = config.harness
+def check_harness(harness) -> None:
     if not isinstance(harness, dict) or harness.get("type", "claude") not in HARNESS_TYPES:
         raise ValueError(msg("config.harness_type", types=", ".join(HARNESS_TYPES)))
     for name in ("permission_mode", "model", "sandbox"):
@@ -227,6 +233,19 @@ def _check_harness(config: ProjectConfig) -> None:
     tools = harness.get("allowed_tools")
     if tools is not None and (not isinstance(tools, list) or not all(isinstance(t, str) and t for t in tools)):
         raise ValueError(msg("config.allowed_tools"))
+
+
+def _check_harness(config: ProjectConfig) -> None:
+    if config.harness is not None:
+        check_harness(config.harness)
+
+
+def check_language(language) -> None:
+    _text(language, "language", required=True)
+
+
+def check_global_max_agents(value) -> None:
+    _positive_int(value, "global_max_agents")
 
 
 def _check_tracker(config: ProjectConfig) -> None:
@@ -269,8 +288,6 @@ FIELD_CHECKS = {
     "project_agent_tasks": lambda c: _bool(c.project_agent_tasks, "project_agent_tasks"),
     "archived": lambda c: _bool(c.archived, "archived"),
     "max_agents": lambda c: _positive_int(c.max_agents, "max_agents"),
-    "global_max_agents": lambda c: _positive_int(c.global_max_agents, "global_max_agents"),
-    "language": lambda c: _text(c.language, "language", required=True),
     "agent_rules": lambda c: _text(c.agent_rules, "agent_rules"),
     "project_brief": lambda c: _text(c.project_brief, "project_brief"),
     "decomposition_rules": _check_decomposition_rules,
@@ -290,6 +307,8 @@ def check_field_names(names) -> None:
 
     known = {f.name for f in dataclass_fields(ProjectConfig)}
     for name in names:
+        if name in BOARD_FIELDS:
+            raise ValueError(msg("config.board_field", name=name))
         if name in NOT_SETTABLE:
             raise ValueError(msg("config.not_settable", name=name, reason=msg(NOT_SETTABLE[name])))
         if name not in known:
@@ -317,22 +336,21 @@ def validate_structure(config: ProjectConfig) -> None:
     _bool(config.archived, "archived")
     _bool(config.project_agent_tasks, "project_agent_tasks")
     _positive_int(config.max_agents, "max_agents")
-    _positive_int(config.global_max_agents, "global_max_agents")
-    for name in ("language", "agent_rules", "project_brief", "decomposition_rules", "branch_template"):
+    for name in ("agent_rules", "project_brief", "decomposition_rules", "branch_template"):
         _text(getattr(config, name), name)
     _repos_structure(config.repos)
     tracker = config.tracker
     if not isinstance(tracker, dict) or not isinstance(tracker.get("type", "none"), str):
         raise ValueError(msg("config.tracker_object"))
     review = config.review
-    if not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS:
+    if review is not None and (not isinstance(review, dict) or (review.get("tool") or "crit") not in REVIEW_TOOLS):
         raise ValueError(msg("config.review_tool", tools=", ".join(REVIEW_TOOLS)))
     if not isinstance(config.ship, dict):
         raise ValueError(msg("config.ship_object"))
     if not isinstance(config.resources, list):
         raise ValueError(msg("config.resources_list"))
     harness = config.harness
-    if not isinstance(harness, dict) or harness.get("type", "claude") not in HARNESS_TYPES:
+    if harness is not None and (not isinstance(harness, dict) or harness.get("type", "claude") not in HARNESS_TYPES):
         raise ValueError(msg("config.harness_type", types=", ".join(HARNESS_TYPES)))
     if not isinstance(config.links, list):
         raise ValueError(msg("config.links_list"))

@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from agent_board import messages
+from agent_board.settings import update_settings
 from agent_board.cli import build_parser, main
 from agent_board.messages import CATALOG, msg
 from agent_board.server import BoardServer
@@ -147,11 +148,13 @@ def test_source__system_message_modules__texts_come_from_catalog(name):
 def make_board(tmp_home):
     from agent_board.board import Board
     from agent_board.config import ProjectConfig
+    from agent_board.settings import BoardSettings, save_settings
     from agent_board.store import ProjectStore
 
     def make(language):
+        save_settings(BoardSettings(language=language))
         store = ProjectStore("pay")
-        store.create(ProjectConfig(slug="pay", title="Payments", language=language))
+        store.create(ProjectConfig(slug="pay", title="Payments"))
         return Board(store)
     return make
 
@@ -165,9 +168,9 @@ def _add(board, key, deps=()):
     ("en", "Applied proposal p1: dependencies of task B: none"),
     ("ru", "Применено предложение p1: зависимости задачи B: нет"),
 ])
-def test_apply_proposal__project_language__system_message_in_that_language(make_board, monkeypatch, language,
+def test_apply_proposal__board_language__system_message_in_that_language(make_board, monkeypatch, language,
                                                                            expected):
-    # arrange: язык процесса противоположен языку проекта
+    # arrange: язык процесса противоположен языку доски
     monkeypatch.setenv(messages.LANG_ENV, "ru" if language == "en" else "en")
     board = make_board(language)
     _add(board, "A")
@@ -182,7 +185,7 @@ def test_apply_proposal__project_language__system_message_in_that_language(make_
 
 
 @pytest.mark.parametrize("language", ["en", "ru"])
-def test_board_writes__catalog_messages__stored_in_project_language(make_board, monkeypatch, language):
+def test_board_writes__catalog_messages__stored_in_board_language(make_board, monkeypatch, language):
     # arrange
     monkeypatch.setenv(messages.LANG_ENV, "ru" if language == "en" else "en")
     board = make_board(language)
@@ -208,7 +211,7 @@ def test_board_writes__stored_messages__not_rewritten_when_language_changes(make
     _add(board, "A")
     board.post_message("A", "system", msg("run.interrupted"))
     # act
-    board.update_config({"language": "en"})
+    update_settings("user", {"language": "en"})
     board.post_message("A", "system", msg("run.interrupted"))
     # assert
     assert [m.text for m in board.store.read_thread("A")] == [msg("run.interrupted").render("ru"),

@@ -301,6 +301,26 @@ def cmd_config(args):
     return _request("POST", _p(args, "config"), {"actor": actor, "fields": {}, "dry_run": True})
 
 
+def cmd_settings(args):
+    if args.action == "schema":
+        from .schema import format_schema, settings_schema
+
+        schema = settings_schema()
+        if args.json:
+            return schema
+        print(format_schema(schema))
+        return None
+    if args.action in ("get", "show"):
+        settings = _request("GET", "/api/settings")["settings"]
+        if args.json:
+            return settings
+        for name, value in settings.items():
+            print("%s: %s" % (name, value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)))
+        return None
+    fields = _json_arg(args.fields_json, "--json")
+    return _request("PUT", "/api/settings", {"actor": _user_actor(), "fields": fields, "dry_run": args.dry_run})
+
+
 def cmd_propose(args):
     payload = _json_arg(args.json, "--json")
     return _request("POST", _p(args, "proposals"), {"kind": args.kind, "payload": payload, "reason": args.reason or ""})
@@ -471,6 +491,15 @@ def build_parser() -> argparse.ArgumentParser:
     actions.add_parser("validate", help=msg("help.config_validate"))
     actions.add_parser("schema", help=msg("help.config_schema")).add_argument("--json", action="store_true",
                                                                      help=msg("help.as_json"))
+    sp = add("settings", cmd_settings, help=msg("help.settings"))
+    actions = sp.add_subparsers(dest="action", required=True)
+    actions.add_parser("get", aliases=["show"], help=msg("help.settings_get")).add_argument("--json", action="store_true",
+                                                                         help=msg("help.as_json"))
+    sp_set = actions.add_parser("set", help=msg("help.settings_set"))
+    sp_set.add_argument("--json", dest="fields_json", required=True, help=msg("help.settings_fields"))
+    sp_set.add_argument("--dry-run", action="store_true", help=msg("help.dry_run"))
+    actions.add_parser("schema", help=msg("help.settings_schema")).add_argument("--json", action="store_true",
+                                                                       help=msg("help.as_json"))
     sp = add("propose", cmd_propose, help=msg("help.propose"))
     sp.add_argument("kind", help=msg("help.propose_kind"))
     sp.add_argument("--json", required=True, help=msg("help.propose_json"))

@@ -1,16 +1,78 @@
-# Project settings
+# Settings
 
-Each project keeps its settings in `<home>/projects/<slug>/project.json`. The authoritative list of fields, with
-types, defaults and allowed values, is printed by the board itself:
+Settings live on two levels:
+
+- **Board settings** — one file `<home>/settings.json` for the whole board: the language, the server-wide agent limit
+  and the defaults for the agent CLI and the review tool. See [Board settings](#board-settings).
+- **Project settings** — `<home>/projects/<slug>/project.json` per project. A project inherits `harness` and `review`
+  from the board unless it sets its own value. See [Inheritance](#inheritance).
+
+The authoritative list of fields, with types, defaults and allowed values, is printed by the board itself:
 
 ```bash
-agent-board config schema          # table
-agent-board config schema --json   # the same as GET /api/p/<slug>/config/schema
+agent-board config schema          # project fields; the same as GET /api/p/<slug>/config/schema
+agent-board settings schema        # board fields; the same as GET /api/settings/schema
 ```
 
-## Changing settings
+## Board settings
 
-Settings are changed by the user only, in one of three ways:
+| Field | Default | Purpose |
+|---|---|---|
+| `language` | `ru` | Language of the web UI (Russian for `ru`, English for anything else) and the language agents use with the user: summaries, questions, thread messages, reports. The board's own system messages in threads are written in it too; messages already saved are not rewritten when it changes. |
+| `global_max_agents` | `6` | Concurrent task agent turns on the whole server. Project agents run on top of it, one turn per project. |
+| `harness` | `{"type": "claude", "permission_mode": "auto"}` | The agent CLI for projects that do not set their own, see [Harness](#harness). |
+| `review` | `{"tool": "crit", "binary": "crit"}` | The review tool for projects that do not set their own: `crit` or `none`, see [Review](review-and-ship.md#review). |
+
+`language` and `global_max_agents` exist only here: a project cannot set them, and `config set` (or a `set_config`
+proposal) with them is rejected with a hint to use `settings set`.
+
+Board settings are changed by the user only:
+
+- `agent-board settings set --json '{"language": "en"}'` (add `--dry-run` to only check); `agent-board settings get`
+  (alias `show`) prints them;
+- `PUT /api/settings {"actor": "user", "fields": {...}, "dry_run": false}`.
+
+Values are checked as in `config set`; an unknown field is rejected. Each top-level field is replaced whole. After a
+change every project in which the changed field is in effect (all projects for `language` and `global_max_agents`,
+projects without their own value for `harness` and `review`) gets a `config_changed {fields, settings: true}` event,
+so open pages and the runner pick it up at once: raising `global_max_agents` starts queued turns right away. The
+common stream `/api/stream` also gets an item `{"slug": null, "type": "settings_changed", "fields": [...]}`. A field
+broken by hand in the file falls back to its default.
+
+### Moving from per-project settings
+
+Earlier versions kept `language` and `global_max_agents` (and full `harness` and `review`) in every project. When the
+board starts without `settings.json` (or first reads its settings), it creates the file from those projects:
+
+- `global_max_agents` — the largest among the projects;
+- `language`, `harness`, `review` — the value most projects have (on a tie, the one of the project that comes first
+  by name); a project without the field counts with the old default;
+- `language` and `global_max_agents` are removed from the projects; `harness` and `review` equal to the board value
+  stop being project overrides, the others stay overrides.
+
+A board without projects gets the defaults. Once `settings.json` exists the move never runs again, and later changes
+to the board settings are not touched.
+
+## Inheritance
+
+`harness` and `review` in `project.json` are either an object (the project's own value, an override) or `null` /
+absent (the board value applies). The effective settings — `GET /api/p/<slug>/config`, `config` in the project
+snapshot (`/state`), `agent-board config get` — already contain the resulting values, plus:
+
+- `overrides` — the list of inherited fields the project sets itself, for example `["harness"]`;
+- `language` and `global_max_agents` — the board values, read-only.
+
+Setting `harness` or `review` with `config set` makes it an override, even if it equals the board value. To drop an
+override and return to the board value, set the field to `null`:
+`agent-board --project <slug> config set --json '{"harness": null}'`. Other changes to project settings keep inherited
+fields inherited.
+
+A new project ([`POST /api/projects`](api.md#new-project), `init`) inherits everything; the agent chosen in the
+"New project" dialog becomes an override only if it differs from the board's agent.
+
+## Changing project settings
+
+Project settings are changed by the user only, in one of three ways:
 
 - `agent-board --project <slug> config set --json '{"max_agents": 2}'` (add `--dry-run` to only check);
 - the "Project settings" window: the gear next to the project name in the header. Boolean fields are toggles,
@@ -19,32 +81,31 @@ Settings are changed by the user only, in one of three ways:
 - `POST /api/p/<slug>/config {"actor": "user", "fields": {...}, "dry_run": false}`.
 
 On save the changed fields are fully checked: the ship template, tracker keys and the kind of `auth`, status
-targets, links, repositories (an absolute path to an existing git work tree, unique names), harness, review tool,
-limits (integers ≥ 1), resources, `branch_template`. The directory and `git` are checked only for new and changed
+targets, links, repositories (an absolute path to an existing git work tree, unique names), harness, review tool
+(or `null`), limits (integers ≥ 1), resources, `branch_template`. The directory and `git` are checked only for new and changed
 repositories, so a repository removed from disk does not block other changes. Slow checks run before the board lock
 is taken; under the lock the settings are re-read and checked for shape, and if the same field was changed elsewhere
 at the same time the save is retried up to three times, then fails with 409.
 
-`config validate` checks the whole saved file. An unknown field, `slug`, `kind` (set when the project is created),
+`config validate` checks the whole saved file. An unknown field, `language` and `global_max_agents` (board settings),
+`slug`, `kind` (set when the project is created),
 `stage` (use `agent-board stage`) and `project_session_id` (maintained by the runner) are rejected with 400. A change writes a `config_changed {fields}`
-event; raising `max_agents` or `global_max_agents` starts queued turns right away.
+event; raising `max_agents` starts queued turns right away.
 
 The deprecated top-level `ship_command` field is moved into `ship.command` (if that is empty) the first time the
 board reads the file, with a `config_migrated {field, to, moved}` event.
 
-## Fields
+## Project fields
 
 | Field | Default | Purpose |
 |---|---|---|
 | `title` | — | Project title shown on the board (set by `init`). |
-| `language` | `ru` | Language of the web UI (Russian for `ru`, English for anything else) and the language agents use with the user: summaries, questions, thread messages, reports. The board's own system messages in threads are written in it too; messages already saved are not rewritten when it changes. |
 | `repos` | `[]` | Project repositories: `[{"name", "path", "base"}]`. `path` is an absolute path to a git work tree, `base` the base branch (default `main`). |
 | `branch_template` | `{key}` | Task branch name template; the only placeholder is `{key}`, and it is required. |
 | `chains` | `true` | Start a dependent task as soon as its dependency is approved, from the dependency's branch. `false`: only after the dependency is done. |
 | `max_agents` | `3` | Concurrent task agent turns in this project. The project agent is not counted. |
-| `global_max_agents` | `6` | Concurrent task agent turns on the whole server. Project agents run on top of it, one turn per project. |
-| `harness` | `{"type": "claude", "permission_mode": "auto"}` | The agent CLI, see [Harness](#harness). |
-| `review` | `{"tool": "crit", "binary": "crit"}` | Review tool: `crit` or `none`, see [Review](review-and-ship.md#review). |
+| `harness` | `null` — the board value | The agent CLI, see [Harness](#harness) and [Inheritance](#inheritance). |
+| `review` | `null` — the board value | Review tool: `crit` or `none`, see [Review](review-and-ship.md#review) and [Inheritance](#inheritance). |
 | `auto_approve` | `false` | Approve code tasks without review as soon as the agent moves them to `in_review`, see [Auto-approve](review-and-ship.md#auto-approve). |
 | `ship` | `{"command": null, "timeout": 600, "on_approve": false, "on_failure": "stay"}` | The command that sends approved work to review, see [Shipping](review-and-ship.md#shipping). |
 | `tracker` | `{"type": "none"}` | Jira or GitHub Issues, see [Trackers](trackers.md). |

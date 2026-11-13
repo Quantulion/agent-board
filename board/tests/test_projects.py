@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from agent_board import projects
 from agent_board.config import ProjectConfig
+from agent_board.settings import load_settings, update_settings
 from agent_board.store import ProjectStore
 
 from conftest import make_task
@@ -73,24 +76,47 @@ def test_create_project__free__stage_work(tmp_home):
     assert (config.stage, config.kind) == ("work", "free")
 
 
-def test_create_project__global_limit_copied_from_existing(tmp_home):
+def test_create_project__settings_exist__no_global_limit_in_project(tmp_home):
     # arrange
-    _project("a", global_max_agents=15)
-    _project("b", global_max_agents=8)
+    update_settings("user", {"global_max_agents": 15})
 
     # act
-    config = projects.create_project("X", "X", "free", {})
+    projects.create_project("X", "X", "free", {})
 
     # assert
-    assert config.global_max_agents == 15
+    raw = json.loads((tmp_home / "projects" / "x" / "project.json").read_text(encoding="utf-8"))
+    assert "global_max_agents" not in raw and "language" not in raw
+    assert load_settings().global_max_agents == 15
 
 
-def test_create_project__no_projects__default_global_limit(tmp_home):
+@pytest.mark.parametrize("harness_type", ["claude", "codex"])
+def test_create_project__harness_type_as_board__no_override(tmp_home, harness_type):
+    # arrange
+    update_settings("user", {"harness": {"type": harness_type}})
+
     # act
-    config = projects.create_project("X", "X", "free", {})
+    projects.create_project("X", "X", "free", {"harness_type": harness_type})
 
     # assert
-    assert config.global_max_agents == ProjectConfig(slug="x", title="x").global_max_agents
+    raw = json.loads((tmp_home / "projects" / "x" / "project.json").read_text(encoding="utf-8"))
+    assert raw["harness"] is None
+    saved = ProjectStore("x").load_config()
+    assert saved.harness == {"type": harness_type} and saved.overrides == set()
+
+
+def test_create_project__harness_type_differs_from_board__override(tmp_home):
+    # act
+    projects.create_project("X", "X", "free", {"harness_type": "codex"})
+
+    # assert
+    saved = ProjectStore("x").load_config()
+    assert saved.harness == {"type": "codex"} and saved.overrides == {"harness"}
+
+
+def test_create_project__language_option__rejected(tmp_home):
+    # act, assert
+    with pytest.raises(ValueError):
+        projects.create_project("X", "X", "free", {"language": "en"})
 
 
 @pytest.mark.parametrize("key", ["F-1", "", "1AB", "ABCDEFGHIJK", None])
@@ -110,13 +136,12 @@ def test_create_project__empty_title__rejected(tmp_home, title):
 def test_create_project__options__applied(tmp_home):
     # act
     config = projects.create_project("X", "X", "free", {
-        "harness_type": "codex", "language": "en", "max_agents": 5, "auto_approve": True,
-        "project_agent_tasks": False})
+        "harness_type": "codex", "max_agents": 5, "auto_approve": True, "project_agent_tasks": False})
 
     # assert
     saved = ProjectStore("x").load_config()
     assert saved.harness["type"] == "codex"
-    assert (saved.language, saved.max_agents, saved.auto_approve, saved.project_agent_tasks) == ("en", 5, True, False)
+    assert (saved.max_agents, saved.auto_approve, saved.project_agent_tasks) == (5, True, False)
     assert config.to_dict() == saved.to_dict()
 
 

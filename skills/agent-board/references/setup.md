@@ -13,6 +13,9 @@ Configure a board project by asking the user short questions and writing the ans
   default is already configured: skip it unless the user asks to change it.
 - User says "don't know" or "skip": keep the default (or leave the key unset), move on, and list the field under
   "skipped" in the final summary.
+- `harness` and `review` default to the board settings (`agent-board settings get --json`); set them in the project
+  only if it needs other values, `null` returns the board value. The UI and agent language is one for the whole
+  board: change it with `settings set` only on request.
 - Never write `project.json` or any board file yourself. Every change goes through `config set`.
 - `config set` replaces each top-level field whole: send the complete object (current value + the change).
 
@@ -128,9 +131,6 @@ up to 4000 characters. The project agent checks the task graph against them.
 ### 9. Agent rules → `agent_rules`
 Text added to every agent prompt. Look for `CLAUDE.md` and `AGENTS.md` in each repo and offer to reference them by
 absolute path. Ask for build and test commands and skills agents must load.
-
-### 10. Language → `language`
-Default: the language the user writes in (`ru`, `en`, …). It sets the board UI and agent messages.
 
 ## Finish
 

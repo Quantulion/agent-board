@@ -21,7 +21,7 @@ def test_status_labels():
 
 def test_config_defaults():
     c = ProjectConfig(slug="pay", title="Платежи")
-    assert c.chains is True and c.max_agents == 3 and c.tracker == {"type": "none"} and c.review == {"tool": "crit", "binary": "crit"}
+    assert c.chains is True and c.max_agents == 3 and c.tracker == {"type": "none"} and c.review is None
 
 
 def test_task_execution_fields_roundtrip_and_defaults():
@@ -37,8 +37,8 @@ def test_config_execution_defaults():
     # arrange / act
     c = ProjectConfig(slug="pay", title="Платежи")
     # assert
-    assert c.harness == {"type": "claude", "permission_mode": "auto"}
-    assert c.branch_template == "{key}" and c.global_max_agents == 6
+    assert c.harness is None and c.review is None
+    assert c.branch_template == "{key}"
     assert c.project_brief == "" and c.project_session_id is None
 
 

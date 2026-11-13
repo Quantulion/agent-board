@@ -104,7 +104,8 @@ def test_setup__commands__exist_with_their_options(tmp_path):
 def test_setup__config_set_examples__use_schema_fields_and_shapes(schema):
     # arrange
     tracker = schema["tracker"]["shape"]
-    payloads = [json.loads(t[t.index("--json") + 1]) for t in _commands() if "set" in t and "--json" in t]
+    payloads = [json.loads(t[t.index("--json") + 1]) for t in _commands()
+                if "config" in t and "set" in t and "--json" in t]
     # act / assert
     assert payloads
     for fields in payloads:

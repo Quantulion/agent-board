@@ -17,12 +17,12 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, unquote, urlsplit
 
-from . import __version__, fspaths, projects, tracker
+from . import __version__, fspaths, projects, settings, tracker
 from .board import Board, ConfigConflict, new_task_from_dict, task_repo_path
 from .messages import LANG_HEADER, localize, msg, normalize, reason
 from .model import Event, Question, Status, Task
 from .resources import ResourceQueue
-from .schema import config_schema
+from .schema import config_schema, settings_schema
 from .store import ProjectStore, atomic_write_json, board_home, list_projects
 from .worktree import GitError, changed_files, diff as worktree_diff, worktree_path
 
@@ -144,6 +144,15 @@ class _Hub:
     def project_created(self, slug: str) -> None:
         self._publish({"slug": slug, "seq": 0, "type": "project_created"})
 
+    def settings_changed(self, names: List[str]) -> None:
+        """Изменились настройки доски: каждый проект, где они действуют, получает событие, затем — общий поток."""
+        for slug in list_projects():
+            try:
+                self.board(slug).settings_changed(names)
+            except (KeyError, OSError, ValueError):
+                traceback.print_exc(file=sys.stderr)
+        self._publish({"slug": None, "seq": 0, "type": "settings_changed", "fields": list(names)})
+
     def cond(self, slug: str) -> threading.Condition:
         with self._lock:
             return self._conds.setdefault(slug, threading.Condition())
@@ -238,6 +247,9 @@ class _Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self._dispatch("POST")
 
+    def do_PUT(self):
+        self._dispatch("PUT")
+
     def _send_json(self, status: int, obj, extra_headers: Optional[List[Tuple[str, str]]] = None) -> None:
         # сообщения доски уходят на языке, который запросил клиент
         obj = localize(obj, normalize(self.headers.get(LANG_HEADER)))
@@ -281,7 +293,7 @@ class _Handler(BaseHTTPRequestHandler):
             if path.startswith("/api/"):
                 if not self._token_ok(self._request_token()):
                     return self._send_json(401, {"error": "unauthorized"})
-                if method == "POST":
+                if method in ("POST", "PUT"):
                     origin = self.headers.get("Origin")
                     if origin is not None and origin not in {"http://" + h for h in self._allowed_hosts()}:
                         return self._send_json(403, {"error": "forbidden origin"})
@@ -356,6 +368,14 @@ class _Handler(BaseHTTPRequestHandler):
             return self._create_project()
         if method == "GET" and parts == ["stream"]:
             return self._common_stream()
+        if method == "GET" and parts == ["settings"]:
+            return self._send_json(200, {"settings": settings.load_settings().to_dict()})
+        if method == "GET" and parts == ["settings", "schema"]:
+            return self._send_json(200, settings_schema())
+        if method == "PUT" and parts == ["settings"]:
+            return self._update_settings()
+        if method == "PUT":
+            raise KeyError(msg("api.unknown_route"))
         if method == "GET" and parts == ["fs", "complete"]:
             return self._send_json(200, {"items": fspaths.complete((query.get("path") or [""])[0])})
         if len(parts) < 3 or parts[0] != "p":
@@ -375,7 +395,7 @@ class _Handler(BaseHTTPRequestHandler):
             # снимок тоже содержит настройки, но запрос настроек — действие пользователя; секретов в них нет
             if (query.get("actor") or [""])[0] != "user":
                 raise PermissionError(msg("api.config_read_user_only"))
-            return self._send_json(200, {"config": board.store.load_config().to_dict()})
+            return self._send_json(200, {"config": settings.config_view(board.store.load_config())})
         if rest == ["config", "schema"]:
             # описание полей настроек одинаково для всех проектов и данных проекта не содержит
             return self._send_json(200, config_schema())
@@ -580,6 +600,16 @@ class _Handler(BaseHTTPRequestHandler):
         except TypeError as e:
             raise ValueError(msg("api.bad_question", error=e))
 
+    def _update_settings(self) -> None:
+        body = self._read_body()
+        dry_run = body.get("dry_run", False)
+        if not isinstance(dry_run, bool):
+            raise ValueError(msg("api.bad_dry_run"))
+        result = settings.update_settings(_need(body, "actor"), _need(body, "fields"), dry_run)
+        if result["saved"] and result["changed"]:
+            self.app.hub.settings_changed(result["changed"])
+        self._send_json(200, result)
+
     def _create_project(self) -> None:
         body = self._read_body()
         if _need(body, "actor") != "user":
@@ -686,6 +716,8 @@ class BoardServer:
         home.mkdir(parents=True, exist_ok=True)
         self._acquire_lock(home / "server.lock")
         try:
+            # перенос настроек доски из проектов прежнего формата — до первого обращения к проектам
+            settings.load_settings()
             running = read_discovery()
             if running is not None and _port_open(running.get("port")):
                 raise ServerAlreadyRunning(

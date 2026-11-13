@@ -1,7 +1,7 @@
 // Окно «Новый проект»: название, ключ задач, тип, агенты и дополнительные настройки; создаёт проект и открывает его доску.
 import { api } from './api.js';
 import { h } from './dom.js';
-import { T, currentLanguage } from './i18n.js';
+import { T } from './i18n.js';
 import { boardHref } from './router.js';
 import { openModal, toast } from './ui.js';
 
@@ -66,7 +66,6 @@ export function validateNewProject(form) {
   else if (!PROJECT_KEY_RE.test(key)) errors.key = T.np.badKey;
   const limit = String(form.max_agents ?? '').trim();
   if (!/^\d+$/.test(limit) || Number(limit) < 1) errors.max_agents = T.np.badLimit;
-  if (!String(form.language || '').trim()) errors.language = T.np.needLanguage;
   return errors;
 }
 
@@ -77,7 +76,6 @@ export function projectPayload(form) {
     key: String(form.key).trim().toUpperCase(),
     kind: 'free',
     harness_type: form.harness === 'codex' ? 'codex' : 'claude',
-    language: String(form.language).trim(),
     max_agents: Number(String(form.max_agents).trim()),
     auto_approve: !form.review,
     project_agent_tasks: Boolean(form.agentTasks),
@@ -90,7 +88,6 @@ export function projectErrorField(message) {
   if (/Ключ|task key/i.test(m)) return 'key';
   if (/Название|title/i.test(m)) return 'title';
   if (/max_agents/i.test(m)) return 'max_agents';
-  if (/language/i.test(m)) return 'language';
   return null;
 }
 
@@ -148,8 +145,6 @@ export function openNewProjectDialog(ctx = {}) {
     harnessSeg.querySelectorAll('button').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.v === id)));
   }
 
-  const langInput = h('input', { type: 'text', id: 'np-language', autocomplete: 'off', class: 'num' });
-  langInput.value = currentLanguage() || 'ru';
   const limitInput = h('input', { type: 'text', id: 'np-max_agents', inputmode: 'numeric', autocomplete: 'off', class: 'num' });
   limitInput.value = String(DEFAULT_MAX_AGENTS);
   const toggle = (id, label, hint, checked) => {
@@ -163,7 +158,6 @@ export function openNewProjectDialog(ctx = {}) {
     h('summary', null, T.np.advanced),
     h('div', { class: 'np-adv-body' },
       h('div', { class: 'two' },
-        field('np-language', T.np.language, langInput, h('span', { class: 'hint' }, T.np.languageHint)),
         field('np-max_agents', T.np.maxAgents, limitInput, h('span', { class: 'hint' }, T.np.maxAgentsHint))),
       reviewRow, tasksRow));
 
@@ -186,7 +180,7 @@ export function openNewProjectDialog(ctx = {}) {
   ]);
   modal.classList.add('newproject');
 
-  const inputs = { title: titleInput, key: keyInput, language: langInput, max_agents: limitInput };
+  const inputs = { title: titleInput, key: keyInput, max_agents: limitInput };
   function showErrors(errors) {
     for (const [name, node] of Object.entries(errs)) {
       node.textContent = errors[name] || '';
@@ -196,7 +190,7 @@ export function openNewProjectDialog(ctx = {}) {
     general.textContent = errors.general || '';
     general.hidden = !errors.general;
     // ошибка в свёрнутом «Дополнительно» не должна прятаться
-    if (errors.language || errors.max_agents) advanced.open = true;
+    if (errors.max_agents) advanced.open = true;
     const first = Object.keys(inputs).find(n => errors[n]);
     if (first) inputs[first].focus();
   }
@@ -211,7 +205,7 @@ export function openNewProjectDialog(ctx = {}) {
   function submit() {
     if (sending) return;
     const form = {
-      title: titleInput.value, key: keyInput.value, harness, language: langInput.value, max_agents: limitInput.value,
+      title: titleInput.value, key: keyInput.value, harness, max_agents: limitInput.value,
       review: reviewBox.checked, agentTasks: tasksBox.checked,
     };
     const errors = validateNewProject(form);

@@ -1,13 +1,14 @@
 # Web interface
 
 Open the link printed by `agent-board serve` (or `agent-board status`). The interface is in Russian or English,
-following the project's `language` setting (`ru` — Russian, anything else — English), and has light, dark and
+following the board's `language` setting (`ru` — Russian, anything else — English; see
+[Board settings](configuration.md#board-settings)), and has light, dark and
 automatic themes. It is plain ES modules served by the board, with no build step and no external requests.
 
 ## Screens
 
 - **Projects** (`#/`) — the home screen, a board of projects. The header shows "N active · M agents working of
-  the limit · K waiting for a slot" (the limit is the largest `global_max_agents` among projects), the connection
+  the limit · K waiting for a slot" (the limit is the board's `global_max_agents`), the connection
   indicator and "New project" (see below). A common
   "Waiting for you" strip collects items from all projects, each marked with the project key; a click opens the card
   or the project board. Projects move between columns by themselves:
@@ -30,8 +31,8 @@ automatic themes. It is plain ES modules served by the board, with no build step
   letters and digits starting with a letter, up to 10 characters. If the key is already taken by another project or
   by the task-key prefix of another project, the hint says "FIX is taken, the project will get FIX2" — the server
   numbers the key itself (`FIX2`, `FIX3`…). Type: "No plan" only; "Planned" is shown disabled (for now it is
-  created with the skill in the agent CLI). Agents: Claude Code or Codex. "More" (collapsed): language (the current
-  interface language by default), agents in the project (3), review before commit (on; off means `auto_approve`),
+  created with the skill in the agent CLI). Agents: Claude Code or Codex (the board's agent is
+  inherited, another one becomes the project's own `harness`). "More" (collapsed): agents in the project (3), review before commit (on; off means `auto_approve`),
   project agent creates tasks on request (`project_agent_tasks`, on). Repositories are not asked for. "Create and
   open" sends `POST /api/projects` and opens the new project's board at the `work` stage; no agent starts. Server
   errors are shown under their field.
@@ -67,7 +68,7 @@ automatic themes. It is plain ES modules served by the board, with no build step
   the status transition, the tasks to ship, the stage) and the agent's reason; apply or reject it with one button.
 - **Breakdown** (decomposition, `#/p/<slug>/decomposition`) — tasks with rule checks and the "Approve breakdown" button; at the `decomposition` stage comments on
   tasks go to the project agent.
-- **Project settings** — the gear next to the project name, see [Configuration](configuration.md#changing-settings).
+- **Project settings** — the gear next to the project name, see [Configuration](configuration.md#changing-project-settings).
 - **"Waiting for you"** — a strip above the board: open questions, proposals, tasks in review, agent errors, parked
   agents, external blockers, decomposition rule violations, an unread reply of the project agent in the "Project"
   thread (it goes away once you open the thread). A click opens the relevant card or page.
