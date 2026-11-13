@@ -1,4 +1,4 @@
-// Все строки интерфейса на двух языках; язык выбирается по config.language проекта.
+// Все строки интерфейса на двух языках; язык выбирается по настройкам доски.
 
 // описания полей настроек по-русски; в английском интерфейсе описания берутся из схемы настроек
 const RU_HELP = {
@@ -9,8 +9,6 @@ const RU_HELP = {
   project_agent_tasks: 'Агент проекта сам создаёт задачу по прямой просьбе пользователя; задачи по своей инициативе он только предлагает.',
   archived: 'Проект в архиве на главном экране; открывается и работает как обычно.',
   max_agents: 'Сколько ходов агентов одновременно идёт в этом проекте.',
-  global_max_agents: 'Сколько ходов агентов одновременно идёт на всём сервере.',
-  language: 'Язык интерфейса и сообщений агентов (например, ru, en).',
   repos: 'Репозитории проекта: имя, абсолютный путь к рабочей копии git, базовая ветка.',
   tracker: 'Трекер задач для заведения задач и чтения их статусов; секреты — только именем переменной окружения или путём к файлу.',
   review: 'Инструмент ревью кода для раундов ревью готовых задач.',
@@ -504,6 +502,37 @@ const RU = {
     rejectedToast: 'Предложение отклонено',
   },
   // новая задача
+  // окно «Настройки доски»
+  bs: {
+    open: 'Настройки доски',
+    title: 'Настройки доски',
+    general: 'Вся доска',
+    language: 'Язык',
+    languageHint: 'Язык интерфейса и сообщений агентов во всех проектах',
+    needLanguage: 'Укажите язык, например ru или en',
+    limit: 'Агентов на сервере',
+    limitHint: 'Сколько агентов задач работает одновременно во всех проектах',
+    harness: 'Агент по умолчанию',
+    harnessHint: 'Его берут проекты, где агент не задан своим значением.',
+    harnessType: 'CLI агентов',
+    harnessLabels: { claude: 'Claude Code', codex: 'Codex' },
+    model: 'Модель',
+    modelPh: 'по умолчанию CLI',
+    modelHint: 'Пусто — модель, которую выбирает сам CLI',
+    permissionMode: 'Режим разрешений',
+    permissionHint: 'Фоновый агент не может спросить разрешения — режим решает, что ему можно',
+    sandbox: 'Песочница',
+    sandboxHint: 'Что агенту Codex можно менять на диске',
+    cliDefault: 'по умолчанию CLI',
+    review: 'Ревью по умолчанию',
+    reviewHint: 'Инструмент раундов ревью готовых задач для проектов без своего значения.',
+    reviewTool: 'Инструмент',
+    reviewTools: { crit: 'crit', none: 'Без ревью в браузере' },
+    reviewBinary: 'Команда',
+    reviewBinaryHint: 'Пусто — crit из PATH',
+    saved: names => 'Настройки доски сохранены: ' + names.join(', '),
+    footer: 'Действует сразу во всех проектах',
+  },
   settings: {
     open: 'Настройки проекта',
     title: 'Настройки проекта',
@@ -515,7 +544,7 @@ const RU = {
     compound: 'Составные настройки',
     jsonHint: 'Значения в формате JSON; перед сохранением их проверяет сервер.',
     labels: {
-      title: 'Название', language: 'Язык', max_agents: 'Агентов в проекте', global_max_agents: 'Агентов на сервере',
+      title: 'Название', max_agents: 'Агентов в проекте',
       chains: 'Цепочки задач', auto_approve: 'Автоодобрение',
       project_agent_status: 'Статусы от агента проекта', project_agent_tasks: 'Задачи от агента проекта',
       archived: 'В архиве', branch_template: 'Шаблон ветки', project_brief: 'Описание проекта',
@@ -548,6 +577,15 @@ const RU = {
     checking: 'Проверка…',
     saved: names => 'Настройки сохранены: ' + names.join(', '),
     noChanges: 'Изменений нет',
+    // наследование агента и ревью от настроек доски
+    inherit: {
+      board: 'Как у доски',
+      own: 'Своё значение',
+      reset: 'Станет как у доски после сохранения',
+      resetBtn: 'Сбросить к доске',
+      resetTitle: 'Убрать своё значение: проект возьмёт значение из настроек доски',
+    },
+    boardNote: 'Язык и общий лимит агентов — в настройках доски (шестерёнка на главном экране).',
     footer: 'Сохраняется от вашего имени после проверки',
   },
   nt: {
@@ -1151,6 +1189,37 @@ const EN = {
     appliedToast: what => 'Applied: ' + what,
     rejectedToast: 'Proposal rejected',
   },
+  // the "Board settings" window
+  bs: {
+    open: 'Board settings',
+    title: 'Board settings',
+    general: 'Whole board',
+    language: 'Language',
+    languageHint: 'Language of the interface and agent messages in all projects',
+    needLanguage: 'Enter a language, for example ru or en',
+    limit: 'Agents on the server',
+    limitHint: 'How many task agents work at the same time across all projects',
+    harness: 'Default agent',
+    harnessHint: 'Used by projects that do not set their own agent.',
+    harnessType: 'Agent CLI',
+    harnessLabels: { claude: 'Claude Code', codex: 'Codex' },
+    model: 'Model',
+    modelPh: 'CLI default',
+    modelHint: 'Empty — the model the CLI picks itself',
+    permissionMode: 'Permission mode',
+    permissionHint: 'A background agent cannot ask for permission — the mode decides what it may do',
+    sandbox: 'Sandbox',
+    sandboxHint: 'What the Codex agent may change on disk',
+    cliDefault: 'CLI default',
+    review: 'Default review',
+    reviewHint: 'Review round tool for finished tasks in projects without their own value.',
+    reviewTool: 'Tool',
+    reviewTools: { crit: 'crit', none: 'No browser review' },
+    reviewBinary: 'Command',
+    reviewBinaryHint: 'Empty — crit from PATH',
+    saved: names => 'Board settings saved: ' + names.join(', '),
+    footer: 'Applies to all projects at once',
+  },
   settings: {
     open: 'Project settings',
     title: 'Project settings',
@@ -1162,7 +1231,7 @@ const EN = {
     compound: 'Structured settings',
     jsonHint: 'Values in JSON; the server checks them before saving.',
     labels: {
-      title: 'Title', language: 'Language', max_agents: 'Agents in project', global_max_agents: 'Agents on server',
+      title: 'Title', max_agents: 'Agents in project',
       chains: 'Task chains', auto_approve: 'Auto-approve',
       project_agent_status: 'Project agent statuses', project_agent_tasks: 'Project agent tasks',
       archived: 'Archived', branch_template: 'Branch template', project_brief: 'Project brief',
@@ -1196,6 +1265,15 @@ const EN = {
     checking: 'Checking…',
     saved: names => 'Settings saved: ' + names.join(', '),
     noChanges: 'No changes',
+    // agent and review inherited from the board settings
+    inherit: {
+      board: 'Same as the board',
+      own: 'Own value',
+      reset: 'Becomes the board value after saving',
+      resetBtn: 'Reset to the board',
+      resetTitle: 'Drop the own value: the project takes the value from the board settings',
+    },
+    boardNote: 'Language and the overall agent limit are in the board settings (the gear on the home screen).',
     footer: 'Saved on your behalf after a check',
   },
   nt: {

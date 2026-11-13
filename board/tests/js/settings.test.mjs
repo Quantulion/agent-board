@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { setLanguage } from '../../agent_board/static/js/i18n.js';
-import { canShipOnApprove, collectChanges, errorField, formValue, parseField, settingsFields } from '../../agent_board/static/js/settings.js';
+import { canShipOnApprove, collectChanges, errorField, formValue, inheritState, parseField, settingsFields } from '../../agent_board/static/js/settings.js';
 
 const SCHEMA = {
   fields: [
@@ -11,7 +11,6 @@ const SCHEMA = {
     { name: 'repos', type: 'array', default: [], description: 'Repos', shape: { example: { name: 'api' } } },
     { name: 'tracker', type: 'object', default: { type: 'none' }, description: 'Tracker' },
     { name: 'agent_rules', type: 'string', default: '', description: 'Rules' },
-    { name: 'global_max_agents', type: 'integer', default: 6, description: 'Global' },
     { name: 'future_field', type: 'string', default: '', description: 'New' },
   ],
   not_settable: ['slug', 'stage'],
@@ -22,7 +21,7 @@ test('settingsFields: виды полей по типу схемы, просты
   const fields = settingsFields(SCHEMA);
   // assert
   assert.deepEqual(fields.map(f => [f.name, f.kind]), [
-    ['title', 'text'], ['max_agents', 'int'], ['global_max_agents', 'int'], ['chains', 'bool'],
+    ['title', 'text'], ['max_agents', 'int'], ['chains', 'bool'],
     ['agent_rules', 'textarea'], ['future_field', 'text'], ['repos', 'json'], ['tracker', 'json'],
   ]);
   assert.deepEqual(fields.find(f => f.name === 'repos').example, { name: 'api' });
@@ -37,7 +36,7 @@ test('settingsFields: пустая или битая схема — пустая
 
 test('formValue: составные — отформатированный JSON, отсутствующее значение — по умолчанию', () => {
   // arrange
-  const [title, maxAgents, , chains, , , repos, tracker] = settingsFields(SCHEMA);
+  const [title, maxAgents, chains, , , repos, tracker] = settingsFields(SCHEMA);
   // act + assert
   assert.equal(formValue(repos, [{ name: 'a' }]), '[\n  {\n    "name": "a"\n  }\n]');
   assert.equal(formValue(tracker, undefined), '{\n  "type": "none"\n}');
@@ -67,7 +66,7 @@ test('collectChanges: отправляются только изменённые
   // arrange
   setLanguage('ru');
   const fields = settingsFields(SCHEMA);
-  const config = { title: 'P', chains: true, max_agents: 3, repos: [], tracker: { type: 'none' }, agent_rules: '', global_max_agents: 6 };
+  const config = { title: 'P', chains: true, max_agents: 3, repos: [], tracker: { type: 'none' }, agent_rules: '' };
   const raws = Object.fromEntries(fields.map(f => [f.name, formValue(f, config[f.name])]));
   // act
   const same = collectChanges(fields, raws, config);
@@ -178,4 +177,59 @@ test('settingsFields: автоодобрение — в блоке после с
   // assert
   assert.deepEqual(fields.map(f => [f.name, f.group]),
     [['title', 'simple'], ['ship', 'ship'], ['auto_approve', 'after'], ['repos', 'json']]);
+});
+
+const INHERIT_SCHEMA = {
+  fields: [
+    { name: 'title', type: 'string', default: null, description: 'Title' },
+    { name: 'harness', type: 'object', default: null, description: 'Harness' },
+    { name: 'review', type: 'object', default: null, description: 'Review' },
+  ],
+  inherited: ['harness', 'review'],
+};
+const BOARD = { harness: { type: 'claude', permission_mode: 'auto' }, review: { tool: 'crit', binary: 'crit' } };
+
+test('settingsFields: агент и ревью отмечены как наследуемые от доски', () => {
+  // act
+  const fields = settingsFields(INHERIT_SCHEMA);
+  // assert
+  assert.deepEqual(fields.filter(f => f.inherited).map(f => f.name), ['harness', 'review']);
+});
+
+test('inheritState: без своего значения — как у доски, со своим — своё, правка превращает в своё', () => {
+  // arrange
+  const [, harness] = settingsFields(INHERIT_SCHEMA);
+  const inherited = { harness: BOARD.harness, overrides: [] };
+  const own = { harness: { type: 'codex' }, overrides: ['harness'] };
+  // act + assert
+  assert.equal(inheritState(harness, formValue(harness, inherited.harness), inherited, BOARD), 'board');
+  assert.equal(inheritState(harness, formValue(harness, own.harness), own, BOARD), 'own');
+  assert.equal(inheritState(harness, '{"type": "codex"}', inherited, BOARD), 'own');
+  assert.equal(inheritState(harness, '{', inherited, BOARD), 'own');
+});
+
+test('inheritState: сброшенное своё значение снимется при сохранении, пока поле не правили', () => {
+  // arrange
+  const [, harness] = settingsFields(INHERIT_SCHEMA);
+  const own = { harness: { type: 'codex' }, overrides: ['harness'] };
+  const resets = new Set(['harness']);
+  // act + assert
+  assert.equal(inheritState(harness, formValue(harness, BOARD.harness), own, BOARD, resets), 'reset');
+  assert.equal(inheritState(harness, '{"type": "codex", "model": "x"}', own, BOARD, resets), 'own');
+});
+
+test('collectChanges: сброс к доске уходит как null, без сброса значение доски — своё значение', () => {
+  // arrange
+  const fields = settingsFields(INHERIT_SCHEMA);
+  const config = { title: 'P', harness: { type: 'codex' }, review: BOARD.review, overrides: ['harness'] };
+  const raws = Object.fromEntries(fields.map(f => [f.name, formValue(f, config[f.name])]));
+  const toBoard = { ...raws, harness: formValue(fields[1], BOARD.harness) };
+  // act
+  const reset = collectChanges(fields, toBoard, config, { board: BOARD, resets: new Set(['harness']) });
+  const typed = collectChanges(fields, toBoard, config, { board: BOARD });
+  const untouched = collectChanges(fields, raws, config, { board: BOARD, resets: new Set(['review']) });
+  // assert
+  assert.deepEqual(reset.changes, { harness: null });
+  assert.deepEqual(typed.changes, { harness: BOARD.harness });
+  assert.deepEqual(untouched.changes, {});
 });

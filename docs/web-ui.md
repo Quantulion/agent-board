@@ -9,7 +9,10 @@ automatic themes. It is plain ES modules served by the board, with no build step
 
 - **Projects** (`#/`) — the home screen, a board of projects. The header shows "N active · M agents working of
   the limit · K waiting for a slot" (the limit is the board's `global_max_agents`), the connection
-  indicator and "New project" (see below). A common
+  indicator, "New project" (see below) and the gear of the **Board settings** window (language, agent limit,
+  default agent and review, see [Board settings](configuration.md#board-settings)). The language and the limit come
+  from the board settings and change at once when they are changed (here, in the CLI or over the API); until the
+  settings are read the last used language is shown (`localStorage`, `ab-lang`). A common
   "Waiting for you" strip collects items from all projects, each marked with the project key; a click opens the card
   or the project board. Projects move between columns by themselves:
   - "Waiting for you" — something in the project waits for you (see "Waiting for you" below);
@@ -31,8 +34,8 @@ automatic themes. It is plain ES modules served by the board, with no build step
   letters and digits starting with a letter, up to 10 characters. If the key is already taken by another project or
   by the task-key prefix of another project, the hint says "FIX is taken, the project will get FIX2" — the server
   numbers the key itself (`FIX2`, `FIX3`…). Type: "No plan" only; "Planned" is shown disabled (for now it is
-  created with the skill in the agent CLI). Agents: Claude Code or Codex (the board's agent is
-  inherited, another one becomes the project's own `harness`). "More" (collapsed): agents in the project (3), review before commit (on; off means `auto_approve`),
+  created with the skill in the agent CLI). Agents: Claude Code or Codex, preselected as in the
+  board settings (the board's agent is inherited, another one becomes the project's own `harness`). "More" (collapsed): agents in the project (3), review before commit (on; off means `auto_approve`),
   project agent creates tasks on request (`project_agent_tasks`, on). Repositories are not asked for. "Create and
   open" sends `POST /api/projects` and opens the new project's board at the `work` stage; no agent starts. Server
   errors are shown under their field.
@@ -69,6 +72,8 @@ automatic themes. It is plain ES modules served by the board, with no build step
 - **Breakdown** (decomposition, `#/p/<slug>/decomposition`) — tasks with rule checks and the "Approve breakdown" button; at the `decomposition` stage comments on
   tasks go to the project agent.
 - **Project settings** — the gear next to the project name, see [Configuration](configuration.md#changing-project-settings).
+  The agent CLI and the review tool are marked "Same as the board" or "Own value", with "Reset to the board" for an
+  own value, see [Inheritance](configuration.md#inheritance).
 - **"Waiting for you"** — a strip above the board: open questions, proposals, tasks in review, agent errors, parked
   agents, external blockers, decomposition rule violations, an unread reply of the project agent in the "Project"
   thread (it goes away once you open the thread). A click opens the relevant card or page.

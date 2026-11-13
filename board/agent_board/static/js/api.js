@@ -42,5 +42,6 @@ export function api(slug, fetchFn = (...args) => globalThis.fetch(...args)) {
   return {
     get: (path, opts = {}) => request('GET', path, undefined, opts.signal),
     post: (path, body) => request('POST', path, body || {}),
+    put: (path, body) => request('PUT', path, body || {}),
   };
 }

@@ -18,7 +18,7 @@ function task(key, extra = {}) {
 function snap(slug, tasks = [], extra = {}) {
   return {
     config: {
-      slug, title: 'Проект ' + slug, kind: 'free', stage: 'work', archived: false, global_max_agents: 6,
+      slug, title: 'Проект ' + slug, kind: 'free', stage: 'work', archived: false,
       repos: [], links: [], chains: true, ...(extra.config || {}),
     },
     tasks, proposals: extra.proposals || [], project_agent: extra.project_agent || { state: 'idle', turn_error: '' },
@@ -63,16 +63,20 @@ test('projectColumn: непрочитанный ответ агента прое
   assert.equal(projectColumn(snap('fix', [], { project_unread: 1 })), 'waiting');
 });
 
-test('homeModel: общая полоса с проектом у каждого пункта, шапка с наибольшим лимитом', () => {
+test('homeModel: общая полоса с проектом у каждого пункта, лимит в шапке — из настроек доски', () => {
+  // arrange
   const a = snap('fix', [
     task('FIX-1', { status: 'in_progress', agent_state: 'running' }),
     task('FIX-2', { status: 'in_progress', agent_state: 'waiting_turn' }),
     task('FIX-3', { status: 'in_review' }),
-  ], { config: { global_max_agents: 8 } });
+  ]);
   const b = snap('pay', [task('PAY-1', { status: 'in_progress', agent_state: 'running' })],
-    { config: { kind: 'plan', global_max_agents: 15 }, project_agent: { state: 'running', turn_error: '' } });
+    { config: { kind: 'plan' }, project_agent: { state: 'running', turn_error: '' } });
   const c = snap('old', [task('OLD-1', { status: 'in_progress', agent_state: 'running' })], { config: { archived: true } });
-  const m = homeModel([{ slug: 'fix', snapshot: a }, { slug: 'pay', snapshot: b }, { slug: 'old', snapshot: c }]);
+  // act
+  const m = homeModel([{ slug: 'fix', snapshot: a }, { slug: 'pay', snapshot: b }, { slug: 'old', snapshot: c }],
+    { language: 'ru', global_max_agents: 15 });
+  // assert
   assert.deepEqual(m.columns.waiting.map(p => p.slug), ['fix']);
   assert.deepEqual(m.columns.working.map(p => p.slug), ['pay']);
   assert.deepEqual(m.waiting.map(i => [i.slug, i.project, i.kind, i.key]), [['fix', 'FIX', 'review', 'FIX-3']]);
@@ -84,6 +88,17 @@ test('homeModel: проект, чей снимок не прочитался, о
   const m = homeModel([{ slug: 'broken', snapshot: null }]);
   assert.deepEqual(m.columns.quiet.map(p => p.slug), ['broken']);
   assert.deepEqual(m.header, { active: 1, running: 0, limit: 0, queued: 0 });
+});
+
+test('homeModel: лимит проекта в снимке не влияет на шапку, без настроек доски лимита нет', () => {
+  // arrange
+  const s = snap('fix', [], { config: { global_max_agents: 40 } });
+  // act
+  const withSettings = homeModel([{ slug: 'fix', snapshot: s }], { global_max_agents: 4 });
+  const noSettings = homeModel([{ slug: 'fix', snapshot: s }]);
+  // assert
+  assert.equal(withSettings.header.limit, 4);
+  assert.equal(noSettings.header.limit, 0);
 });
 
 test('projectCardModel: проект без плана — без полоски прогресса, счётчики, чипы и репозитории', () => {

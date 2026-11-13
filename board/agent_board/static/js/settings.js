@@ -1,10 +1,11 @@
 // Окно «Настройки проекта»: поля из схемы настроек, проверка на сервере перед сохранением и ошибки у полей.
+import { api } from './api.js';
 import { h, icon } from './dom.js';
 import { STAGES, T } from './i18n.js';
 import { openModal, toast } from './ui.js';
 
 // порядок простых полей в форме; поля, которых здесь нет, идут следом в порядке схемы
-const ORDER = ['title', 'language', 'max_agents', 'global_max_agents', 'chains', 'project_agent_status',
+const ORDER = ['title', 'max_agents', 'chains', 'project_agent_status',
   'project_agent_tasks', 'archived',
   'branch_template', 'project_brief', 'agent_rules', 'decomposition_rules'];
 const LONG_TEXT = new Set(['project_brief', 'agent_rules', 'decomposition_rules']);
@@ -19,7 +20,9 @@ const DEFAULT_SHIP_TIMEOUT = 600;
 // --- Чистые функции ---
 
 // Поля формы по схеме настроек: простые, отправка в ревью, что происходит после сдачи задачи, составные (JSON).
+// Наследуемые поля (inherited) проект берёт из настроек доски, пока не задаст своё значение.
 export function settingsFields(schema) {
+  const inherited = schema && Array.isArray(schema.inherited) ? schema.inherited : [];
   const list = (schema && Array.isArray(schema.fields) ? schema.fields : []).map((f, i) => {
     const kind = CUSTOM[f.name] || KINDS[f.type] || (LONG_TEXT.has(f.name) ? 'textarea' : 'text');
     return {
@@ -31,6 +34,7 @@ export function settingsFields(schema) {
       example: f.shape && f.shape.example !== undefined ? f.shape.example : null,
       placeholders: f.shape && Array.isArray(f.shape.placeholders) ? f.shape.placeholders : [],
       default: f.default,
+      inherited: inherited.includes(f.name),
       index: i,
     };
   });
@@ -78,14 +82,30 @@ export function parseField(field, raw) {
   return { value };
 }
 
+const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+const isOverridden = (config, name) => Array.isArray(config.overrides) && config.overrides.includes(name);
+
+// Откуда значение наследуемого поля в форме: 'board' — как у доски, 'own' — своё значение проекта (заданное
+// или введённое сейчас), 'reset' — своё значение снимется при сохранении. resets — поля, сброшенные кнопкой.
+export function inheritState(field, raw, config, board, resets = new Set()) {
+  const parsed = parseField(field, raw);
+  if (parsed.error) return 'own';
+  const overridden = isOverridden(config, field.name);
+  if (resets.has(field.name) && board && same(parsed.value, board[field.name])) return overridden ? 'reset' : 'board';
+  if (same(parsed.value, config[field.name])) return overridden ? 'own' : 'board';
+  return 'own';
+}
+
 // Изменённые поля для сервера и ошибки разбора; неизменённые поля не отправляются.
-export function collectChanges(fields, raws, config) {
+// Сброшенное к доске своё значение уходит как null: проект снова берёт значение доски.
+export function collectChanges(fields, raws, config, { board = null, resets = new Set() } = {}) {
   const changes = {};
   const errors = {};
   for (const f of fields) {
     if (!(f.name in raws)) continue;
     const parsed = parseField(f, raws[f.name]);
     if (parsed.error) errors[f.name] = parsed.error;
+    else if (f.inherited && inheritState(f, raws[f.name], config, board, resets) === 'reset') changes[f.name] = null;
     else {
       const before = config[f.name] === undefined ? f.default : config[f.name];
       const value = f.kind === 'ship' ? shipValue(f, before, parsed.value) : parsed.value;
@@ -199,6 +219,9 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
 
   let fields = [];
   let config = {};
+  // настройки доски: значения, к которым сбрасываются агент и ревью проекта
+  let board = null;
+  const resets = new Set();
   const inputs = {};
   const errs = {};
   let sending = false;
@@ -225,9 +248,11 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
     const err = h('div', { class: 'ferr', role: 'alert', hidden: true });
     inputs[f.name] = input;
     errs[f.name] = err;
+    const inherit = f.inherited ? inheritControl(f, input) : null;
     input.addEventListener(f.kind === 'bool' ? 'change' : 'input', () => {
       err.hidden = true;
       input.removeAttribute('aria-invalid');
+      if (inherit) inherit.paint();
     });
     const help = (f.group === 'after' && T.settings.after.help[f.name]) || T.settings.help(f.name) || f.description;
     const label = [(f.group === 'after' && T.settings.after.labels[f.name]) || T.settings.labels[f.name] || f.name, ' ', h('code', { class: 'fname' }, f.name)];
@@ -251,8 +276,29 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
         help ? h('span', { class: 'hint' }, help) : null, err);
     }
     return h('div', { class: 'field', 'data-field': f.name },
-      h('label', { for: input.id }, label), input,
+      h('label', { for: input.id }, label), inherit ? inherit.node : null, input,
       help ? h('span', { class: 'hint' }, help) : null, example, err);
+  }
+
+  // Метка «как у доски» / «своё значение» и сброс своего значения к значению доски.
+  function inheritControl(f, input) {
+    const I = T.settings.inherit;
+    const badge = h('span', { class: 'inh-badge' });
+    const resetBtn = h('button', { class: 'btn sm ghost', type: 'button', 'data-action': 'reset-to-board', title: I.resetTitle,
+      onclick: () => {
+        input.value = formValue(f, board[f.name]);
+        resets.add(f.name);
+        input.dispatchEvent(new Event('input'));
+      } }, I.resetBtn);
+    const node = h('div', { class: 'inh' }, badge, resetBtn);
+    const paint = () => {
+      const state = inheritState(f, input.value, config, board, resets);
+      node.dataset.state = state;
+      badge.textContent = I[state];
+      resetBtn.hidden = state !== 'own' || !board;
+    };
+    paint();
+    return { node, paint };
   }
 
   // Переключатель ship.on_approve: значение читается вместе с редактором отправки, ошибки — под ним же.
@@ -282,7 +328,8 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
     const afterRows = [...after.map(row), ...(inputs.ship ? [onApproveRow(inputs.ship)] : [])];
     content.replaceChildren(
       fixed,
-      h('h3', { class: 'sgroup' }, T.settings.simple), ...simple.map(row),
+      h('h3', { class: 'sgroup' }, T.settings.simple), h('p', { class: 'hint', 'data-role': 'board-note' }, T.settings.boardNote),
+      ...simple.map(row),
       ...(ship.length ? [h('h3', { class: 'sgroup', 'data-group': 'ship' }, T.settings.labels.ship), ...shipRows] : []),
       ...(afterRows.length ? [h('h3', { class: 'sgroup', 'data-group': 'after' }, T.settings.after.title), ...afterRows] : []),
       h('h3', { class: 'sgroup' }, T.settings.compound), h('p', { class: 'hint' }, T.settings.jsonHint), ...compound.map(row));
@@ -293,9 +340,13 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
     } else if (simple.length) inputs[simple[0].name].focus();
   }
 
-  Promise.all([ctx.client.get('/config/schema'), ctx.client.get('/config?actor=user')])
-    .then(([schema, res]) => {
+  // без настроек доски форма работает, только сбросить своё значение к доске нельзя
+  const boardClient = ctx.boardClient || api(null);
+  Promise.all([ctx.client.get('/config/schema'), ctx.client.get('/config?actor=user'),
+    boardClient.get('/settings').catch(() => null)])
+    .then(([schema, res, boardRes]) => {
       config = (res && res.config) || {};
+      board = (boardRes && boardRes.settings) || null;
       render(schema);
     })
     .catch(e => {
@@ -306,7 +357,7 @@ export function openSettingsDialog(ctx, { focus = null } = {}) {
   async function save() {
     if (sending || !fields.length) return;
     const raws = Object.fromEntries(fields.map(f => [f.name, readValue(f, inputs[f.name])]));
-    const { changes, errors } = collectChanges(fields, raws, config);
+    const { changes, errors } = collectChanges(fields, raws, config, { board, resets });
     showErrors(errors);
     if (Object.keys(errors).length) return;
     const names = Object.keys(changes);

@@ -30,6 +30,10 @@ Board settings are changed by the user only:
 
 - `agent-board settings set --json '{"language": "en"}'` (add `--dry-run` to only check); `agent-board settings get`
   (alias `show`) prints them;
+- the "Board settings" window: the gear in the home screen header. Language is a list (Русский, English), the
+  agent limit is a number; the default agent is the CLI (Claude Code, Codex), the model (empty — the CLI default) and
+  the permission mode for Claude Code or the sandbox for Codex; the default review is the tool and its command. Other
+  keys of `harness` (for example `allowed_tools`) are kept. Errors are shown next to the field;
 - `PUT /api/settings {"actor": "user", "fields": {...}, "dry_run": false}`.
 
 Values are checked as in `config set`; an unknown field is rejected. Each top-level field is replaced whole. After a
@@ -66,6 +70,11 @@ Setting `harness` or `review` with `config set` makes it an override, even if it
 override and return to the board value, set the field to `null`:
 `agent-board --project <slug> config set --json '{"harness": null}'`. Other changes to project settings keep inherited
 fields inherited.
+
+In the "Project settings" window `harness` and `review` are marked "Same as the board" or "Own value". Editing the
+field makes it an own value; "Reset to the board" puts the board value back into the editor ("Becomes the board value
+after saving"), and saving sends `null`. `language` and `global_max_agents` are not in this window — they are in the
+board settings.
 
 A new project ([`POST /api/projects`](api.md#new-project), `init`) inherits everything; the agent chosen in the
 "New project" dialog becomes an override only if it differs from the board's agent.
