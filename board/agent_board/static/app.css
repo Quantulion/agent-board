@@ -175,25 +175,33 @@ input[type=text]:focus, textarea:focus, select:focus { outline: none; border-col
 .composer .acts { display: flex; align-items: center; gap: 12px; }
 
 /* Вопрос */
-.question { border: 1px solid var(--warn-line); background: var(--warn-bg); border-radius: 12px; padding: 14px 16px; display: grid; gap: 10px; }
-.question .qh { display: flex; gap: 8px; align-items: center; color: var(--warn-fg); font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em; }
-.question .qh svg { width: 14px; height: 14px; }
+.question { border: 1px solid color-mix(in srgb, var(--s-answer) 45%, var(--line)); border-radius: 12px; overflow: hidden; background: var(--surface); }
+.question .qh { background: var(--warn-bg); color: var(--warn-fg); padding: 8px 14px; font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; display: flex; gap: 7px; align-items: center; }
+.question .qh svg { width: 13px; height: 13px; flex: none; }
+.question .qn { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; opacity: .85; }
+.question .qb { padding: 12px 14px 14px; display: grid; gap: 10px; }
 .question .qt { font-size: 15px; font-weight: 600; color: var(--fg); }
-.question details { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; }
-.question summary { cursor: pointer; padding: 8px 12px; font-size: 13px; font-weight: 500; list-style: none; display: flex; align-items: center; gap: 8px; }
+.question details { background: none; border: 0; }
+.question summary { cursor: pointer; display: inline-flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 500; color: var(--muted); list-style: none; }
+.question summary:hover { color: var(--fg); }
 .question summary::-webkit-details-marker { display: none; }
-.question summary::before { content: ""; width: 6px; height: 6px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; margin-right: 2px; }
+.question summary::before { content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor; transform: rotate(-45deg); transition: transform .15s; }
 .question details[open] summary::before { transform: rotate(45deg); }
-.question details .ctx { padding: 0 12px 12px 26px; font-size: 13px; color: var(--fg-2); }
+.question details .ctx { margin-top: 8px; background: var(--surface-2); border-radius: 8px; padding: 9px 12px; font-size: 13px; color: var(--fg-2); }
 .question details .ctx p { margin: 0 0 8px; }
+.question details .ctx p:last-child { margin-bottom: 0; }
 .opts { display: grid; gap: 6px; }
-.opt { display: grid; grid-template-columns: 18px minmax(0,1fr); gap: 10px; align-items: start; padding: 9px 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; cursor: pointer; }
-.opt:hover { border-color: var(--line-strong); }
-.opt input { margin: 2px 0 0; accent-color: var(--fg); }
-.opt .ot { font-size: 13.5px; font-weight: 500; }
+.opt { display: grid; grid-template-columns: 16px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 9px 12px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; cursor: pointer; }
+.opt:hover { background: var(--surface-2); }
+.opt:has(input:checked) { border-color: var(--fg-2); }
+.opt input { appearance: none; -webkit-appearance: none; margin: 0; width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--line-strong); background: var(--surface); cursor: pointer; }
+.opt input:checked { border: 5px solid var(--fg); }
+.opt input:focus-visible { outline: 2px solid var(--fg-2); outline-offset: 2px; }
+.opt input:disabled, .opt input:disabled ~ span { opacity: .6; }
+.opt .ot { font-size: 13.5px; font-weight: 500; overflow-wrap: anywhere; min-width: 0; }
 .opt .od { font-size: 12.5px; color: var(--muted); }
-.opt.rec { border-color: color-mix(in srgb, var(--s-done) 55%, var(--line)); }
-.opt .rtag { display: inline-flex; margin-left: 6px; font-size: 11px; font-weight: 600; color: var(--ok-fg); background: var(--ok-bg); padding: 1px 6px; border-radius: 4px; vertical-align: 1px; }
+.opt .rtag { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; font-weight: 600; color: var(--ok-fg); background: var(--ok-bg); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.opt .rtag svg { width: 10px; height: 10px; }
 .question .rec-why { font-size: 12.5px; color: var(--fg-2); display: flex; gap: 8px; }
 
 /* Граф */
@@ -579,10 +587,8 @@ a.brand:hover { text-decoration: none; }
 .qlist { display: grid; gap: 16px; }
 .question .composer textarea { min-height: 40px; }
 .question .rec-why svg { width: 14px; height: 14px; flex: none; color: var(--ok-fg); margin-top: 2px; }
-.question .ctx p { margin: 0 0 8px; }
 .composer .hint { font-size: 11.5px; }
 .composer textarea:disabled { opacity: .6; }
-.opt input:disabled + div { opacity: .6; }
 .sec.err { border-color: var(--err-line); background: var(--err-bg); }
 .sec.err > h3 { color: var(--err-fg); }
 .sec.err > h3 svg { width: 14px; height: 14px; }
