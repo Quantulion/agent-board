@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { python } from './python.mjs';
+import { boardEnv, python } from './python.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 export const repo = path.resolve(here, '..');
@@ -39,7 +39,7 @@ export async function until(fn, ms, what) {
 export function createEnv({ prefix, slug, title, language, config = {} }) {
   if (!language) throw new Error('createEnv: не задан язык проекта');
   const home = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-  const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: slug, AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: language };
+  const env = boardEnv({ AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: slug, AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: language });
   const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 30000 });
   fs.mkdirSync(out, { recursive: true });
   cli('init', slug, '--title', title);

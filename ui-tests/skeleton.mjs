@@ -7,7 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import puppeteer from 'puppeteer';
-import { python } from './python.mjs';
+import { boardEnv, python } from './python.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..');
@@ -15,7 +15,7 @@ const out = path.join(here, 'out');
 // Язык проекта задаётся явно: ожидания текстов ниже рассчитаны на него, а не на язык по умолчанию.
 const LANG = 'ru';
 const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ab-ui-'));
-const env = { ...process.env, AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: LANG };
+const env = boardEnv({ AGENT_BOARD_HOME: home, PYTHONPATH: path.join(repo, 'board'), AGENT_BOARD_PROJECT: 'pay', AGENT_BOARD_ACTOR: 'user', AGENT_BOARD_LANG: LANG });
 const cli = (...args) => execFileSync(python, ['-m', 'agent_board', ...args], { env, cwd: repo, encoding: 'utf-8', timeout: 20000 });
 
 function withTimeout(promise, ms, what) {

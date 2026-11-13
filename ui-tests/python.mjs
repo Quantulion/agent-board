@@ -55,3 +55,13 @@ export function resolvePython() {
 }
 
 export const python = resolvePython();
+
+// Контекст агента доски: если тесты запустил агент, эти переменные указывают на его задачу на настоящей доске.
+const AGENT_CONTEXT = ['AGENT_BOARD_TASK', 'AGENT_BOARD_LOCK_POLL', 'AGENT_BOARD_TRACKER_KEY', 'AGENT_BOARD_TRACKER_URL'];
+
+/** Окружение для CLI и сервера временной доски теста: без контекста агента, с заданными переменными. */
+export function boardEnv(vars) {
+  const env = { ...process.env };
+  for (const name of AGENT_CONTEXT) delete env[name];
+  return { ...env, ...vars };
+}
